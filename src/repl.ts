@@ -1,0 +1,207 @@
+/**
+ * 交互式 REPL 与一次性执行。
+ *
+ * @module YuanMy/repl
+ */
+
+import { createInterface, type Interface } from 'node:readline/promises'
+import { stdin, stdout } from 'node:process'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import type { LlmCallConfig } from '@deepseek-ai/dsh-llm'
+import type { Kernel } from './kernel.ts'
+import { listTools } from './kernel.ts'
+import type { Options } from './options.ts'
+import { attachRenderer, bold, cyan, gray, red, yellow, type Renderer } from './ui.ts'
+
+/** `/help` 文本。 */
+function commandHelp(): string {
+  return [
+    `${bold('命令')}`,
+    `  ${cyan('/help')}            显示本帮助`,
+    `  ${cyan('/tools')}           列出已注册的工具`,
+    `  ${cyan('/model')} [id]      查看或切换模型（下一次请求生效）`,
+    `  ${cyan('/session')}         显示当前会话 id`,
+    `  ${cyan('/exit')}            退出（等同 Ctrl-D）`,
+    '',
+    `${gray('快捷键：回合进行中按 Ctrl-C 中断当前回合；空闲时按 Ctrl-C 退出。')}`,
+  ].join('\n')
+}
+
+/** 把用户输入变成一个 DSH 用户消息。 */
+function userMessage(text: string) {
+  return createUserMessage({
+    content: [{ type: 'text', text }],
+    // `source` 是 DSH 的必填来源标记：`kind: 'user'` 表示真人输入。
+    source: { kind: 'user' },
+  })
+}
+
+/** 一次提问 → 等待回合结束 → 汇报结果。 */
+async function runTurn(kernel: Kernel, renderer: Renderer, input: string): Promise<boolean> {
+  const { agent } = kernel
+  renderer.reset()
+  agent.followup(userMessage(input))
+  // `whenIdle()` 不会因为模型/工具失败而 reject（内核在驱动边界吞掉了异常），
+  // 所以真实结果要看 renderer 从 `turn/end` / `agent/error` 收到的事件。
+  await agent.whenIdle()
+  const stats = renderer.stats()
+  if (stats.outcome === 'completed') {
+    process.stdout.write(gray(`\n— 完成 · ${stats.toolCalls} 次工具调用 —\n`))
+    return true
+  }
+  if (stats.outcome === 'aborted') {
+    process.stdout.write(gray('\n— 已中断 —\n'))
+    return false
+  }
+  if (stats.outcome === 'max-tokens') {
+    process.stdout.write(yellow('\n— 达到输出上限，回答被截断 —\n'))
+    return false
+  }
+  process.stdout.write(red(`\n— 失败: ${stats.error ?? '未知错误'} —\n`))
+  return false
+}
+
+/**
+ * 一次性执行：`YuanMy -p "..."`。
+ * @returns 进程退出码。
+ */
+export async function runOneShot(kernel: Kernel, options: Options, prompt: string): Promise<number> {
+  const renderer = attachRenderer(kernel.ctx, kernel.agent, {
+    showReasoning: !options.noReasoning,
+    showToolResults: true,
+  })
+  try {
+    const ok = await runTurn(kernel, renderer, prompt)
+    return ok ? 0 : 1
+  } finally {
+    renderer.dispose()
+  }
+}
+
+/**
+ * 交互式 REPL。
+ * @returns 进程退出码。
+ */
+export async function runRepl(kernel: Kernel, options: Options): Promise<number> {
+  const { ctx, agent } = kernel
+  const interactive = stdin.isTTY === true
+  const rl: Interface = createInterface({ input: stdin, output: stdout, terminal: interactive })
+  const renderer = attachRenderer(ctx, agent, {
+    showReasoning: !options.noReasoning,
+    showToolResults: true,
+  })
+
+  /** 当前是否有一个回合在跑（决定 Ctrl-C 的语义）。 */
+  let busy = false
+  /** `/model` 的落点：由 `agent/request` waterfall 在每次请求前读取。 */
+  const route: { model: string } = { model: options.model }
+
+  // DSH 的 `agent/request` 是一次 waterfall：每个监听者都能改写即将发出的请求配置。
+  // 这里用它实现「运行中切换模型」——不必重建 agent 或会话。
+  const offRoute = ctx.on('agent/request', async ({ agent: subject }, next) => {
+    const config: LlmCallConfig = await next()
+    if (subject !== agent || config.model === route.model) return config
+    return { ...config, model: route.model }
+  })
+
+  rl.on('SIGINT', () => {
+    if (busy) {
+      agent.cancel({ kind: 'user' })
+      stdout.write(`\n${yellow('已请求中断当前回合…')}\n`)
+      return
+    }
+    stdout.write('\n')
+    rl.close()
+  })
+
+  // 自己维护一个行队列，而不是 `rl.question()`：
+  // 管道输入时整段数据会在同一 tick 内产生多个 'line'，而 question() 只会接住一个，
+  // 其余的行会被丢掉。队列 + 'close' 哨兵对 TTY 与管道都成立。
+  const pending: string[] = []
+  let wake: (() => void) | undefined
+  let closed = false
+  rl.on('line', line => {
+    pending.push(line)
+    wake?.()
+    wake = undefined
+  })
+  rl.on('close', () => {
+    closed = true
+    wake?.()
+    wake = undefined
+  })
+
+  /** 取下一条输入；EOF 返回 `undefined`。 */
+  async function nextLine(): Promise<string | undefined> {
+    for (;;) {
+      const line = pending.shift()
+      if (line !== undefined) return line
+      if (closed) return undefined
+      await new Promise<void>(resolve => { wake = resolve })
+    }
+  }
+
+  try {
+    for (;;) {
+      if (interactive) {
+        rl.setPrompt(cyan('› '))
+        rl.prompt()
+      }
+      const input = await nextLine()
+      if (input === undefined) break
+      const text = input.trim()
+      if (text.length === 0) continue
+
+      if (text.startsWith('/')) {
+        const [command, ...rest] = text.split(/\s+/)
+        if (command === '/exit' || command === '/quit') break
+        if (command === '/help') { stdout.write(commandHelp() + '\n'); continue }
+        if (command === '/tools') {
+          const tools = listTools(ctx)
+          stdout.write(tools.map(tool => `  ${cyan(tool.name.padEnd(12))} ${gray(tool.description)}`).join('\n') + '\n')
+          continue
+        }
+        if (command === '/session') {
+          stdout.write(`  ${kernel.sessionId}\n`)
+          continue
+        }
+        if (command === '/model') {
+          const next = rest[0]
+          if (next === undefined) {
+            stdout.write(`  当前模型: ${bold(route.model)} ${gray('(下一次请求生效)')}\n`)
+          } else {
+            route.model = next
+            stdout.write(`  已切换到 ${bold(next)}；下一次请求生效。\n`)
+          }
+          continue
+        }
+        stdout.write(red(`未知命令 ${command}；用 /help 查看可用命令。\n`))
+        continue
+      }
+
+      busy = true
+      try {
+        await runTurn(kernel, renderer, text)
+      } finally {
+        busy = false
+      }
+    }
+    return 0
+  } finally {
+    offRoute()
+    renderer.dispose()
+    rl.close()
+  }
+}
+
+/** 打印一次「凭据缺失」的提示。 */
+export function printMissingCredential(): void {
+  stdout.write([
+    yellow('未找到 DeepSeek API key —— agent 已启动，但第一次请求会失败。'),
+    gray('任选一种方式提供：'),
+    gray('  1. export DEEPSEEK_API_KEY=sk-…'),
+    gray('  2. export YuanMy_API_KEY=sk-…（优先）'),
+    gray('  3. 用 DSH 自己写入的凭据库 ~/.dsh/.credentials.yaml'),
+    '',
+  ].join('\n'))
+}

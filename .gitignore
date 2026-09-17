@@ -1,0 +1,7 @@
+node_modules/
+.tmp/
+.YuanMy/
+
+# 本地密钥：任何情况下都不要提交
+.env
+.env.local

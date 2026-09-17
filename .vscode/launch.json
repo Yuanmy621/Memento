@@ -1,0 +1,72 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // 主入口：交互式 REPL。
+      // console 必须用 integratedTerminal，否则 stdin 不是 TTY，REPL 读不到输入。
+      "name": "YuanMy: REPL（交互）",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/main.ts",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+      // API key 默认走 ~/.dsh/.credentials.yaml，无需在此配置。
+      // 要覆盖时用下面任一种（注意：写进 launch.json 的明文 key 别提交）：
+      //   "env":       { "YuanMy_API_KEY": "sk-...", "YuanMy_MODEL": "deepseek-flash" }
+      //   "envFile":   "${workspaceFolder}/.env"   // 文件须已存在，否则 VSCode 报错
+    },
+    {
+      // 一次性任务，非交互。参数在下方 args 里改。
+      "name": "YuanMy: 一次性任务（-p）",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/main.ts",
+      "cwd": "${workspaceFolder}",
+      "args": ["-p", "${input:prompt}"],
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    },
+    {
+      // 启动自检：只打印内核注册的工具，不需要 API key，适合验证改动没把内核搞挂。
+      "name": "YuanMy: 列出工具（自检）",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/main.ts",
+      "cwd": "${workspaceFolder}",
+      "args": ["--list-tools"],
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    },
+    {
+      // 在编辑器里打开任意 src/*.ts 后直接 F5，调试该文件的顶层逻辑。
+      "name": "YuanMy: 调试当前文件",
+      "type": "node",
+      "request": "launch",
+      "program": "${file}",
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    },
+    {
+      // 附加到 `node --inspect=9229 src/main.ts ...` 手动起的进程。
+      "name": "YuanMy: 附加（attach 9229）",
+      "type": "node",
+      "request": "attach",
+      "port": 9229,
+      "restart": false,
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    }
+  ],
+  "inputs": [
+    {
+      "id": "prompt",
+      "type": "promptString",
+      "description": "一次性任务内容（-p）",
+      "default": "列出当前目录下的文件"
+    }
+  ]
+}
