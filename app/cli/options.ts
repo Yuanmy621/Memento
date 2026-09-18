@@ -44,6 +44,36 @@ export interface Options {
 /** 解析失败时抛出；`main` 会把它转成退出码 2。 */
 export class UsageError extends Error {}
 
+/** 允许缺省的配置输入（桌面端等非 CLI 调用方从这里进入）。 */
+export interface OptionsInput extends Partial<Options> {}
+
+/**
+ * 用 CLI 的同一套默认值把「部分配置」补全成完整的 {@link Options}。
+ *
+ * CLI 走 `parseOptions()`（argv → 本函数）；桌面端直接传 `{ cwd, model }` 等字段。
+ * 两边的默认值因此只在一处定义，不会漂移。
+ * @param input - 调用方显式给出的字段；其余取默认值。
+ * @returns 归一化后的完整配置（`cwd` / `stateDir` 已解析成绝对路径）。
+ */
+export function resolveOptions(input: OptionsInput = {}): Options {
+  const root = resolve(input.cwd ?? process.cwd())
+  return {
+    cwd: root,
+    stateDir: resolve(input.stateDir ?? `${root}/.YuanMy`),
+    provider: input.provider ?? 'deepseek-official',
+    model: input.model ?? (process.env.YuanMy_MODEL?.trim() || 'deepseek-flash'),
+    effort: input.effort ?? 'high',
+    maxTokens: input.maxTokens,
+    sessionId: input.sessionId,
+    resume: input.resume,
+    prompt: input.prompt,
+    persist: input.persist ?? true,
+    listTools: input.listTools ?? false,
+    noReasoning: input.noReasoning ?? false,
+    help: input.help ?? false,
+  }
+}
+
 const HELP = `YuanMy — 基于 DeepSeek Harness 内核的终端 coding agent
 
 用法:
@@ -181,10 +211,9 @@ export function parseOptions(argv: readonly string[]): Options {
     throw new UsageError('--resume 与 --session 不能同时使用')
   }
 
-  const root = resolve(cwd ?? process.cwd())
-  return {
-    cwd: root,
-    stateDir: resolve(stateDir ?? `${root}/.YuanMy`),
+  return resolveOptions({
+    cwd,
+    stateDir,
     provider,
     model,
     effort,
@@ -196,5 +225,5 @@ export function parseOptions(argv: readonly string[]): Options {
     listTools,
     noReasoning,
     help,
-  }
+  })
 }

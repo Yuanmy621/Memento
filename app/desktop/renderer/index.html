@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <!--
+      渲染进程的 CSP。
+        - script-src 'self'：只允许加载打包好的本地 renderer.js（无内联脚本、无远程）；
+        - style-src 'self' 'unsafe-inline'：样式表来自本地文件；'unsafe-inline' 是给
+          Streamdown / shiki 这类库运行时注入 <style>（代码高亮主题）用的。
+          样式注入不构成脚本执行风险，而 script-src 依然是收紧的。
+        - connect-src 'none'：界面自己不发任何网络请求（网络都在主进程 / host 里）。
+    -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'"
+    />
+    <title>YuanMy Agent</title>
+    <link rel="stylesheet" href="./dist/renderer.css" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <!-- 构建产物：`node app/desktop/scripts/build-renderer.js`（见 package.json 的 build:renderer） -->
+    <script src="./dist/renderer.js"></script>
+  </body>
+</html>

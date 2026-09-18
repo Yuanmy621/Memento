@@ -7,7 +7,7 @@
       "name": "YuanMy: REPL（交互）",
       "type": "node",
       "request": "launch",
-      "program": "${workspaceFolder}/src/main.ts",
+      "program": "${workspaceFolder}/app/cli/main.ts",
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen",
@@ -22,7 +22,7 @@
       "name": "YuanMy: 一次性任务（-p）",
       "type": "node",
       "request": "launch",
-      "program": "${workspaceFolder}/src/main.ts",
+      "program": "${workspaceFolder}/app/cli/main.ts",
       "cwd": "${workspaceFolder}",
       "args": ["-p", "${input:prompt}"],
       "console": "integratedTerminal",
@@ -34,14 +34,14 @@
       "name": "YuanMy: 列出工具（自检）",
       "type": "node",
       "request": "launch",
-      "program": "${workspaceFolder}/src/main.ts",
+      "program": "${workspaceFolder}/app/cli/main.ts",
       "cwd": "${workspaceFolder}",
       "args": ["--list-tools"],
       "console": "integratedTerminal",
       "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
     },
     {
-      // 在编辑器里打开任意 src/*.ts 后直接 F5，调试该文件的顶层逻辑。
+      // 在编辑器里打开任意 app/**/*.ts 后直接 F5，调试该文件的顶层逻辑。
       "name": "YuanMy: 调试当前文件",
       "type": "node",
       "request": "launch",
@@ -52,7 +52,34 @@
       "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
     },
     {
-      // 附加到 `node --inspect=9229 src/main.ts ...` 手动起的进程。
+      // 桌面端：启动 Electron 主进程。YuanMy_DEV=1 会顺带打开 DevTools。
+      // 必须在有图形会话的桌面上运行，否则 app.whenReady() 不会返回。
+      "name": "YuanMy: 桌面端（Electron）",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/electron",
+      "program": "${workspaceFolder}/app/desktop/main.js",
+      "cwd": "${workspaceFolder}",
+      "env": { "YuanMy_DEV": "1" },
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    },
+    {
+      // 桌面端的内核侧调试：直接在 Node 里跑 agent host，
+      // 断点打在 app/desktop/host/*.ts 里即可，不需要窗口。
+      "name": "YuanMy: 桌面端 host（子进程）",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/app/desktop/host/index.ts",
+      "cwd": "${workspaceFolder}",
+      "args": ["--cwd", "${workspaceFolder}"],
+      "console": "integratedTerminal",
+      "internalConsoleOptions": "neverOpen",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    },
+    {
+      // 附加到 `node --inspect=9229 app/cli/main.ts ...` 手动起的进程。
       "name": "YuanMy: 附加（attach 9229）",
       "type": "node",
       "request": "attach",

@@ -1,0 +1,2 @@
+[permissions]
+allow = ["Bash=cd /Users/yuanmingyuan/YuanMy && find app/desktop -type f -not -path '*/node_modules/*' | head -80 && echo \"--- sizes ---\" && find app/desktop -type f -not -path '*/node_modules/*' -exec ls -la {} \\; | awk '{print $5, $9}' | sort -rn | head -40"]

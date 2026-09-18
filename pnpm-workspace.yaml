@@ -1,4 +1,6 @@
 allowBuilds:
   '@deepseek-ai/dsh-subprocess-local': true
+  # 渲染进程的打包器：postinstall 负责放置平台二进制。
+  esbuild: true
   koffi: true
   node-pty: true

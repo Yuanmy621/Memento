@@ -44,6 +44,11 @@ import AttachmentLocal from '@deepseek-ai/dsh-attachment-local'
 // —— 会话持久化 ——
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 
+// —— 技能（skill）：把 .agents/skills 下的可复用指令喂给模型 ——
+import SkillRegistry from '@deepseek-ai/dsh-skill'
+import * as SkillFilesystem from '@deepseek-ai/dsh-skill-filesystem'
+import * as ToolSkill from '@deepseek-ai/dsh-tool-skill'
+
 // —— 模型可见的工具 ——
 import * as ToolFs from '@deepseek-ai/dsh-tool-fs'
 import * as ToolFsSearch from '@deepseek-ai/dsh-tool-fs-search'
@@ -68,7 +73,33 @@ export interface Kernel {
 }
 
 /** agent 循环必需的服务名。 */
-const REQUIRED_SERVICES = ['llm', 'sessions', 'sessionProjections', 'systemPrompt', 'tools', 'agents', 'agentLoop'] as const
+const REQUIRED_SERVICES = ['llm', 'sessions', 'sessionProjections', 'systemPrompt', 'tools', 'agents', 'agentLoop', 'skills'] as const
+
+/**
+ * 项目的技能目录。
+ *
+ * 约定与 DSH 一致：`<项目根>/.agents/skills/<名字>/SKILL.md`。
+ * 这里**不**让 provider 自己去猜项目根（它取最近的 `.git` 祖先），
+ * 而是显式给 `cwd` 下的目录，保证「agent 的工作目录 = 技能目录」，
+ * 换 `--cwd` 就换技能集。
+ * @param cwd - agent 的工作目录。
+ * @returns 要扫描的技能根目录列表。
+ */
+function skillDirs(cwd: string): string[] {
+  // `.dsh/skills` 是 DSH 里优先级更高的项目级目录（rank 100），一并认。
+  return [join(cwd, '.agents', 'skills'), join(cwd, '.dsh', 'skills')]
+}
+
+/**
+ * 允许用环境变量追加技能目录（冒号分隔），方便放个人/团队共享技能。
+ * @returns 匹配 `dsh-skill-filesystem` Config 的片段。
+ */
+function skillDirsFromEnv(): { customSkillDirs?: string[] } {
+  const extra = process.env.YuanMy_SKILL_DIRS?.trim()
+  if (extra === undefined || extra === '') return {}
+  const dirs = extra.split(':').map(part => part.trim()).filter(part => part !== '')
+  return dirs.length === 0 ? {} : { customSkillDirs: dirs }
+}
 
 /** 生成一个新的会话 id。 */
 function newSessionId(): string {
@@ -109,6 +140,21 @@ export async function bootKernel(options: Options): Promise<Kernel> {
   // 因此注册表必须晚于 systemPrompt 挂载。
   await mount(ctx, 'dsh-tools', ToolRuntime)
   await mount(ctx, 'dsh-agent', AgentRegistry)
+
+  // ── 1.5 技能注册表与本地 provider ──────────────────────────────────────
+  // `dsh-skill` 只提供注册表（`ctx.skills`），本身不含任何技能内容；
+  // `dsh-skill-filesystem` 才是从磁盘发现 SKILL.md 的那个 provider（inject: skills）。
+  await mount(ctx, 'dsh-skill', SkillRegistry)
+  await mount(ctx, 'dsh-skill-filesystem', SkillFilesystem, {
+    // 只认项目自己的技能目录，不扫描 ~/.dsh 与 ~/.agents —— 那是 DSH CLI 的全局技能库
+    // （50+ 个飞书/记忆类技能），对编码 agent 是噪声，还会把会话目录撑得很大。
+    // 想恢复 DSH 的默认行为：把 includeDefaultRoots 设成 true、去掉 customSkillDirs。
+    includeDefaultRoots: false,
+    customSkillDirs: skillDirs(options.cwd),
+    ...skillDirsFromEnv(),
+    // 目录变化（新增/改名/删技能）要让下一次会话目录刷新，不用重启。
+    watch: true,
+  })
 
   // ── 2. 会话持久化（可关）───────────────────────────────────────────────
   if (options.persist) {
@@ -154,6 +200,8 @@ export async function bootKernel(options: Options): Promise<Kernel> {
   await mount(ctx, 'dsh-tool-bash', ToolBash, { enableRunInBackground: true })
   await mount(ctx, 'dsh-tool-jobs', ToolJobs)
   await mount(ctx, 'YuanMy-tools', customTools, { cwd: options.cwd })
+  // 模型侧的入口：在首个请求前投递一份「可用技能目录」，并注册 `skill` 工具按需加载正文。
+  await mount(ctx, 'dsh-tool-skill', ToolSkill)
 
   // ── 7. prompt 扩展 ─────────────────────────────────────────────────────
   installPromptSections(ctx)

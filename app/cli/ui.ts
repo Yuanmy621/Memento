@@ -67,8 +67,13 @@ export interface Renderer {
   reset(): void
 }
 
-/** 把工具参数压成一行摘要，方便在终端里扫读。 */
-function summarizeCall(rawArguments: string): string {
+/**
+ * 把工具参数压成一行摘要，方便在终端里扫读。
+ *
+ * 导出给桌面端的 host 复用（`app/desktop/host/bridge.ts`），
+ * 让「工具调用怎么显示」这件事在 CLI 与 GUI 之间保持一致。
+ */
+export function summarizeCall(rawArguments: string): string {
   let args: Record<string, unknown> = {}
   try {
     const parsed: unknown = JSON.parse(rawArguments)
@@ -92,8 +97,8 @@ function summarizeCall(rawArguments: string): string {
   return `${truncate(detail ?? '', 110)}${suffix}`
 }
 
-/** 从工具结果消息里抽一行摘要。 */
-function summarizeResult(blocks: readonly ContentBlock[], isError: boolean): string {
+/** 从工具结果消息里抽一行摘要（同样导出给桌面端 host 复用）。 */
+export function summarizeResult(blocks: readonly ContentBlock[], isError: boolean): string {
   const text = blocks
     .map(block => (block.type === 'text' ? block.text : block.type === 'tool-result' ? textOf(block.content) : ''))
     .join('\n')

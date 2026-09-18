@@ -1,14 +1,18 @@
 # YuanMy
 
-一个跑在终端里的 **coding agent**，内核完全建立在 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）之上。
+一个 **coding agent**：内核完全建立在 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）之上，同时提供**终端 CLI** 与 **Electron 桌面客户端**两种外壳。
 
 DSH 本身是一个插件化的 agent 内核：agent 循环、会话日志、工具执行管线、文件系统 / Shell / 沙箱能力都是独立的 cordis 插件。
-`YuanMy` 做的事情是**用手写装配把内核搭起来**，再加上终端交互层和两个自定义工具，最终得到一个能读代码、改代码、跑命令的编码助手。
+`YuanMy` 做的事情是**用手写装配把内核搭起来**，再加上两种交互外壳和两个自定义工具，最终得到一个能读代码、改代码、跑命令的编码助手。
 
 ```
-$ npm start                       # 交互式 REPL
-$ node src/main.ts -p "重构 src/ui.ts 里的颜色函数"   # 一次性执行
+$ npm start                              # 终端：交互式 REPL
+$ npm start -- -p "重构 app/cli/ui.ts 里的颜色函数"   # 终端：一次性执行
+$ npm run desktop                        # 桌面：Electron 客户端
 ```
+
+两种外壳共用**同一个内核装配**（`app/cli/kernel.ts`）与**同一套参数解析**（`app/cli/options.ts`），
+所以 `--cwd` / `--model` / `--resume` 这些开关在哪一边语义都一样。
 
 ---
 
@@ -72,23 +76,99 @@ npm start
 
 会话以明文 JSONL 落在 `.YuanMy/sessions/<项目>/<会话 id>/session.v3.jsonl`，可以直接 `cat` / `jq` 查看 DSH 的完整事件流。
 
+### 桌面客户端
+
+```bash
+npm run desktop          # 打开 Electron 窗口
+```
+
+界面里可以做：发任务、看着正文流式输出（推理过程可折叠）、Markdown 正式渲染
+（标题/列表/表格/代码高亮）、逐条查看工具调用与结果、随时中断当前回合、
+切换模型（下一次请求生效）、新建会话、查看已注册工具。
+
+左侧栏是**「项目 → 会话」两级树**：会话归纳在它所属的项目下面，点项目折叠/展开
+（展开才去读盘，项目再多也不拖慢首屏），点会话就用 `--resume` 恢复，当前会话有竖线标记。
+标题与轮数直接来自落盘日志（第一条用户消息 + `turn/end` 计数）。
+侧栏只保留真正需要常驻的东西（项目树 + 模型切换 + 一行底栏），
+状态点/工具数/版本挤在底栏一行里，凭据**只在缺失时**才提示。
+输入框下面常驻一行 **token 统计**：未命中输入 / 输出 / 缓存命中 / 命中率，
+悬停可看最近一次调用的明细（含缓存写入与推理 token）。
+
+外观是 Codex 风格：近单色深色主题、无渐变；左侧栏用**系统原生材质**做磨砂玻璃
+（macOS `vibrancy` / Windows `acrylic`，不是 CSS `backdrop-filter`）；系统标题栏隐藏，
+拖拽区由界面自己提供。改界面时用 `npm run desktop:watch` 起监听重建。
+
+改完代码先跑验证，从便宜到贵：
+
+```bash
+npm run verify             # typecheck + 构建 + 界面链路 + 内核链路（一条命令全跑）
+npm run desktop:ui-smoke   # 渲染进程：静态契约 + 归约器回放 + Markdown 真渲染（不开窗口）
+npm run desktop:host-smoke # 内核链路：真起 host 子进程，-p 还能跑真实回合
+npm run desktop:smoke      # 真开 Electron 窗口，验证窗口/preload/渲染进程/内核整条链路后自动退出
+```
+
+`desktop:smoke` 不只是「窗口开了」——它会从渲染进程里读回界面状态做断言；
+再加上 prompt 就能**在真实窗口里跑完一个完整回合**（走的就是点「发送」那条路），
+并断言 Markdown 真的被解析成了标题/粗体/列表：
+
+```bash
+YuanMy_SMOKE_PROMPT="用 tree 看一下 app/desktop，然后用 markdown 汇总" npm run desktop:smoke
+# [desktop] 窗口可见 · 启动耗时 394ms
+# [smoke] renderer · status=就绪 · bridge=object · React 已挂载=true
+# [smoke] 外观 · platform=darwin · 磨砂玻璃=native · 拖拽区 2 处
+# [smoke] turn · 完成 · 1 次工具调用 · 工具卡片 1 张
+# [smoke] markdown · 块 1 · 代码块 1 · 粗体 1 · 标题 1 · 列表 1
+```
+
+> ⚠️ 改 `main.js` 时注意：**Electron 的 ESM 主进程入口不能用顶层 `await app.whenReady()`**。
+> 入口模块是异步加载的，顶层 await `ready` 会与 Electron 的启动流程互相等待 ——
+> 现象是进程活着、日志停在模块加载完成，但**永远不出现窗口**。
+> 用 `app.whenReady().then(onReady)` 注册回调（`main.js` 启动段末尾有详细注释）。
+
 ---
 
 ## 3. 代码结构
 
 ```
-src/
-  main.ts         入口：参数 → 凭据 → 启动内核 → REPL / 一次性执行
-  kernel.ts       核心：用 cordis 手工装配整个 DSH 插件树
-  options.ts      零依赖命令行解析
-  credentials.ts  API key 解析（环境变量 → DSH 凭据库）
-  prompt.ts       coding agent 的 persona 与系统提示词 section
-  tools.ts        自定义工具：tree、fetch_url（defineTool 完整示例）
-  repl.ts         交互式循环、斜杠命令、中断处理
-  ui.ts           流式渲染、工具调用可视化、颜色
+.agents/                 仓库级 agent 配置（给 agent 看的，不是产品代码）
+  README.md              目录约定与技能格式
+  skills/<名字>/SKILL.md  技能：可复用的任务指令，模型按需加载
+.claude/skills -> .agents/skills   符号链接（Claude Code 等工具复用同一批技能）
+
+app/
+  cli/                   终端形态：一个 .ts 文件一个人
+    main.ts              入口：参数 → 凭据 → 启动内核 → REPL / 一次性执行
+    kernel.ts            核心：用 cordis 手工装配整个 DSH 插件树
+    options.ts           零依赖命令行解析（桌面端也复用它）
+    credentials.ts       API key 解析（环境变量 → DSH 凭据库）
+    prompt.ts            coding agent 的 persona 与系统提示词 section
+    tools.ts             自定义工具：tree、fetch_url（defineTool 完整示例）
+    repl.ts              交互式循环、斜杠命令、中断处理
+    ui.ts                终端流式渲染、工具调用可视化、颜色
+
+  desktop/               桌面形态：Electron 壳 + 独立的 agent host 子进程
+    main.js             Electron 主进程：窗口、菜单、生命周期、IPC 收口、窗口材质
+    preload.js          安全桥（CommonJS）：渲染进程只能看到 window.YuanMy
+    ipc.js              IPC 频道名与状态形状
+    host/               TS：跑在内核侧的全部逻辑
+      index.ts           agent host：把内核跑在独立 Node 进程里
+      bridge.ts          内核事件 → UI 帧（复用 CLI 的工具摘要格式化）
+      protocol.ts        主进程 ⇄ host 的消息类型契约（渲染进程也复用它的类型）
+      sessions.ts        读会话日志，列出「项目 / 会话」（侧栏数据源）
+    renderer/           界面：React + Streamdown，源码是 TSX
+      src/               app.tsx / use-agent.ts / markdown.tsx / components/
+      styles/app.css     Tailwind v4 + Codex 色板 + 原生磨砂玻璃
+      dist/              构建产物（不入库）
+      tsconfig.json      DOM + JSX 的独立类型检查
+    scripts/
+      build-renderer.js  渲染进程打包（esbuild + PostCSS/Tailwind）
+      host-smoke.js      内核链路冒烟（可跑真实回合）
+      ui-smoke.js        界面链路冒烟（契约 + 归约器 + Markdown 渲染）
+    README.md            桌面端设计说明
 ```
 
-一屏就能读完的装配逻辑在 `kernel.ts`，它是理解 DSH 内核最好的入口。
+一屏就能读完的装配逻辑在 `app/cli/kernel.ts`，它是理解 DSH 内核最好的入口。
+桌面端为什么要把内核放进子进程、IPC 为什么这么设计，见 `app/desktop/README.md`。
 
 ---
 
@@ -123,6 +203,7 @@ await ctx.plugin(AgentLoop, { agents: [] })                 // ctx.agentLoop
 | 模型 | `dsh-llm-deepseek` `dsh-deepseek-llm-api-extensions` `dsh-llm-retry` | DeepSeek 路由 + 请求级重试 |
 | 执行能力 | `dsh-subprocess-local` `dsh-shell-env` `dsh-bash-local` `dsh-fs-local` `dsh-fs-observation-policy` `dsh-jobs-local` `dsh-spill-local` `dsh-attachment-local` | `ctx.subprocess` / `ctx.shell` / `ctx.fs` / `ctx.jobs` / `ctx.spillStore` / `ctx.attachments` |
 | 工具 | `dsh-tool-fs` `dsh-tool-fs-search` `dsh-tool-bash` `dsh-tool-jobs` + 自定义 `YuanMy-tools` | `read` `write` `edit` `read_image` `glob` `grep` `bash` `job_*` `tree` `fetch_url` |
+| 技能 | `dsh-skill` `dsh-skill-filesystem` `dsh-tool-skill` | `ctx.skills` + `skill` 工具；技能放 `.agents/skills/`（见第 5 节） |
 | 持久化 | `dsh-session-persistence-jsonl` | 明文 JSONL 会话日志，支撑 `--resume` |
 
 ### 为什么没有沙箱与审批
@@ -133,9 +214,67 @@ await ctx.plugin(AgentLoop, { agents: [] })                 // ctx.agentLoop
 
 ---
 
-## 5. 自定义工具：`defineTool` 完整示例
+## 5. 技能（skill）：`.agents/skills`
 
-`src/tools.ts` 是一个标准插件（`name` + `inject` + `apply(ctx, config)` + schemastery `Config`），补了两个官方内核没有、但编码时很顺手的工具：
+技能是**给模型按需加载的指令包**，和写死在系统提示词里的规则不同 —— 它只在相关时才进入上下文。
+本仓库的技能放在 `.agents/skills/`（与 DSH 仓库同样的位置与格式）：
+
+```
+.agents/skills/
+  yuanmy-verify/SKILL.md        改完代码怎么验证（四层防线、先让测试红一次的纪律）
+  yuanmy-desktop-ui/SKILL.md    改桌面端界面的固定套路与两个已修 bug 的复现条件
+```
+
+每个技能是一个目录包，`SKILL.md` 以 YAML frontmatter 开头（`name` + `description` 必填）：
+
+```markdown
+---
+name: yuanmy-verify
+description: 在 YuanMy 仓库改完代码后怎么验证 …… 当用户说「验证一下」时使用。
+---
+
+# 正文：写成可执行步骤
+```
+
+`description` 决定模型会不会选它，所以要写清「什么时候用」。可选字段
+（`whenToUse` / `metadata` / `disable-model-invocation` / `user-invocable`）
+与根目录优先级见 [`.agents/README.md`](.agents/README.md)。
+
+### 它是怎么接上内核的
+
+`app/cli/kernel.ts` 挂了 DSH 的三个插件 —— 这三个包本身就属于 DSH 的 skill 体系，
+所以 YuanMy 的技能行为与 DSH CLI 完全一致：
+
+| 插件 | 作用 |
+| --- | --- |
+| `@deepseek-ai/dsh-skill` | 技能注册表（`ctx.skills`），不含内容 |
+| `@deepseek-ai/dsh-skill-filesystem` | 从磁盘发现 `SKILL.md`（解析 frontmatter、监听目录变化） |
+| `@deepseek-ai/dsh-tool-skill` | 首个请求前投递「可用技能目录」，并注册 `skill` 工具按需加载正文 |
+
+扫描范围由 `skillDirs()` 显式指定为 `<cwd>/.agents/skills` 与 `<cwd>/.dsh/skills`，
+可用 `$YuanMy_SKILL_DIRS`（冒号分隔）追加。**没有**开启 DSH 的全局默认根
+（`~/.dsh/skills`）—— 那是几十个飞书 / 记忆类技能，对编码 agent 是噪声；
+想要 DSH 那套默认行为，把 `includeDefaultRoots` 改成 `true` 即可。
+
+技能按 `<cwd>` 定位，所以 `--cwd` / 桌面端「更换工作目录」会连带切换技能集；
+目录变化被监听，加了技能下一次请求就能用，不用重启。
+
+### 验证
+
+```bash
+node app/cli/main.ts --list-tools | grep '^skill'   # skill 工具已注册
+npm run desktop:ui-smoke                            # 校验每个 SKILL.md 的 frontmatter
+node app/cli/main.ts -p "用 skill 工具加载 yuanmy-verify，告诉我它的第二节标题"
+```
+
+`ui-smoke` 会检查 `name` 与目录名一致、`description` 非空 —— frontmatter 写错的技能会被
+provider **静默忽略**，这条 lint 就是拦它的（反向验证过：写坏一个技能会红）。
+
+---
+
+## 6. 自定义工具：`defineTool` 完整示例
+
+`app/cli/tools.ts` 是一个标准插件（`name` + `inject` + `apply(ctx, config)` + schemastery `Config`），补了两个官方内核没有、但编码时很顺手的工具：
 
 - **`tree`** —— 一次看清项目结构（目录在前、自动跳过 `node_modules`/`.git` 等），比逐层 `glob` 省 token；
 - **`fetch_url`** —— 抓取 URL 文本，用于读在线文档或失败的接口。
@@ -168,25 +307,37 @@ ctx.tools.register(defineTool({
 
 ---
 
-## 6. 扩展点速查
+## 7. 扩展点速查
 
 | 想做的事 | DSH 的做法 | 本项目中的例子 |
 | --- | --- | --- |
-| 加一个工具 | `ctx.tools.register(defineTool({…}))` | `src/tools.ts` |
-| 改系统提示词 | `ctx.systemPrompt.section({ name, order, text })`，`order` 决定位置 | `src/prompt.ts`（300 / 1950） |
-| 运行中改模型 / 请求参数 | 监听 `agent/request` waterfall，`return { ...config, model }` | `repl.ts` 的 `/model` |
+| 加一个工具 | `ctx.tools.register(defineTool({…}))` | `app/cli/tools.ts` |
+| 加一个技能 | 在 `.agents/skills/<名字>/SKILL.md` 写 frontmatter + 正文，无需改代码 | `.agents/skills/` |
+| 改系统提示词 | `ctx.systemPrompt.section({ name, order, text })`，`order` 决定位置 | `app/cli/prompt.ts`（300 / 1950） |
+| 运行中改模型 / 请求参数 | 监听 `agent/request` waterfall，`return { ...config, model }` | CLI 的 `/model`、桌面端 host 的 `set-model` |
 | 拦截或改写工具调用 | `tools/pre-execute` / `post-execute` / `tools/result` 事件 | 官方 `dsh-fs-observation-policy`（先读后写） |
 | 换 LLM provider | 继承 `LlmAdapter`，实现 `stream()`，`ctx.llm.registerAdapter()` | 官方 `dsh-llm-deepseek` |
 | 换文件系统 / Shell | 挂另一个 provider（如 `dsh-fs-sandbox`） | `kernel.ts` 第 3 组 |
-| 观察流式输出 | `agent/assistant-stream` 事件（`chunk.type === 'text-delta'`） | `src/ui.ts` |
-| 读权威历史 | `session/event`（`tool/call` / `tool/result` / `turn/end`） | `src/ui.ts` |
+| 观察流式输出 | `agent/assistant-stream` 事件（`chunk.type === 'text-delta'`） | `app/cli/ui.ts`（终端）、`app/desktop/host/bridge.ts`（GUI） |
+| 读权威历史 | `session/event`（`tool/call` / `tool/result` / `turn/end`） | 同上 |
+| 给桌面端加一个界面动作 | preload 加一个方法 → main 加一个 `ipcMain.handle` → renderer 调用 | `app/desktop/preload.js` / `main.js` / `renderer/src/` |
+| 给桌面端加一种 UI 帧 | 在 `host/protocol.ts` 加一个 `HostEvent` 分支，bridge 发出、renderer 消费 | `app/desktop/host/bridge.ts` |
+| 读会话历史 / 列会话 | 会话以 JSONL 落在 `<cwd>/.YuanMy/sessions/<项目>/<会话 id>/session.v3.jsonl`，第一行是头 | `app/desktop/host/sessions.ts` |
+| 拿 token 计量 | `session/event` 的 `assistant/message` 带 `usage`（计数互斥：未命中/命中/写入分开记） | `bridge.ts` 的 `usage` 帧 |
 
 ---
 
-## 7. 已知边界
+## 8. 已知边界
 
 - **无沙箱、无审批**：本地 provider 意味着 agent 拥有当前用户的全部读写与执行权限。这是有意的默认值（与 DSH 的 `sdk-minimal` 形态一致），生产环境请按第 4 节换成受限 provider。
 - **单 agent**：没有挂 `dsh-subagent` / `dsh-tool-workflow` / `dsh-tool-todo` / 压缩与技能等插件，这些都可以按同一套 `ctx.plugin` 方式增量加进来。
+- **桌面端还不能打包**：只做了开发态运行（`npm run desktop`）。要出安装包需要再补 `electron-builder` 配置与签名流程，参考 DSH 自己的 `apps/desktop`。
+- **改桌面端布局时注意**：`.app-shell` 的 `grid-template-rows: minmax(0, 1fr)` 与子项的 `min-height: 0` 不能删 —— 少了它，内容会把整个外壳撑高（侧栏被拉长、失去内部滚动，长内容卡死渲染进程）。`desktop:smoke` 有布局探针盯着。
+- **桌面端会话列表不生成标题**：标题取会话日志里的第一条用户消息。正式标题应由 `@deepseek-ai/dsh-session-title` 生成（写 `session/title` 事件），但那个插件还需要 `dsh-invariants` 一整套 companion 插件，暂时没挂；读取端已经优先认这个事件。
+- **token 统计是会话累计的估算口径**：DSH 的 `inputTokens` 只算**未命中缓存**的部分，命中部分在 `cacheReadTokens`，所以「输入」一栏看起来会比直觉小 —— 界面里的「计费输入」才是这次请求的完整提示词量。
+- **技能不扫描全局目录**：默认只看项目里的 `.agents/skills` 与 `.dsh/skills`，`~/.dsh/skills` 里那几十个飞书/记忆类技能不会进编码 agent 的目录（想要就用 `includeDefaultRoots: true` 或 `$YuanMy_SKILL_DIRS`）。
+- **桌面端渲染进程的 bundle 约 10 MB**：其中约 9 MB 是 shiki 的 200 多种语言语法定义（单文件 IIFE 会把「按需加载」全部内联）。实测冷启动到窗口可见约 235–400 ms，暂不处理；瘦身路线见 `app/desktop/README.md`。
+- **磨砂玻璃与隐藏标题栏只在 macOS 上验证过**：Windows 走 `backgroundMaterial: 'acrylic'` + `titleBarOverlay`，Linux 保留原生标题栏（否则没有关闭按钮），都还没实机跑过。
 - **模型目录**：默认 `deepseek-flash`；用 `--model` 或 `/model` 切换，可用值由 DeepSeek provider 决定。
 - **依赖版本锁定**：所有 `@deepseek-ai/dsh-*` 固定在 **`0.1.5-rc.2`**，即标准发布线 —— 官方 CLI `@deepseek-ai/dsh`（npm `latest`）依赖 `^0.1.5-rc.1`，解析结果正是它。安装时请认准这条线：
   - 不要按各**子包**自己的 `latest` 标签装：那些标签是过期的（核心停在 `0.1.0-rc.6`，`dsh-tool-fs` / `dsh-fs-local` / `dsh-llm-deepseek` 停在 `0.0.1-rc.1`），混装会因 `inject` 列表不一致而静默停在 PENDING；
