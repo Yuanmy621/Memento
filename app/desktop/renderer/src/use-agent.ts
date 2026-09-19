@@ -2,7 +2,7 @@
  * agent 状态机：把 `window.YuanMy` 的事件流归约成界面状态。
  *
  * 这里是**唯一**把 host 事件翻译成 UI 数据的地方，组件只读 `state.items`。
- * 归约器是纯函数，所以能在 Node 里直接回放测试（见 `scripts/ui-smoke.js`）。
+ * 归约器是纯函数：事件进、状态出，不碰 DOM、不碰网络。
  *
  * 一条会话由若干条目（items）组成：
  *   { kind: 'user',      text }
@@ -19,16 +19,24 @@
 
 import { useCallback, useEffect, useReducer, useRef, type Dispatch } from 'react'
 import type {
+  AssistantItem,
+  Block,
   HostEvent,
   HostReadyInfo,
+  Item,
   LlmUsage,
+  ModelInfo,
   ProjectSummary,
   SessionSummary,
-  TurnOutcome,
+  ToolBlock,
+  TurnMeta,
 } from '../../host/protocol.ts'
 
 /** 重新导出协议里的类型，让组件只依赖本模块这一处「界面类型面」。 */
-export type { HostReadyInfo, LlmUsage, ProjectSummary, SessionSummary, TurnOutcome } from '../../host/protocol.ts'
+export type {
+  AssistantItem, Block, HostReadyInfo, Item, LlmUsage, ModelInfo, ProjectSummary,
+  SessionSummary, TextBlock, ToolBlock, TurnMeta, TurnOutcome, UserItem,
+} from '../../host/protocol.ts'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 类型
@@ -97,6 +105,8 @@ export interface AgentApi {
   newSession(): Promise<ShellState>
   /** 让 host 重新扫描落盘会话（结果以 `workspace` 事件回来）。 */
   refreshSessions(): Promise<void>
+  /** 用系统默认程序打开一个文件；返回错误信息（成功时空串）。 */
+  openPath(path: string): Promise<string>
   /** 读某个项目的会话明细（结果以 `project-sessions` 事件回来）。 */
   listProjectSessions(path: string): Promise<void>
 }
@@ -107,57 +117,6 @@ declare global {
     readonly YuanMy?: AgentApi
   }
 }
-
-/** 助手正文块。 */
-export interface TextBlock {
-  readonly type: 'text'
-  readonly text: string
-}
-
-/** 一次工具调用（`result === null` 表示还在跑）。 */
-export interface ToolBlock {
-  readonly type: 'tool'
-  readonly callId: string
-  readonly name: string
-  readonly args: string
-  readonly result: string | null
-  readonly isError: boolean
-}
-
-export type Block = TextBlock | ToolBlock
-
-/** 回合结论。 */
-export interface TurnMeta {
-  readonly outcome: TurnOutcome
-  readonly error?: string
-  readonly toolCalls: number
-}
-
-export interface UserItem {
-  readonly id: string
-  readonly kind: 'user'
-  readonly text: string
-}
-
-export interface NoteItem {
-  readonly id: string
-  readonly kind: 'note'
-  readonly level: 'info' | 'warn' | 'error'
-  readonly text: string
-}
-
-export interface AssistantItem {
-  readonly id: string
-  readonly kind: 'assistant'
-  /** 尚未认领主进程的 turnId 时为 null。 */
-  readonly turnId: string | null
-  readonly reasoning: string
-  readonly blocks: readonly Block[]
-  /** null 表示这一回合还在进行。 */
-  readonly meta: TurnMeta | null
-}
-
-export type Item = UserItem | NoteItem | AssistantItem
 
 /**
  * 会话级 token 累计。
@@ -225,6 +184,82 @@ function accumulate(usage: UsageTotals, next: LlmUsage): UsageTotals {
   }
 }
 
+/**
+ * 从工具调用里认出「这是个文件操作」，供界面渲染文件卡片。
+ *
+ * 只认最常见的三个文件工具与它们惯用的参数名 —— 认不出来就返回 undefined，
+ * 界面退回普通工具行，不会硬编一张错卡片。
+ * @param name - 工具名。
+ * @param args - 工具参数摘要（`summarizeCall` 生成的一行文本）。
+ * @returns 文件路径与操作类型；不是文件操作则 undefined。
+ */
+export function fileActionOf(
+  name: string,
+  args: string,
+): { readonly path: string; readonly action: string } | undefined {
+  const verbs: Record<string, string> = { read: '读取', read_image: '读取', write: '写入', edit: '修改' }
+  const action = verbs[name]
+  if (action === undefined) return undefined
+  // summarizeCall 的输出形如 "src/foo.ts (lines=1+50)"，取第一个路径片段。
+  const path = args.split(' ')[0]?.trim() ?? ''
+  if (path === '' || path.startsWith('(')) return undefined
+  return { path, action }
+}
+
+/** 轨迹视图的一步。 */
+export interface TraceStep {
+  readonly id: string
+  readonly kind: 'user' | 'reasoning' | 'text' | 'tool' | 'note'
+  /** 一行标题（工具名 / 用户 / 推理 等）。 */
+  readonly label: string
+  /** 细节：工具参数、结果摘要、正文片段。 */
+  readonly detail: string
+  /** 这一步是否失败（结果带错误）。 */
+  readonly isError: boolean
+}
+
+/**
+ * 把会话条目摊平成「轨迹」——按发生顺序列出 agent 做过的每一步。
+ *
+ * 这是调试视角：不追求好看，追求**顺序与结果一目了然**。
+ * 纯函数：给定同样的条目，永远得到同样的步骤列表。
+ * @param items - 会话条目。
+ * @returns 轨迹步骤。
+ */
+export function traceSteps(items: readonly Item[]): TraceStep[] {
+  const steps: TraceStep[] = []
+  for (const item of items) {
+    if (item.kind === 'user') {
+      steps.push({ id: item.id, kind: 'user', label: '用户', detail: item.text, isError: false })
+      continue
+    }
+    if (item.kind === 'note') {
+      steps.push({ id: item.id, kind: 'note', label: `提示(${item.level})`, detail: item.text, isError: item.level === 'error' })
+      continue
+    }
+    if (item.reasoning !== '') {
+      steps.push({ id: `${item.id}-r`, kind: 'reasoning', label: '推理', detail: item.reasoning, isError: false })
+    }
+    item.blocks.forEach((block, index) => {
+      if (block.type === 'text') {
+        steps.push({ id: `${item.id}-t${String(index)}`, kind: 'text', label: '回复', detail: block.text, isError: false })
+        return
+      }
+      steps.push({
+        id: `${item.id}-c${String(index)}`,
+        kind: 'tool',
+        label: block.name,
+        detail: block.result === null ? `${block.args}（运行中）` : `${block.args}\n→ ${block.result}`,
+        isError: block.isError,
+      })
+    })
+    if (item.meta !== null && item.meta.outcome !== 'completed') {
+      steps.push({ id: `${item.id}-m`, kind: 'note', label: '结束', detail: item.meta.error ?? item.meta.outcome, isError: item.meta.outcome === 'error' })
+    }
+  }
+  return steps
+}
+
 /** 界面状态。 */
 export interface AgentState {
   readonly phase: 'booting' | 'ready' | 'error'
@@ -247,6 +282,12 @@ export interface AgentState {
   readonly loadingProject: string | null
   /** 本会话的 token 累计。 */
   readonly usage: UsageTotals
+  /** 该 provider 申报的可选模型（来自内核，不是界面写死的）。 */
+  readonly models: readonly ModelInfo[]
+  /** 上一回合的墙钟耗时（毫秒）；还没跑过为 null。 */
+  readonly lastTurnMs: number | null
+  /** 本会话已完成的回合数。 */
+  readonly turns: number
 }
 
 /** 归约动作：来自 host 的事件，或界面自己的动作。 */
@@ -274,6 +315,9 @@ export const initialState: AgentState = {
   projectSessions: {},
   loadingProject: null,
   usage: emptyUsage,
+  models: [],
+  lastTurnMs: null,
+  turns: 0,
 }
 
 /** 生成条目 id（渲染列表的 key）。 */
@@ -335,7 +379,14 @@ export function reducer(state: AgentState, action: Action): AgentState {
   switch (action.type) {
     // ── 内核生命周期 ──────────────────────────────────────────────────
     case 'ready':
-      return { ...state, phase: 'ready', error: null, info: action.info, busy: false }
+      return {
+        ...state,
+        phase: 'ready',
+        error: null,
+        info: action.info,
+        busy: false,
+        models: action.info.models ?? [],
+      }
 
     case 'restarting':
       // 新内核 = 新会话：对话、token 累计、已展开项目的会话缓存都要归零；
@@ -350,10 +401,30 @@ export function reducer(state: AgentState, action: Action): AgentState {
         projectSessions: {},
         loadingProject: null,
         usage: emptyUsage,
+        models: [],
+        lastTurnMs: null,
+        turns: 0,
       }
 
     case 'workspace':
       return { ...state, projects: action.projects, sessions: action.sessions }
+
+    /**
+     * 历史回放：恢复会话时 host 读日志送来的完整记录。
+     *
+     * **整段替换**而不是追加 —— 回放与实时是两条独立路径，混起来会重复。
+     * `usage` 同样按「历史总和」重置（`last` 置空：历史里没有「最近一次调用」的
+     * 明细，硬凑一个反而误导）。
+     */
+    case 'history':
+      return {
+        ...state,
+        items: action.items,
+        usage: { ...emptyUsage, ...action.usage, last: null },
+        turns: action.turns,
+        // 耗时是「上一回合」的量，历史里没有记录 → 保持未知，不伪造。
+        lastTurnMs: null,
+      }
 
     /** 某个折叠项目的会话明细到了（也可能是「读不到」的空结果）。 */
     case 'project-sessions':
@@ -480,7 +551,13 @@ export function reducer(state: AgentState, action: Action): AgentState {
         ? [{ type: 'text', text: fallbackText }]
         : current.blocks
       const meta: TurnMeta = { outcome: action.outcome, error: action.error, toolCalls: action.toolCalls ?? 0 }
-      return { ...next, items: replaceItem(state.items, index, { ...current, blocks, meta }) }
+      return {
+        ...next,
+        items: replaceItem(state.items, index, { ...current, blocks, meta }),
+        // 统计条用的「上一轮耗时 / 已完成轮次」
+        lastTurnMs: action.durationMs ?? null,
+        turns: state.turns + 1,
+      }
     }
 
     case 'user-error':
@@ -530,6 +607,8 @@ export interface AgentController {
   readonly refreshSessions: () => Promise<void>
   /** 读一个折叠项目的会话明细（结果以 `project-sessions` 事件回来）。 */
   readonly loadProjectSessions: (path: string) => Promise<void>
+  /** 用系统默认程序打开一个文件（文件卡片的「打开」按钮）。 */
+  readonly openPath: (path: string) => Promise<void>
   readonly pickDirectory: () => Promise<string | null>
   readonly getAppInfo: () => Promise<AppInfo> | undefined
 }
@@ -645,6 +724,13 @@ export function useAgent(): AgentController {
     if (typeof picked === 'string' && picked !== '') await api?.restart({ cwd: picked })
     return picked ?? null
   }, [api])
+  const openPath = useCallback(async (path: string): Promise<void> => {
+    const result = await api?.openPath(path)
+    // 主进程返回错误字符串（例如文件不存在），成功时空字符串
+    if (typeof result === 'string' && result !== '') {
+      dispatch({ type: 'user-error', message: `打开失败：${result}` })
+    }
+  }, [api])
   const getAppInfo = useCallback(() => api?.getAppInfo(), [api])
 
   return {
@@ -657,6 +743,7 @@ export function useAgent(): AgentController {
     openProject,
     refreshSessions,
     loadProjectSessions,
+    openPath,
     pickDirectory,
     getAppInfo,
   }

@@ -34,6 +34,8 @@ export const IPC = Object.freeze({
   newSession: 'YuanMy:new-session',
   /** 渲染进程 → 主进程：让 host 重新扫描落盘会话。 */
   listSessions: 'YuanMy:list-sessions',
+  /** 渲染进程 → 主进程：用系统默认程序打开一个文件。 */
+  openPath: 'YuanMy:open-path',
   /** 渲染进程 → 主进程：读某个项目的会话明细（侧栏里点开折叠的项目）。 */
   listProjectSessions: 'YuanMy:list-project-sessions',
   /** 渲染进程 → 主进程：Electron / Node / 应用版本信息。 */

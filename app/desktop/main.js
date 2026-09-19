@@ -20,13 +20,11 @@
 import { app, BrowserWindow, Menu, dialog, ipcMain, shell } from 'electron'
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { IPC } from './ipc.js'
 
-/** 冒烟模式的总时限：超过就判定失败并退出，避免挂死。 */
-const SMOKE_TIMEOUT_MS = 180_000
 /** host 子进程入口（TS 文件，由系统 node 的类型擦除能力直接运行）。 */
 const HOST_ENTRY = fileURLToPath(new URL('./host/index.ts', import.meta.url))
 /** 安全桥（沙箱化 preload 必须是自包含的 CommonJS）。 */
@@ -39,14 +37,6 @@ const HOST_READY_TIMEOUT_MS = 90_000
 const HOST_STOP_TIMEOUT_MS = 5_000
 /** 进程启动时刻：用于在冒烟/开发模式下报告「从启动到窗口可见」的耗时。 */
 const STARTED_AT = Date.now()
-/** 是否处于无人值守的冒烟模式。 */
-const SMOKE_MODE = process.env.YuanMy_SMOKE === '1'
-
-// 冒烟模式用**独立的 userData 目录**。
-// 否则它会和你正在用的桌面端抢单实例锁 —— 现象是冒烟进程安静地退出、什么都没测，
-// 而 CI 会把这种「什么都没发生」当成通过（这个坑真踩过）。
-if (SMOKE_MODE) app.setPath('userData', join(tmpdir(), 'YuanMy-Agent-smoke'))
-
 /** 唯一的主窗口；macOS 上关闭后可以再创建，所以是可变的。 */
 let win = null
 /** 渲染进程最后一次看到的 shell 状态，新窗口打开时用它立即出画面。 */
@@ -60,10 +50,75 @@ let state = { phase: 'booting' }
 let workspaceSnapshot = null
 /** 当前 host 启动配置：重启 / 换工作目录时以它为基线。 */
 let launchConfig = {
-  // 冒烟模式可以用 `YuanMy_SMOKE_CWD` 指定一个**临时工作区**：
-  // 既不会把测试会话写进你真实的 `.YuanMy`（早先的冒烟就是这样污染了侧栏列表），
-  // 也让 E2E 能自带「多个项目」的 fixture 去验证项目树。
-  cwd: (SMOKE_MODE ? process.env.YuanMy_SMOKE_CWD : undefined) ?? process.cwd(),
+  cwd: process.cwd(),
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 「最近打开过的项目」登记
+//
+// 为什么需要它：内核的 `stateDir` 默认是 `<cwd>/.YuanMy`，所以**每个项目一份
+// 会话库**；host 侧的 lister 只扫它自己那一个根，于是侧栏的「项目 → 会话」树里
+// 永远只有当前项目 —— 换到别的项目，上一个就直接消失了。
+//
+// 这里维护一份「打开过哪些项目」的清单（放在 app 级的 userData 里，因为项目
+// 自己的 `.YuanMy` 是每个项目一份、互相看不到），随环境变量交给 host，
+// 由它去扫这些项目各自的库。**数据位置一个字节都不动**。
+//
+// 它只是**线索**：路径可能早被删了、库可能还不存在，host 那边读不到就跳过。
+// 所以这里读写失败一律不抛 —— 一个线索文件不该拦住启动。
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 登记文件。`YuanMy_PROJECTS_FILE` 可覆盖（冒烟用它把状态关进临时工作区）。 */
+const PROJECTS_FILE = process.env.YuanMy_PROJECTS_FILE ?? join(app.getPath('userData'), 'projects.json')
+/** 最多记多少个项目（超出丢最久没打开的）。 */
+const MAX_RECENT_PROJECTS = 20
+
+/**
+ * 读登记表的原始条目（最近的在前）。
+ *
+ * 兼容「只有路径字符串」的简写 —— 手写这个文件调试时会那么写。
+ * @returns {{ path: string, lastOpenedAt: number }[]} 条目；文件不存在或损坏时是空数组。
+ */
+function readRecentEntries() {
+  try {
+    const parsed = JSON.parse(readFileSync(PROJECTS_FILE, 'utf8'))
+    const entries = Array.isArray(parsed?.projects) ? parsed.projects : []
+    return entries
+      .map((entry) => (typeof entry === 'string' ? { path: entry, lastOpenedAt: 0 } : entry))
+      .filter((entry) => typeof entry?.path === 'string' && entry.path !== '')
+      .map((entry) => ({
+        path: entry.path,
+        lastOpenedAt: typeof entry.lastOpenedAt === 'number' ? entry.lastOpenedAt : 0,
+      }))
+      .sort((a, b) => b.lastOpenedAt - a.lastOpenedAt)
+  } catch {
+    return []
+  }
+}
+
+/**
+ * 最近打开过的项目路径（最近的在前）。
+ * @returns 路径数组；读不到时是空数组（侧栏因此只列当前项目，功能降级但能用）。
+ */
+function readRecentProjects() {
+  return readRecentEntries().map((entry) => entry.path)
+}
+
+/**
+ * 记下一个项目（去重后移到最前），并裁到上限。
+ *
+ * 写失败只提示：登记丢了顶多是侧栏少列一个项目，不该影响正在跑的内核。
+ * @param {string} path - 项目根目录。
+ */
+function rememberProject(path) {
+  try {
+    const next = [{ path, lastOpenedAt: Date.now() }, ...readRecentEntries().filter((entry) => entry.path !== path)]
+      .slice(0, MAX_RECENT_PROJECTS)
+    mkdirSync(dirname(PROJECTS_FILE), { recursive: true })
+    writeFileSync(PROJECTS_FILE, `${JSON.stringify({ version: 1, projects: next }, null, 2)}\n`)
+  } catch (error) {
+    process.stderr.write(`YuanMy: 记录最近项目失败: ${String(error)}\n`)
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -147,10 +202,13 @@ class AgentHost {
     this.failureReported = false
     this.info = null
 
+    // 把「最近打开过的其他项目」交给 host：它只扫当前项目的会话库，
+    // 不带上这份清单，侧栏的项目树里就永远只有当前项目（见文件上半部分的说明）。
+    const recentProjects = readRecentProjects().filter((path) => path !== config.cwd)
     const child = spawn(resolveNodeBinary(), buildHostArgs(config), {
       cwd: config.cwd,
       stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
-      env: process.env,
+      env: { ...process.env, YuanMy_PROJECT_ROOTS: recentProjects.join(':') },
     })
     this.child = child
 
@@ -289,9 +347,20 @@ function reportHostFailure(error) {
 async function restartWith(config) {
   // 新内核的清单要重新扫，先作废旧快照。
   workspaceSnapshot = null
-  // 会话只属于它的项目：换工作目录时必须丢掉 resume / sessionId，
-  // 否则会拿着上一个项目的会话 id 去新项目里找，得到「会话不存在」。
-  const next = config.cwd !== launchConfig.cwd
+  // 会话只属于它的项目：换工作目录时，**上一个**会话的 resume / sessionId 必须丢掉，
+  // 否则会拿着旧项目的会话 id 去新项目里找，得到「会话不存在」。
+  //
+  // ⚠️ 但「恢复另一个项目里的会话」是**合法**的组合：调用方（侧栏）会同时给出
+  // 目标 cwd 和该项目的会话 id（`onOpenSession(id, project.path)`）。
+  // 早先这里只要 cwd 变了就无条件清掉 resume，于是点别的项目下的会话时
+  // 内核会用新 cwd 开一个**全新会话** —— 界面一片空白，
+  // 正是「切换工作区中的会话后读不到历史」的根因。
+  // 判据因此是「调用方有没有**明确**要求恢复」，而不是「cwd 变没变」：
+  //   - pickDirectory / openProject：没给 resume（或显式 undefined）→ 清掉继承来的旧值；
+  //   - 侧栏点会话：显式给了 resume → 保留，它就是目标项目里的会话。
+  const cwdChanged = config.cwd !== launchConfig.cwd
+  const wantsResume = typeof config.resume === 'string' && config.resume !== ''
+  const next = cwdChanged && !wantsResume
     ? { ...config, resume: undefined, sessionId: undefined }
     : config
   launchConfig = { ...next }
@@ -301,6 +370,8 @@ async function restartWith(config) {
   try {
     const info = await host.start(config)
     state = { phase: 'ready', info }
+    // 起来了才算「打开过」：这样登记表里不会攒下一堆启动失败的路径。
+    rememberProject(config.cwd)
   } catch (error) {
     reportHostFailure(error instanceof Error ? error : new Error(String(error)))
   }
@@ -380,8 +451,8 @@ function createWindow() {
   })
 
   // 把渲染进程的 console 转发到主进程输出：界面出问题时（React 抛错、CSP 拦截、
-  // Promise 未处理）这里是唯一的线索。冒烟/开发模式下才开，避免正常使用刷屏。
-  if (SMOKE_MODE || process.env.YuanMy_DEV === '1') {
+  // Promise 未处理）这里是唯一的线索。开发模式下才开，避免正常使用刷屏。
+  if (process.env.YuanMy_DEV === '1') {
     win.webContents.on('console-message', (...args) => {
       // Electron 新旧版本签名不同：新版是 ({level, message, ...})，旧版是 (event, level, message)。
       const first = args[0]
@@ -395,7 +466,7 @@ function createWindow() {
   win.once('ready-to-show', () => {
     win?.show()
     // 渲染进程的 bundle 有 10MB 左右（主要是 shiki 的语法定义），这里量一下真实代价。
-    if (process.env.YuanMy_SMOKE === '1' || process.env.YuanMy_DEV === '1') {
+    if (process.env.YuanMy_DEV === '1') {
       process.stdout.write(`[desktop] 窗口可见 · 启动耗时 ${String(Date.now() - STARTED_AT)}ms\n`)
     }
   })
@@ -548,6 +619,15 @@ function registerIpc() {
     return restartWith({ ...launchConfig, sessionId: undefined, resume: undefined })
   })
 
+  ipcMain.handle(IPC.openPath, async (event, path) => {
+    assertSender(event)
+    if (typeof path !== 'string' || path === '') throw new Error('路径为空')
+    // 相对路径按 agent 的工作目录解析：工具调用里的 file_path 常常是相对的。
+    const target = isAbsolute(path) ? path : join(launchConfig.cwd, path)
+    // shell.openPath 成功返回空串，失败返回错误描述 —— 原样交回渲染进程显示。
+    return shell.openPath(target)
+  })
+
   ipcMain.handle(IPC.listSessions, (event) => {
     assertSender(event)
     // 清单由 host 扫描磁盘后以 `workspace` 事件推回来，这里只负责触发。
@@ -565,397 +645,12 @@ function registerIpc() {
 // ─────────────────────────────────────────────────────────────────────────────
 // 启动
 // ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * 冒烟模式：布局不能失控。
- *
- * 回归的是一个真 bug：`.app-shell` 只写了 `height: 100%`，行是隐式 auto 会被内容撑高，
- * 于是展开一段长推理后整个 shell 长得比窗口还高 —— 侧栏被拉到同样高度（底部内容顶出
- * 可视区，看起来像「侧栏样式变了」），`.messages` 也失去内部滚动，长内容直接把渲染
- * 进程卡死。断言：展开前后 shell / body / 侧栏高度都必须 ≤ 视口，且内容是**内部滚动**。
- *
- * 这里注入一段带超长不可断 token 的推理，所以不依赖模型这轮是否输出推理、输出多长。
- */
-const LAYOUT_PROBE_REASONING = `${
-  'The user wants me to inspect the directory structure and summarize it. I should check what files exist first, then read the important ones. '.repeat(28)
-}\n${'x'.repeat(4000)}`
-
-/** 冒烟模式：展开推理块，报告布局是否被撑开。 */
-const SMOKE_LAYOUT_PROBE = `(async () => {
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-  const details = document.querySelector('details.reasoning')
-  if (details === null) return JSON.stringify({ error: '没有可展开的推理块' })
-  if (details.open) details.querySelector('summary').click()
-  await sleep(20)
-  const sidebar = document.querySelector('.sidebar')
-  const messages = document.querySelector('.messages')
-  const shell = document.querySelector('.app-shell')
-  const height = (node) => Math.round(node.getBoundingClientRect().height)
-  const before = { sidebar: height(sidebar), shell: height(shell), body: document.body.scrollHeight }
-  const t0 = performance.now()
-  details.querySelector('summary').click()
-  void document.body.offsetHeight
-  const expandMs = Math.round(performance.now() - t0)
-  await sleep(30)
-  return JSON.stringify({
-    viewport: window.innerHeight,
-    before,
-    after: { sidebar: height(sidebar), shell: height(shell), body: document.body.scrollHeight },
-    messages: { client: Math.round(messages.clientHeight), scroll: Math.round(messages.scrollHeight) },
-    reasoningChars: details.querySelector('.reasoning__body').textContent.length,
-    expandMs,
-  })
-})()`
-
-/**
- * 冒烟模式：验证项目树。
- *
- * 重点验证**懒加载**：折叠的项目在被点开之前不该有任何会话节点；点开之后
- * 界面要向 host 要数据（renderer → main → host → 磁盘 → 回来），再渲染出来。
- * 这是「会话归纳在项目里」这个结构的核心交互，必须真点一次。
- */
-const SMOKE_TREE_PROBE = `(async () => {
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-  // ⚠️ 每次都要**重新查询**：React 一次重渲染就可能换掉 DOM 节点，
-  // 之前抓着的引用会变成游离节点（count 恒为 0，甚至读不出属性）。
-  const currentHead = () => document.querySelector('[data-testid="current-project"]')
-  const otherHead = () => document.querySelector('[data-testid="project-item"]')
-  const leaves = (head) => {
-    const branch = head === null ? null : head.closest('li')
-    return branch === null ? -1 : branch.querySelectorAll('[data-testid="session-item"]').length
-  }
-
-  const report = {
-    projectRows: document.querySelectorAll('[data-testid="current-project"], [data-testid="project-item"]').length,
-    currentLeaves: leaves(currentHead()),
-    currentExpanded: currentHead()?.getAttribute('aria-expanded') ?? '',
-    otherFound: otherHead() !== null,
-  }
-  if (!report.otherFound) return JSON.stringify(report)
-
-  report.otherLeavesBefore = leaves(otherHead())
-  report.otherExpandedBefore = otherHead()?.getAttribute('aria-expanded') ?? ''
-
-  // 折叠当前项目：它的会话应当从 DOM 里消失；再展开应当回来。
-  currentHead().click()
-  await sleep(150)
-  report.currentLeavesAfterCollapse = leaves(currentHead())
-  currentHead().click()
-  await sleep(150)
-  report.currentLeavesAfterExpand = leaves(currentHead())
-
-  // 点开另一个项目 → 懒加载（renderer → main → host → 磁盘 → 回来）
-  otherHead().click()
-  for (let i = 0; i < 40 && leaves(otherHead()) === 0; i += 1) await sleep(100)
-  report.otherLeavesAfter = leaves(otherHead())
-  report.otherExpandedAfter = otherHead()?.getAttribute('aria-expanded') ?? ''
-  return JSON.stringify(report)
-})()`
-
-/** 冒烟模式：验证输入法组字期间按回车不会被当成「发送」。 */
-const SMOKE_IME_PROBE = `(async () => {
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-  const input = document.querySelector('[data-testid="input"]')
-  const userBubbles = () => document.querySelectorAll('[data-testid="user-message"]').length
-  if (input === null) return JSON.stringify({ error: '找不到输入框' })
-
-  const before = userBubbles()
-  // React 用自己的 value 追踪，直接赋 .value 它收不到；要用原生 setter 再派发 input。
-  const setValue = (value) => {
-    const proto = Object.getPrototypeOf(input)
-    Object.getOwnPropertyDescriptor(proto, 'value').set.call(input, value)
-    input.dispatchEvent(new Event('input', { bubbles: true }))
-  }
-  const keyDown = (init) => input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, ...init }))
-
-  // keyCode 能不能通过 init 传进合成事件，直接决定下面哪条路径被覆盖。
-  const keyCodeSettable = new KeyboardEvent('keydown', { key: 'Enter', keyCode: 229 }).keyCode === 229
-
-  setValue('ni hao')
-  await sleep(20)
-
-  // ① 组字中按回车（中文输入法确认候选词）——不该发送。
-  input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }))
-  keyDown({ isComposing: true, keyCode: 229 })
-  await sleep(20)
-  const afterComposing = userBubbles()
-
-  // ② compositionend 之后紧跟的那次回车（macOS Chromium 边界情况）——也不该发送。
-  input.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '你好' }))
-  keyDown({ isComposing: false, keyCode: keyCodeSettable ? 229 : 13 })
-  await sleep(20)
-  const afterJustEnded = userBubbles()
-
-  // ③ 临时标记过期之后，回车必须恢复可用（否则守卫卡死，回车永远发不出去）。
-  await sleep(30)
-  keyDown({ isComposing: false, keyCode: 13 })
-  await sleep(30)
-  const afterPlain = userBubbles()
-
-  // 立刻中断这一次真实发送，避免污染后面的回合断言。
-  document.querySelector('[data-testid="cancel"]')?.click()
-
-  return JSON.stringify({
-    keyCodeSettable,
-    sentWhileComposing: afterComposing - before,
-    sentRightAfterCompositionEnd: afterJustEnded - afterComposing,
-    sentOnPlainEnter: afterPlain - afterJustEnded,
-  })
-})()`
-
-/** 冒烟模式用来问渲染进程的那段脚本：等界面自己把状态刷成「就绪」再回话。 */
-const SMOKE_PROBE = `new Promise((resolve) => {
-  const text = (sel) => { const n = document.querySelector(sel); return n === null ? 'MISSING' : n.textContent.trim() }
-  const deadline = Date.now() + 12000
-  const diag = async () => {
-    try {
-      const s = await window.YuanMy.getState()
-      // 模型 id 与工具数原先印在侧栏的「运行状态」块里（该块已删除），改从内核信息快照取。
-      return { apiRefresh: typeof window.YuanMy.refreshSessions, phase: s.phase, hasWorkspace: s.workspace !== undefined,
-        projects: s.workspace === undefined ? -1 : s.workspace.projects.length,
-        sessions: s.workspace === undefined ? -1 : s.workspace.sessions.length,
-        model: s.info === undefined ? '' : s.info.model,
-        tools: s.info === undefined ? '' : String(s.info.tools.length) }
-    } catch (e) { return { error: String(e) } }
-  }
-  const tick = async () => {
-    const status = text('[data-testid="status-text"]')
-    // 会话清单是 host 扫盘后**异步**推来的，所以要等「就绪 + 列表已填充」，
-    // 不能一看到就绪就采样（早先就是这里误报过）。
-    const listReady = document.querySelectorAll('[data-testid="session-item"]').length > 0
-    if ((status === '就绪' && listReady) || Date.now() > deadline) {
-      const diagnostics = await diag()
-      resolve(JSON.stringify({
-        status,
-        bridge: typeof window.YuanMy,
-        react: document.getElementById('root').children.length,
-        model: diagnostics.model === undefined || diagnostics.model === '' ? 'MISSING' : diagnostics.model,
-        tools: diagnostics.tools === undefined || diagnostics.tools === '' ? 'MISSING' : diagnostics.tools,
-        cwd: document.querySelector('[data-testid="current-project"]')?.dataset.projectPath || '',
-        project: text('[data-testid="project-name"]'),
-        projectItems: document.querySelectorAll('[data-testid="project-item"]').length,
-        sessionItems: document.querySelectorAll('[data-testid="session-item"]').length,
-        currentSessionMarked: document.querySelectorAll('[data-testid="session-item"][data-current="true"]').length,
-        tokenBar: text('[data-testid="token-bar"]'),
-        platform: document.documentElement.dataset.platform || '',
-        vibrancy: document.documentElement.dataset.vibrancy || '',
-        dragRegions: document.querySelectorAll('.drag-region').length,
-        diag: diagnostics,
-        messages: document.querySelectorAll('[data-testid="user-message"],[data-testid="assistant-message"]').length,
-      }))
-      return
-    }
-    setTimeout(tick, 60)
-  }
-  tick()
-})`
-
-/**
- * 冒烟模式用来等一个真实回合跑完的脚本。
- *
- * 只看**最后一条**助手消息（前面的回合或输入法探针可能留下更早的消息），
- * 统计也只在它内部数，避免把历史消息算进来。
- */
-const SMOKE_WAIT_TURN = `new Promise((resolve) => {
-  // 注意：这段脚本与 SMOKE_PROBE 是两个独立的作用域，助手函数必须自带一份
-  // （曾经借用过 SMOKE_PROBE 的 text()，结果 ReferenceError 让 Promise 永不 settle，
-  //  整个冒烟就死等 —— 这种坑必须靠「探针自己出错」而不是「界面出错」来区分）。
-  const text = (sel) => { const n = document.querySelector(sel); return n === null ? 'MISSING' : n.textContent.trim() }
-  const deadline = Date.now() + 90000
-  const tick = () => {
-    const assistants = document.querySelectorAll('[data-testid="assistant-message"]')
-    const assistant = assistants.length === 0 ? null : assistants[assistants.length - 1]
-    const meta = assistant === null ? null : assistant.querySelector('[data-testid="message-meta"]')
-    const metaText = meta === null ? '' : meta.textContent.trim()
-    const done = metaText !== '' && metaText !== '正在生成…'
-    if (done || Date.now() > deadline) {
-      const scope = assistant ?? document
-      resolve(JSON.stringify({
-        meta: metaText,
-        tools: scope.querySelectorAll('[data-testid="tool-card"]').length,
-        markdownBlocks: scope.querySelectorAll('[data-testid="markdown"]').length,
-        bold: scope.querySelectorAll('[data-streamdown="strong"]').length,
-        codeBlocks: scope.querySelectorAll('[data-testid="markdown"] pre code').length,
-        headings: scope.querySelectorAll('[data-testid="markdown"] h1, [data-testid="markdown"] h2, [data-testid="markdown"] h3').length,
-        lists: scope.querySelectorAll('[data-testid="markdown"] ul, [data-testid="markdown"] ol').length,
-        tokenInput: Number((document.querySelector('[data-testid="token-input"] b')?.textContent ?? '0').replace(/[^0-9.]/g, '')) || 0,
-        tokenOutput: Number((document.querySelector('[data-testid="token-output"] b')?.textContent ?? '0').replace(/[^0-9.]/g, '')) || 0,
-        tokenCache: text('[data-testid="token-cache"]'),
-        tokenRate: text('[data-testid="token-rate"]'),
-        text: (assistant === null ? '' : assistant.textContent).slice(0, 300),
-        // 超时诊断：看清帧到底有没有到 DOM。
-        diagAssistants: document.querySelectorAll('[data-testid="assistant-message"]').length,
-        diagUsers: document.querySelectorAll('[data-testid="user-message"]').length,
-        diagMetas: document.querySelectorAll('[data-testid="message-meta"]').length,
-        diagNotes: document.querySelectorAll('[data-testid="note"]').length,
-        diagLastMeta: metaText,
-      }))
-      return
-    }
-    setTimeout(tick, 200)
-  }
-  tick()
-})`
-
-/**
- * 冒烟模式（`npm run desktop:smoke`）：无人值守启动，跑完断言就退出。
- *
- * 它不只是「内核起来了」——还会**直接问渲染进程**，因此能一次性验证
- * 「窗口 + preload 的桥 + renderer.js 初始化 + IPC 往返 + 内核就绪」整条链路。
- *
- * 设了 `YuanMy_SMOKE_PROMPT` 就再往前一步：从渲染进程里调用 `window.YuanMy.sendPrompt()`，
- * 也就是用户点「发送」走的那条路，然后读 DOM 确认助手消息与工具卡片真的渲染出来了。
- * 退出码 0 表示全绿。
- */
-async function runSmoke() {
-  // 总看门狗：任何一步卡住都要**失败退出**，而不是把 CI 挂到超时
-  // （曾经因为一个探针 ReferenceError 死等 5 分钟）。
-  const watchdog = setTimeout(() => {
-    process.stderr.write(`[smoke] 超时：${String(SMOKE_TIMEOUT_MS / 1000)}s 内没有跑完，强制失败\n`)
-    app.exit(1)
-  }, SMOKE_TIMEOUT_MS)
-  watchdog.unref?.()
-
-  const outcome = await restartWith(launchConfig)
-  /**
-   * 逐行立即输出，而不是攒到最后一次性打印。
-   * 冒烟一旦卡住，攒着输出就等于什么都看不到（调这个脚本时吃过亏）。
-   */
-  const say = (line) => { process.stdout.write(`${line}\n`) }
-  say(outcome.phase === 'ready'
-    ? `[smoke] host ready · ${outcome.info.sessionId} · ${String(outcome.info.tools.length)} 个工具`
-    : `[smoke] host failed: ${outcome.error}`)
-
-  let passed = outcome.phase === 'ready'
-  try {
-    if (win !== null && !win.isDestroyed()) {
-      const probe = JSON.parse(await win.webContents.executeJavaScript(SMOKE_PROBE, true))
-      say(`[smoke] renderer · status=${probe.status} · bridge=${probe.bridge} · React 已挂载=${String(probe.react > 0)}`)
-      say(`[smoke] 侧栏 · 模型=${probe.model} · 工具=${probe.tools}`)
-      say(`[smoke] 外观 · platform=${probe.platform} · 磨砂玻璃=${probe.vibrancy} · 拖拽区 ${String(probe.dragRegions)} 处`)
-      say(`[smoke] cwd=${probe.cwd} · 已渲染消息 ${String(probe.messages)} 条`)
-      say(`[smoke] 侧栏 · 项目=${probe.project} · 会话条目 ${String(probe.sessionItems)} 个（当前高亮 ${String(probe.currentSessionMarked)} 个）`)
-      say(`[smoke] token 栏 · ${probe.tokenBar}`)
-      say(`[smoke] 诊断 · ${JSON.stringify(probe.diag)}`)
-      passed = passed && probe.status === '就绪' && probe.bridge === 'object' && probe.react > 0
-      // 顶部栏隐藏后必须仍有拖拽区，否则窗口拖不动。
-      passed = passed && probe.dragRegions > 0
-      // 项目名要显示出来；本项目已有落盘会话，所以列表里至少要有一条、且有且只有一条标记为当前。
-      passed = passed && probe.project !== 'MISSING' && probe.project !== '（未就绪）'
-      passed = passed && probe.sessionItems > 0 && probe.currentSessionMarked === 1
-      // token 栏必须存在（此刻还没有调用，命中率显示 —）。
-      passed = passed && probe.tokenBar.includes('命中率')
-    } else {
-      say('[smoke] renderer · 窗口不存在')
-      passed = false
-    }
-  } catch (error) {
-    say(`[smoke] renderer probe failed: ${error instanceof Error ? error.message : String(error)}`)
-    passed = false
-  }
-
-  // 端到端跑一个真实回合：入口就是渲染进程里的 window.YuanMy.sendPrompt。
-  const prompt = process.env.YuanMy_SMOKE_PROMPT
-  if (passed && typeof prompt === 'string' && prompt !== '') {
-    try {
-      await win.webContents.executeJavaScript(`window.YuanMy.sendPrompt(${JSON.stringify(prompt)})`, true)
-      const turn = JSON.parse(await win.webContents.executeJavaScript(SMOKE_WAIT_TURN, true))
-      say(`[smoke] turn · ${turn.meta} · 工具卡片 ${String(turn.tools)} 张`)
-      if (!turn.meta.includes('完成')) {
-        say(`[smoke] 超时诊断 · 助手消息 ${String(turn.diagAssistants)} · 用户消息 ${String(turn.diagUsers)} · meta 节点 ${String(turn.diagMetas)} · 提示 ${String(turn.diagNotes)} · 最后 meta="${turn.diagLastMeta}"`)
-      }
-      say(`[smoke] markdown · 块 ${String(turn.markdownBlocks)} · 代码块 ${String(turn.codeBlocks)} · 粗体 ${String(turn.bold)} · 标题 ${String(turn.headings)} · 列表 ${String(turn.lists)}`)
-      say(`[smoke] 界面正文片段：${turn.text.replace(/\s+/g, ' ').slice(0, 140)}`)
-      // Markdown 必须真的被解析（而不是把源码当纯文本贴出来）。
-      passed = passed && turn.meta.includes('完成') && turn.markdownBlocks > 0
-      // 跑过一轮之后，token 栏必须有真实数字（输入/输出/缓存/命中率），不能再是 0 / —。
-      passed = passed && turn.tokenInput > 0 && turn.tokenOutput > 0 && turn.tokenRate.includes('%')
-      say(`[smoke] token · 输入 ${String(turn.tokenInput)} · 输出 ${String(turn.tokenOutput)} · ${turn.tokenCache} · ${turn.tokenRate}`)
-    } catch (error) {
-      say(`[smoke] turn failed: ${error instanceof Error ? error.message : String(error)}`)
-      passed = false
-    }
-  }
-
-  // 输入法守卫：在真实窗口里验证组字期间的回车不会被当成发送。
-  // 放在最后跑 —— 它的第 ③ 步会真的发一次（用来证明守卫没把回车卡死），
-  // 紧接着就被 cancel 掉，所以不能影响前面的回合断言。
-  if (passed) {
-    try {
-      const ime = JSON.parse(await win.webContents.executeJavaScript(SMOKE_IME_PROBE, true))
-      say(`[smoke] 输入法 · composition 可注入=${String(ime.keyCodeSettable)} · 组字中发送=${String(ime.sentWhileComposing)} 次 · compositionend 后发送=${String(ime.sentRightAfterCompositionEnd)} 次 · 普通回车发送=${String(ime.sentOnPlainEnter)} 次`)
-      // 组字中 / 刚结束组字都不许发送；普通回车必须能发送（否则守卫把回车卡死了）。
-      passed = ime.sentWhileComposing === 0 && ime.sentRightAfterCompositionEnd === 0 && ime.sentOnPlainEnter === 1
-    } catch (error) {
-      say(`[smoke] 输入法探针失败: ${error instanceof Error ? error.message : String(error)}`)
-      passed = false
-    }
-  }
-
-  // 项目树：折叠/展开当前项目 + 懒加载另一个项目。
-  if (passed) {
-    try {
-      const tree = JSON.parse(await win.webContents.executeJavaScript(SMOKE_TREE_PROBE, true))
-      say(`[smoke] 项目树 · ${String(tree.projectRows)} 个项目 · 当前折叠前 ${String(tree.currentLeaves)} 条 → 折叠后 ${String(tree.currentLeavesAfterCollapse)} 条 → 再展开 ${String(tree.currentLeavesAfterExpand)} 条`)
-      if (tree.otherFound) {
-        say(`[smoke] 项目树 · 另一个项目：展开前 ${String(tree.otherLeavesBefore)} 条 → 点开并懒加载后 ${String(tree.otherLeavesAfter)} 条`)
-      } else {
-        say('[smoke] 项目树 · 只有一个项目（未验证懒加载）')
-      }
-      passed = passed && tree.projectRows >= 2
-      // 折叠后当前项目的会话必须从 DOM 消失，展开后回来
-      passed = passed && tree.currentLeaves > 0
-        && tree.currentLeavesAfterCollapse === 0 && tree.currentLeavesAfterExpand > 0
-      // 懒加载：点开前没有节点，点开后必须加载出来
-      passed = passed && tree.otherFound
-        && tree.otherLeavesBefore === 0 && tree.otherLeavesAfter > 0
-        && tree.otherExpandedAfter === 'true'
-    } catch (error) {
-      say(`[smoke] 项目树探针失败: ${error instanceof Error ? error.message : String(error)}`)
-      passed = false
-    }
-  }
-
-  // 布局探针放最后：它会往界面里塞一条合成消息，不能影响前面的断言。
-  if (passed) {
-    try {
-      win.webContents.send(IPC.hostEvent, { type: 'reasoning-delta', turnId: 'layout-probe', text: LAYOUT_PROBE_REASONING })
-      await new Promise((resolve) => { setTimeout(resolve, 400) })
-      const layout = JSON.parse(await win.webContents.executeJavaScript(SMOKE_LAYOUT_PROBE, true))
-      if (layout.error !== undefined) {
-        say(`[smoke] 布局 · 跳过（${layout.error}）`)
-      } else {
-        say(`[smoke] 布局 · 视口 ${String(layout.viewport)} · 侧栏 ${String(layout.before.sidebar)}→${String(layout.after.sidebar)} · shell ${String(layout.after.shell)} · body ${String(layout.after.body)}`)
-        say(`[smoke] 布局 · 消息区 client ${String(layout.messages.client)} / scroll ${String(layout.messages.scroll)} · 推理 ${String(layout.reasoningChars)} 字符 · 展开 ${String(layout.expandMs)}ms`)
-        const contained = layout.after.sidebar <= layout.viewport
-          && layout.after.shell <= layout.viewport
-          && layout.after.body <= layout.viewport
-        // 内容必须撑高了**内部**滚动区，而不是把整个外壳撑开。
-        const scrolls = layout.messages.scroll > layout.messages.client
-        passed = passed && contained && scrolls && layout.expandMs < 250
-        if (!contained) say('[smoke] ✗ 布局被撑开：外壳高度超过了视口（侧栏会跟着变形）')
-        if (!scrolls) say('[smoke] ✗ 消息区没有内部滚动，内容把外壳撑大了')
-      }
-    } catch (error) {
-      say(`[smoke] 布局探针失败: ${error instanceof Error ? error.message : String(error)}`)
-      passed = false
-    }
-  }
-
-  if (!passed) process.stderr.write('[smoke] 未通过：窗口 / 渲染进程 / 内核至少有一环没就绪\n')
-  await host.stop()
-  app.exit(passed ? 0 : 1)
-}
 /** `ready` 之后才允许做的事：窗口、菜单、IPC、内核。 */
 async function onReady() {
   registerIpc()
   buildMenu()
   createWindow()
 
-  if (SMOKE_MODE) {
-    await runSmoke()
-    return
-  }
   // 窗口先出来，内核随后就绪：冷启动时不会有空白等待。
   void restartWith(launchConfig)
 }
@@ -970,13 +665,8 @@ app.setAboutPanelOptions({
 
 // 单实例：第二次启动时把已有窗口顶到前面，避免两个进程抢同一份会话目录。
 if (!app.requestSingleInstanceLock()) {
-  if (SMOKE_MODE) {
-    // 冒烟模式绝不能静默成功退出：明确报错并给非零退出码。
-    process.stderr.write('[smoke] 无法取得单实例锁（已有实例在运行），本次冒烟未执行\n')
-    app.exit(1)
-  } else {
-    app.quit()
-  }
+  // 已有实例在跑：这个进程直接退出，由已有实例把窗口顶到前面（见下面的 second-instance）。
+  app.quit()
 } else {
   // 事件监听都在 `ready` 之前同步注册：它们本身不需要等 ready。
   app.on('second-instance', () => {

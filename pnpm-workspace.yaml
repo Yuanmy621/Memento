@@ -4,3 +4,19 @@ allowBuilds:
   esbuild: true
   koffi: true
   node-pty: true
+
+# 外部 MCP 客户端插件（@deepseek-ai/dsh-mcp-client@0.0.1-rc.1）声明的是 0.0.1-rc.1 那条
+# 版本线的 peer，但它真实用到的 API（`ctx.tools` 注册工具 + `scrubbedParentEnv`）
+# 在 0.1.5-rc.2 上完全成立 —— 而 0.1.5-rc.2 才是本仓库另外 40 个 dsh 包的版本。
+#
+# 所以这里把 peer 对齐到实际安装的版本，**不**为了它引入过期依赖线：
+# 试过装 @deepseek-ai/dsh-subprocess@0.0.1-rc.1，结果它被链接进
+# dsh-subprocess-local 的解析路径，而后者要的是 0.1.5-rc.2 的 SubprocessRuntime，
+# 直接把内核打崩（`does not provide an export named 'SubprocessRuntime'`）。
+peerDependencyRules:
+  allowedVersions:
+    '@deepseek-ai/dsh-invariants': '0.1.5-rc.2'
+    '@deepseek-ai/dsh-llm': '0.1.5-rc.2'
+    '@deepseek-ai/dsh-subprocess': '0.1.5-rc.2'
+    '@deepseek-ai/dsh-tools': '0.1.5-rc.2'
+    '@deepseek-ai/cordis': '4.0.2'

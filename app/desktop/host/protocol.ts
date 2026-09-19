@@ -39,6 +39,86 @@ export interface HostLaunchConfig {
   readonly resume?: string
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 会话记录（transcript）的词表
+//
+// 这一组类型描述「界面上一条会话长什么样」，由三处共用：
+//   - 实时路径：`bridge.ts` 发出的增量帧 → 渲染进程归约成这些结构；
+//   - 回放路径：`history.ts` 读落盘日志，直接产出同样的结构；
+//   - 渲染：组件只认这些结构。
+// 放在协议里（而不是渲染进程内部）是因为**回放是 host 的职责** ——
+// 官方客户端同样由 host 提供已完成回合的 transcript，客户端只负责渲染。
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 助手正文块。 */
+export interface TextBlock {
+  readonly type: 'text'
+  readonly text: string
+}
+
+/** 一次工具调用（`result === null` 表示还在跑）。 */
+export interface ToolBlock {
+  readonly type: 'tool'
+  readonly callId: string
+  readonly name: string
+  readonly args: string
+  readonly result: string | null
+  readonly isError: boolean
+}
+
+export type Block = TextBlock | ToolBlock
+
+/** 回合结论。 */
+export interface TurnMeta {
+  readonly outcome: TurnOutcome
+  readonly error?: string
+  readonly toolCalls: number
+}
+
+/** 用户消息。 */
+export interface UserItem {
+  readonly id: string
+  readonly kind: 'user'
+  readonly text: string
+}
+
+/** 系统提示（居中显示）。 */
+export interface NoteItem {
+  readonly id: string
+  readonly kind: 'note'
+  readonly level: 'info' | 'warn' | 'error'
+  readonly text: string
+}
+
+/** 一条助手消息（一个回合一条，内部按顺序排 blocks）。 */
+export interface AssistantItem {
+  readonly id: string
+  readonly kind: 'assistant'
+  /** 尚未认领主进程的 turnId 时为 null。 */
+  readonly turnId: string | null
+  readonly reasoning: string
+  readonly blocks: readonly Block[]
+  /** null 表示这一回合还在进行。 */
+  readonly meta: TurnMeta | null
+}
+
+export type Item = UserItem | NoteItem | AssistantItem
+
+/**
+ * 会话级 token 累计（回放历史时由日志里的 usage 求和得到）。
+ *
+ * 注意与渲染进程自己那份 `UsageTotals` 的区别：那份多一个 `last`（最近一次调用
+ * 的明细，给 tooltip 用），是**累加过程**里的状态；这里只描述「历史总和」。
+ */
+export interface SessionUsage {
+  readonly inputTokens: number
+  readonly outputTokens: number
+  readonly cacheReadTokens: number
+  readonly cacheWriteTokens: number
+  readonly reasoningTokens: number
+  readonly calls: number
+}
+
 /** 一次模型调用的 token 计量。 */
 export interface LlmUsage {
   /**
@@ -79,6 +159,21 @@ export interface ProjectSummary {
   readonly current: boolean
 }
 
+/**
+ * 一个可选模型的概览。
+ *
+ * 来自内核的 `ctx.llm.listModels(provider)`（适配器自己申报的目录），
+ * 不是界面里写死的常量 —— 换 provider / 适配器升级后下拉框自动跟着变。
+ */
+export interface ModelInfo {
+  /** 传给请求的模型 id。 */
+  readonly id: string
+  /** 给人看的名字。 */
+  readonly name: string
+  /** 可选的补充说明（同一 provider 下相似模型的区分）。 */
+  readonly description?: string
+}
+
 /** `ready` 帧里携带的、足以渲染整个界面侧栏的信息。 */
 export interface HostReadyInfo {
   /** 协议版本，渲染进程用来判断自己是否太旧。 */
@@ -97,6 +192,8 @@ export interface HostReadyInfo {
   readonly credential: string
   /** 已注册的工具（名字 + 描述首行）。 */
   readonly tools: readonly HostToolInfo[]
+  /** 该 provider 申报的可选模型（界面下拉用）。 */
+  readonly models: readonly ModelInfo[]
   /** host 进程的 Node 版本，便于排查环境问题。 */
   readonly nodeVersion: string
 }
@@ -109,6 +206,35 @@ export interface HostToolInfo {
 
 /** 一次回合的结束原因（与 DSH `turn/end` 的 `reason.kind` 对齐）。 */
 export type TurnOutcome = 'completed' | 'aborted' | 'error' | 'max-tokens' | 'unknown'
+
+/**
+ * 把 DSH 的回合结束原因映射成本项目的 {@link TurnOutcome}。
+ *
+ * 放在协议里（而不是桥或回放里）是因为**两条路径必须给出同一个结论**：
+ * 实时路径由 `bridge.ts` 的 `turn/end` 事件调用它，回放路径由 `history.ts`
+ * 读日志里的 `turn/end` 时调用它。任何一边单独改都会让「同一回合刷新前后不一样」。
+ *
+ * ⚠️ 内核的 `TurnEndReason` 比这里的枚举长：`blocked`（被插件拦下）与
+ * `interrupted`（崩溃后补写的收尾）都归到 `unknown` —— 它们对用户都是
+ * 「这回合没跑完」，界面不必区分。
+ * @param reason - 日志 / 事件里的结束原因（只用到 `kind`）。
+ * @returns 界面枚举值。
+ */
+export function toOutcome(reason: { readonly kind: string }): TurnOutcome {
+  switch (reason.kind) {
+    case 'completed':
+      return 'completed'
+    case 'aborted':
+    case 'interrupted':
+      return 'aborted'
+    case 'max-tokens':
+      return 'max-tokens'
+    case 'error':
+      return 'error'
+    default:
+      return 'unknown'
+  }
+}
 
 /** 主进程 → host 的请求。 */
 export type HostRequest =
@@ -182,9 +308,27 @@ export type HostEvent =
     readonly error?: string
     readonly text: string
     readonly toolCalls: number
+    /** 本回合墙钟耗时（毫秒）。由 host 在回合前后量，界面直接显示。 */
+    readonly durationMs: number
   }
   /** 模型已切换。 */
   | { readonly type: 'model-changed'; readonly model: string }
+  /**
+   * 历史回放：恢复一个已落盘的会话时，host 读日志产出的完整记录。
+   *
+   * 渲染进程收到后用**整段替换** `items`（而不是增量追加）——
+   * 回放与实时是两条不同的路径，混在一起会重复。
+   */
+  | {
+    readonly type: 'history'
+    readonly items: readonly Item[]
+    /** 该会话的历史 token 累计，用来恢复统计条。 */
+    readonly usage: SessionUsage
+    /** 历史里已完成的回合数（`items` 可能因为截断而少于它）。 */
+    readonly turns: number
+    /** 因为太长被截掉了多少回合（0 表示完整）。 */
+    readonly truncatedTurns: number
+  }
   /** 项目与会话清单（就绪后、每轮结束、以及收到 `list-sessions` 时发出）。 */
   | {
     readonly type: 'workspace'
@@ -233,6 +377,8 @@ export function isHostEvent(value: unknown): value is HostEvent {
       return typeof candidate['turnId'] === 'string' && typeof candidate['usage'] === 'object' && candidate['usage'] !== null
     case 'workspace':
       return Array.isArray(candidate['projects']) && Array.isArray(candidate['sessions'])
+    case 'history':
+      return Array.isArray(candidate['items'])
     case 'project-sessions':
       return typeof candidate['path'] === 'string' && Array.isArray(candidate['sessions'])
     case 'notice':

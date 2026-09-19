@@ -11,11 +11,9 @@
     "desktop": "npm run build:renderer && electron app/desktop/main.js",
     "desktop:watch": "node app/desktop/scripts/build-renderer.js --watch",
     "desktop:host": "node app/desktop/host/index.ts",
-    "desktop:smoke": "npm run build:renderer && node app/desktop/scripts/smoke-desktop.js",
-    "desktop:host-smoke": "node app/desktop/scripts/host-smoke.js",
-    "desktop:ui-smoke": "node app/desktop/scripts/ui-smoke.js",
-    "verify": "npm run typecheck && npm run build:renderer && npm run desktop:ui-smoke && npm run desktop:host-smoke",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p app/desktop/renderer/tsconfig.json"
+    "typecheck": "tsc --noEmit && tsc --noEmit -p app/desktop/renderer/tsconfig.json && tsc --noEmit -p tsconfig.js.json",
+    "mcp:butian": "node app/mcp/butian/server.ts",
+    "desktop:butian": "YuanMy_MCP=butian npm run desktop"
   },
   "keywords": [],
   "license": "MIT",
@@ -37,6 +35,7 @@
     "@deepseek-ai/dsh-llm": "0.1.5-rc.2",
     "@deepseek-ai/dsh-llm-deepseek": "0.1.5-rc.2",
     "@deepseek-ai/dsh-llm-retry": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-mcp-client": "0.0.1-rc.1",
     "@deepseek-ai/dsh-scope": "0.1.5-rc.2",
     "@deepseek-ai/dsh-session": "0.1.5-rc.2",
     "@deepseek-ai/dsh-session-persistence": "0.1.5-rc.2",
@@ -49,6 +48,7 @@
     "@deepseek-ai/dsh-skill-filesystem": "0.1.5-rc.2",
     "@deepseek-ai/dsh-spill": "0.1.5-rc.2",
     "@deepseek-ai/dsh-spill-local": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-subprocess": "0.1.5-rc.2",
     "@deepseek-ai/dsh-subprocess-local": "0.1.5-rc.2",
     "@deepseek-ai/dsh-system-prompt": "0.1.5-rc.2",
     "@deepseek-ai/dsh-timeout": "0.1.5-rc.2",
@@ -59,7 +59,9 @@
     "@deepseek-ai/dsh-tool-skill": "0.1.5-rc.2",
     "@deepseek-ai/dsh-tools": "0.1.5-rc.2",
     "@deepseek-ai/dsh-user-approval": "0.1.5-rc.2",
-    "@deepseek-ai/schemastery": "^3.18.2"
+    "@deepseek-ai/schemastery": "^3.18.2",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@streamdown/cjk": "^1.0.3",

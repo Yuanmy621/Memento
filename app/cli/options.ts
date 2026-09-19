@@ -44,6 +44,29 @@ export interface Options {
 /** 解析失败时抛出；`main` 会把它转成退出码 2。 */
 export class UsageError extends Error {}
 
+/**
+ * YuanMy **对用户暴露**的模型清单（单一事实来源）。
+ *
+ * 内核适配器申报的目录比这更长（还包含 `deepseek-flash` 这个 V4.1 旧版，
+ * 以及 `deepseek-v4-flash-vision-exp` 实验视觉模型）。这里只保留两款主力，
+ * CLI 的默认值与桌面端下拉框都从这里取 —— 两边因此不会漂移。
+ *
+ * `name` 只作**兜底显示名**：读得到适配器目录时优先用适配器给的名称与描述，
+ * 读不到（离线、适配器不申报）时用它，至少不是一个裸 id。
+ */
+export const SUPPORTED_MODELS = [
+  { id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash' },
+  { id: 'deepseek-v4-pro', name: 'DeepSeek-V4-Pro' },
+] as const
+
+/** 默认模型：清单里的第一款。 */
+export const DEFAULT_MODEL: string = SUPPORTED_MODELS[0].id
+
+/** 判断一个模型 id 是否在 {@link SUPPORTED_MODELS} 里。 */
+export function isSupportedModel(id: string): boolean {
+  return SUPPORTED_MODELS.some((model) => model.id === id)
+}
+
 /** 允许缺省的配置输入（桌面端等非 CLI 调用方从这里进入）。 */
 export interface OptionsInput extends Partial<Options> {}
 
@@ -61,7 +84,7 @@ export function resolveOptions(input: OptionsInput = {}): Options {
     cwd: root,
     stateDir: resolve(input.stateDir ?? `${root}/.YuanMy`),
     provider: input.provider ?? 'deepseek-official',
-    model: input.model ?? (process.env.YuanMy_MODEL?.trim() || 'deepseek-flash'),
+    model: input.model ?? (process.env.YuanMy_MODEL?.trim() || DEFAULT_MODEL),
     effort: input.effort ?? 'high',
     maxTokens: input.maxTokens,
     sessionId: input.sessionId,
@@ -82,7 +105,7 @@ const HELP = `YuanMy — 基于 DeepSeek Harness 内核的终端 coding agent
 选项:
   -p, --prompt <text>     一次性执行该任务后退出（非交互）
       --cwd <dir>         agent 的工作目录（默认: 当前目录）
-      --model <id>        模型 id（默认: $YuanMy_MODEL 或 deepseek-flash）
+      --model <id>        模型 id（默认: $YuanMy_MODEL 或 ${DEFAULT_MODEL}）
       --provider <id>     provider id（默认: deepseek-official）
       --effort <level>    推理强度: off | low | high | max（默认: high）
       --max-tokens <n>    单次请求输出上限
@@ -125,7 +148,7 @@ export function parseOptions(argv: readonly string[]): Options {
   let cwd: string | undefined
   let stateDir: string | undefined
   let provider = 'deepseek-official'
-  let model = process.env.YuanMy_MODEL?.trim() || 'deepseek-flash'
+  let model = process.env.YuanMy_MODEL?.trim() || DEFAULT_MODEL
   let effort: Effort = 'high'
   let maxTokens: number | undefined
   let sessionId: string | undefined

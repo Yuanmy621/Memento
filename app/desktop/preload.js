@@ -11,7 +11,7 @@
  *
  *   代价：所有静态工具（Node、编辑器、linter、打包器）都会把它**当成 ESM**，
  *   只有 Electron 自己知道真相。为了不让这个差异变成暗礁：
- *     - `scripts/ui-smoke.js` 有一条断言，检查这个文件里没有 `import` / `export`；
+ *     - 它必须是 CommonJS：沙箱化 preload 里不能用 `import` / `export`；
  *     - 想让它自我说明，把扩展名换回 `.cjs` 即可（官方 DSH 桌面端就是
  *       `main.js`(ESM) + `preload-app.cjs`(CJS) 这种搭配），其余代码不用动。
  *
@@ -39,6 +39,7 @@ const CHANNEL = Object.freeze({
   restart: 'YuanMy:restart',
   newSession: 'YuanMy:new-session',
   listSessions: 'YuanMy:list-sessions',
+  openPath: 'YuanMy:open-path',
   listProjectSessions: 'YuanMy:list-project-sessions',
   appInfo: 'YuanMy:app-info',
 })
@@ -72,6 +73,12 @@ const api = {
    * 结果不是返回值，而是随后到达的 `workspace` 事件。
    */
   refreshSessions: () => ipcRenderer.invoke(CHANNEL.listSessions),
+  /**
+   * 用系统默认程序打开一个文件（文件卡片的「打开」按钮）。
+   * @param {string} path - 绝对路径。
+   * @returns {Promise<string>} 错误信息；成功时空串。
+   */
+  openPath: (path) => ipcRenderer.invoke(CHANNEL.openPath, path),
   /**
    * 读某个项目的会话明细（侧栏里点开一个折叠的项目时用）。
    * 结果不是返回值，而是随后到达的 `project-sessions` 事件。

@@ -1,11 +1,28 @@
 /*
- * YuanMy Agent 桌面端主题与组件样式。
+ * YuanMy Agent 桌面端样式。
  *
- * 两件事在这里发生：
- *   1. 用 Tailwind v4 的 `@theme` 声明一套**近单色**设计令牌（Codex 风格：
- *      没有渐变、没有紫蓝、靠层级与 1px 描边区分结构）；
- *   2. 少量手写组件类（气泡、工具卡片、输入区），因为它们需要 Tailwind
- *      表达起来很啰嗦的组合（叠加态、多子选择器、窗口拖拽区域）。
+ * ## 这一版做了什么
+ *
+ * 视觉体系对齐官方 DSH 桌面端（`apps/desktop` 加载的 Web 客户端 UI），
+ * 也就是 `packages/client/ui-theme` 那套设计令牌 + `ui-primitives` 的构件规格。
+ * 做法是**沿用官方的令牌名**（`--dsw-*`），而不是另起一套变量名 ——
+ * 以后官方调色板一变，这里同步令牌值即可，不用逐个组件找。
+ *
+ * 令牌值来源（dark theme）：
+ *   ui-theme/src/styles/design-platform.css              静态色阶 + 语义别名
+ *   ui-theme/src/styles/base.css                         字体栈 + 动效曲线
+ *   ui-theme/src/styles/scrollbar.css                    滚动条规格
+ * 构件规格来源：
+ *   ui-primitives/src/Button.module.css                   按钮高度 / 圆角 / 主色
+ *   ui-primitives/src/StateDot.module.css                 双层状态点（光晕 + 实心核）
+ *   ui-layout/src/client/AppFrame.module.css              外壳栅格 + 侧栏 0.5px 描边
+ *   ui-chat/src/client/chat/MessageItem.module.css        用户气泡 r22
+ *   ui-chat/src/client/chat/StatsPills.module.css         token 统计胶囊
+ *   ui-chat/src/client/chat/GenericCommandCard.module.css 工具行 + 运行中扫光
+ *   ui-chat/src/client/chat/ReasoningRow.module.css       推理行（24px + 扫光）
+ *
+ * 只借**风格**，不借架构：YuanMy 仍是自己那套最小实现（React + 一个归约器 +
+ * 手工装配的 host 子进程），组件结构没变。
  *
  * 构建方式见 `scripts/build-renderer.js`：`@source` 由构建脚本注入
  * （pnpm 的 node_modules 是符号链接，写死相对路径会扫不到 Streamdown 的类名）。
@@ -13,71 +30,153 @@
 
 @import "tailwindcss";
 
-/* ── 设计令牌 ─────────────────────────────────────────────────────────────
- * Codex / OpenAI 式的深色调色板：底色几乎纯黑，层次靠 surface 的微差和
- * 半透明白描边拉开，强调色基本只有「白」（主按钮）与克制的红/绿。
- * Tailwind v4 会把每个 `--color-x` 同时暴露成 `bg-x` / `text-x` 工具类
- * 和 `var(--color-x)` 自定义属性，两边都能用。
- */
-@theme {
-  /* 底色：主区最暗，卡片依次抬亮 */
-  --color-canvas: #0d0d0d;
-  --color-surface: #141414;
-  --color-surface-2: #1a1a1a;
-  --color-surface-3: #222222;
-  --color-hover: #1f1f1f;
+/* ══════════════════════════════════════════════════════════════════════════
+   1. 设计令牌
+   ══════════════════════════════════════════════════════════════════════════ */
 
-  /* 描边：全部用半透明白，深浅两档足够 */
-  --color-line: rgba(255, 255, 255, 0.08);
-  --color-line-strong: rgba(255, 255, 255, 0.16);
+:root {
+  /* ── 字体与动效（ui-theme base.css）────────────────────────────────── */
+  --dsw-font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  /* 官方刻意不写裸 `monospace` 尾巴：Windows 中文会掉到 SimSun */
+  --ds-font-family-code: 'SF Mono', 'JetBrains Mono', 'Fira Code', Consolas,
+    'Liberation Mono', Menlo, Courier, 'PingFang SC', 'Microsoft YaHei';
+  --ds-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --ds-transition-duration: 0.2s;
+  --ds-transition-duration-fast: 0.1s;
+  --ds-transition-duration-slow: 0.3s;
 
-  /* 文本三级：正文 / 次要 / 极弱 */
-  --color-ink: #ececec;
-  --color-ink-muted: #a0a0a0;
-  --color-ink-faint: #6b6b6b;
+  /* ── 静态色阶（只取暗色主题用得到的档位）───────────────────────────
+     「bluish neutral」是这套 UI 的底色特征：不是纯灰，带一点冷调。 */
+  --dsw-static-neutral-bluish-1000: rgb(12, 12, 14);
+  --dsw-static-neutral-bluish-950: rgb(17, 17, 19);
+  --dsw-static-neutral-bluish-900: rgb(23, 23, 26);
+  --dsw-static-neutral-bluish-875: rgb(30, 30, 34);
+  --dsw-static-neutral-bluish-850: rgb(38, 38, 43);
+  --dsw-static-neutral-bluish-800: rgb(46, 46, 52);
+  --dsw-static-neutral-bluish-750: rgb(56, 56, 63);
+  --dsw-static-neutral-bluish-700: rgb(72, 72, 80);
+  --dsw-static-neutral-bluish-600: rgb(122, 126, 138);
+  --dsw-static-neutral-bluish-400: rgb(158, 162, 176);
+  --dsw-static-neutral-bluish-300: rgb(196, 200, 212);
+  --dsw-static-neutral-bluish-100: rgb(216, 220, 230);
+  --dsw-static-neutral-bluish-50: rgb(240, 241, 245);
+  --dsw-static-neutral-800: rgb(41, 41, 41);
+  --dsw-static-neutral-700: rgb(60, 60, 61);
+  --dsw-static-neutral-600: rgb(84, 85, 87);
+  --dsw-static-deepseek-400: rgb(103, 158, 254);
+  --dsw-static-deepseek-450: rgb(86, 134, 254);
+  --dsw-static-green-400: rgb(78, 209, 126);
+  --dsw-static-green-500: rgb(34, 197, 94);
+  --dsw-static-amber-400: rgb(247, 173, 49);
+  --dsw-static-amber-500: rgb(245, 158, 11);
+  --dsw-static-red-400: rgb(242, 90, 90);
+  --dsw-static-red-500: rgb(239, 68, 68);
 
-  /* 语义色：只在状态提示上用，不参与大面积着色 */
-  --color-ok: #4ac97e;
-  --color-warn: #d6a13d;
-  --color-danger: #e5645c;
+  /* ── 语义别名（暗色主题取值）─────────────────────────────────────── */
+  --dsw-alias-bg-base: var(--dsw-static-neutral-bluish-950);
+  --dsw-alias-bg-layer-1: var(--dsw-static-neutral-bluish-875);
+  --dsw-alias-bg-layer-2: var(--dsw-static-neutral-bluish-850);
+  --dsw-alias-bg-layer-3: var(--dsw-static-neutral-bluish-800);
 
-  --radius-card: 10px;
-  --radius-control: 8px;
+  /* 四级描边：6% / 12% / 16% / 20% 白。分级这么细是刻意的 ——
+     层级主要靠它和背景微差拉，而不是靠更大的色块。 */
+  --dsw-alias-border-l1: rgba(255, 255, 255, 0.06);
+  --dsw-alias-border-l2: rgba(255, 255, 255, 0.12);
+  --dsw-alias-border-l3: rgba(255, 255, 255, 0.16);
+  --dsw-alias-border-l4: rgba(255, 255, 255, 0.2);
 
-  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "PingFang SC",
-    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --dsw-alias-label-primary: var(--dsw-static-neutral-bluish-50);
+  --dsw-alias-label-secondary: var(--dsw-static-neutral-bluish-300);
+  --dsw-alias-label-tertiary: var(--dsw-static-neutral-bluish-400);
+  --dsw-alias-label-caption: var(--dsw-static-neutral-bluish-600);
+  --dsw-alias-label-primary-foreground: var(--dsw-static-neutral-bluish-1000);
 
-  /* ── Streamdown 兼容别名 ──────────────────────────────────────────────
-   * Streamdown 内部用的是 shadcn / ai-elements 那套 token 名
-   * （`bg-muted`、`text-muted-foreground`、`border-border`、`text-primary` …）。
-   * Tailwind 只为**已定义**的 token 生成工具类，缺了就会被静默丢掉 ——
-   * 表现是行内代码、链接、表格描边没样式。
-   * 这里把它们全部映射到上面的 Codex 色板，等于给 Streamdown 换肤。
-   */
-  --color-background: #0d0d0d;
-  --color-foreground: #ececec;
-  --color-muted: #1a1a1a;
-  --color-muted-foreground: #a0a0a0;
-  --color-border: rgba(255, 255, 255, 0.08);
-  --color-input: rgba(255, 255, 255, 0.08);
-  --color-ring: rgba(255, 255, 255, 0.24);
-  --color-card: #141414;
-  --color-card-foreground: #ececec;
-  --color-popover: #141414;
-  --color-popover-foreground: #ececec;
-  --color-secondary: #222222;
-  --color-secondary-foreground: #ececec;
-  --color-accent: #1f1f1f;
-  --color-accent-foreground: #ececec;
-  --color-primary: #ececec;
-  --color-primary-foreground: #0d0d0d;
-  --color-destructive: #e5645c;
-  --color-destructive-foreground: #0d0d0d;
-  --color-sidebar: rgba(255, 255, 255, 0.08);
+  --dsw-alias-interactive-bg-hover: rgba(255, 255, 255, 0.08);
+  --dsw-alias-interactive-bg-active: rgba(255, 255, 255, 0.14);
+
+  /* 主按钮 = 强调色填充 + 白字（本版按 UI 规格把主色定为蓝紫） */
+  --dsw-alias-brand-primary: var(--ym-accent);
+  --dsw-alias-button-primary-fill: var(--ym-accent);
+  --dsw-alias-button-primary-hover: rgb(140, 148, 236);
+  --dsw-alias-link: var(--ym-accent-text);
+
+  --dsw-alias-state-success-primary: var(--dsw-static-green-500);
+  --dsw-alias-state-error-primary: var(--dsw-static-red-400);
+  --dsw-alias-state-warn-primary: var(--dsw-static-amber-500);
+  --dsw-alias-state-business-primary: var(--dsw-static-deepseek-400);
+  /* 运行中 / 强调：低饱和蓝紫。界面里所有「活的」、可交互的东西都用它 ——
+     当前标签下划线、发送按钮、焦点环、链接、运行中状态点。 */
+  --ym-accent: rgb(126, 134, 222);
+  --ym-accent-text: rgb(160, 168, 240);
+  --ym-accent-soft: rgba(126, 134, 222, 0.14);
+  --ym-accent-line: rgba(126, 134, 222, 0.5);
+  --dsh-state-ongoing: var(--ym-accent);
+
+  /* ── 侧栏「当前项」的两档底色 ──────────────────────────────────────
+   * 侧栏底是 900。当前项刻意**只用比 hover 深一档**的 800，而不是跳两档的 750：
+   * 配合「字重 + 内缩药丸」（见 `.session--current`），强调由形状与字重承担，
+   * 底色只负责把这一行从列表里轻轻托起来 —— 切换会话时因此不会「闪」一下。 */
+  --ym-nav-current-fill: var(--dsw-static-neutral-bluish-800);
+  --ym-nav-current-fill-hover: var(--dsw-static-neutral-bluish-750);
+  /* 当前项目只是当前会话的**容器**：底色再轻一档，避免高低两层同时重描。 */
+  --ym-nav-current-parent-fill: var(--dsw-static-neutral-bluish-875);
+
+  --dsw-specific-sidebar-fill: var(--dsw-static-neutral-bluish-900);
+  --dsw-specific-sidebar-nav-item-hover: var(--dsw-static-neutral-bluish-850);
+  --dsw-specific-sidebar-nav-item-active: var(--dsw-static-neutral-bluish-750);
+  --dsw-specific-bubble: var(--dsw-static-neutral-bluish-850);
+  --dsw-specific-input-major: var(--dsw-static-neutral-bluish-850);
+
+  --dsw-alias-markdown-code-block: var(--dsw-static-neutral-bluish-900);
+  --dsw-alias-markdown-inline-code: var(--dsw-static-neutral-800);
+
+  --dsw-alias-scrollbar-bg-l1: var(--dsw-static-neutral-700);
+  --dsw-alias-scrollbar-hover-l1: var(--dsw-static-neutral-600);
+
+  /* ── 版面轴：内容宽度与正文字号（与官方同名变量）──────────────────── */
+  --dsh-chat-content-width: 748px;
+  --dsh-content-font-size: 14px;
+  --dsh-content-font-size-secondary: 13px;
+  --dsh-content-line-height: 22px;
+  --dsh-content-line-height-secondary: 20px;
+  --dsh-chat-flow-gap: 16px;
+  --dsh-scrollbar-width: 8px;
 }
 
-/* ── 基础 ───────────────────────────────────────────────────────────────── */
+/* ── Tailwind 桥接：Streamdown 用的 shadcn 令牌名 ──────────────────────
+ * Streamdown 内部写的是 `bg-muted` / `text-muted-foreground` / `border-border`
+ * 这类类名，而 Tailwind 只为**已定义**的 token 生成工具类，缺一个就静默丢样式
+ * （表现是行内代码/链接/表格突然没样式）。这里把那一整套名字映射到官方令牌上。 */
+@theme {
+  --color-background: var(--dsw-alias-bg-base);
+  --color-foreground: var(--dsw-alias-label-primary);
+  --color-muted: var(--dsw-alias-bg-layer-2);
+  --color-muted-foreground: var(--dsw-alias-label-tertiary);
+  --color-border: var(--dsw-alias-border-l2);
+  --color-input: var(--dsw-alias-border-l2);
+  --color-ring: var(--dsw-alias-border-l3);
+  --color-card: var(--dsw-alias-bg-layer-1);
+  --color-card-foreground: var(--dsw-alias-label-primary);
+  --color-popover: var(--dsw-alias-bg-layer-2);
+  --color-popover-foreground: var(--dsw-alias-label-primary);
+  --color-secondary: var(--dsw-alias-bg-layer-2);
+  --color-secondary-foreground: var(--dsw-alias-label-primary);
+  --color-accent: var(--dsw-alias-bg-layer-2);
+  --color-accent-foreground: var(--dsw-alias-label-primary);
+  --color-primary: var(--dsw-alias-brand-primary);
+  --color-primary-foreground: var(--dsw-alias-label-primary-foreground);
+  --color-destructive: var(--dsw-alias-state-error-primary);
+  --color-destructive-foreground: var(--dsw-alias-label-primary-foreground);
+  --color-sidebar: var(--dsw-alias-border-l2);
+
+  --font-sans: var(--dsw-font-family);
+  --font-mono: var(--ds-font-family-code);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   2. 基础
+   ══════════════════════════════════════════════════════════════════════════ */
 
 html,
 body,
@@ -87,71 +186,85 @@ body,
 }
 
 body {
-  background: var(--color-canvas);
-  color: var(--color-ink);
-  font-family: var(--font-sans);
-  font-size: 13.5px;
-  line-height: 1.6;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--dsw-font-family);
+  font-size: var(--dsh-content-font-size);
+  line-height: var(--dsh-content-line-height);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   overflow: hidden;
 }
 
-/* 原生磨砂玻璃生效时，窗口本身是半透明的，body 不能再刷一层不透明底色。
-   ⚠️ 这里**不用** CSS 高斯模糊（backdrop-filter），模糊由 macOS/Windows 的
-   窗口材质提供，见 main.js 的 vibrancy / backgroundMaterial。 */
+/* 表单控件不继承 body 字体（UA 样式表钉死了自己的族），显式再指定一次 */
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+}
+
+code,
+pre,
+.mono {
+  font-family: var(--ds-font-family-code);
+}
+
+/* 原生磨砂玻璃生效时窗口是半透明的，页面不能再刷一层不透明底色 ——
+   与官方 base.css 的 `html[data-platform='darwin']` 同一手法。
+   ⚠️ 这里**不用** CSS backdrop-filter：模糊由系统材质提供（见 main.js）。 */
+html[data-vibrancy="native"],
 html[data-vibrancy="native"] body {
   background: transparent;
 }
 
+/* ── 滚动条（官方 scrollbar.css 规格：8px、无边框、两级色）──────────── */
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: var(--dsh-scrollbar-width);
+  height: var(--dsh-scrollbar-width);
 }
 
 ::-webkit-scrollbar-thumb {
-  border: 3px solid transparent;
-  border-radius: 99px;
-  background-clip: content-box;
-  background-color: rgba(255, 255, 255, 0.16);
+  border: 0;
+  border-radius: 999px;
+  background-color: var(--dsw-alias-scrollbar-bg-l1);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(255, 255, 255, 0.28);
+  background-color: var(--dsw-alias-scrollbar-hover-l1);
 }
 
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 
-/* 可拖拽区域：隐藏系统标题栏后，只有显式声明的元素能拖动窗口。 */
+/* 可拖拽区域：隐藏系统标题栏后，只有显式声明的元素能拖动窗口 */
 .drag-region {
   -webkit-app-region: drag;
 }
 
-/* 拖拽区里的按钮/输入必须豁免，否则点不动。 */
+/* 拖拽区里的按钮/输入必须豁免，否则点不动 */
 .no-drag {
   -webkit-app-region: no-drag;
 }
 
-/* ── 布局 ───────────────────────────────────────────────────────────────── */
+/* ══════════════════════════════════════════════════════════════════════════
+   3. 外壳（对齐 AppFrame：侧栏独立成列 + 0.5px 发丝描边）
+   ══════════════════════════════════════════════════════════════════════════ */
 
 .app-shell {
   display: grid;
-  /* 侧栏固定宽度（Apple 风格的信息栏），主区自适应 */
+  /* 侧栏固定宽度（官方是可拖拽列；YuanMy 保持固定，简单够用） */
   grid-template-columns: 264px minmax(0, 1fr);
   /*
-   * ⚠️ 这一行是必须的，别删。
-   *
-   * 只写 `height: 100%` 时，行是**隐式 auto**，会被内容撑高：消息一多（比如展开
-   * 一段长推理），整个 shell 就长得比窗口还高 —— 侧栏跟着被拉到同样高度，
-   * 底部内容顶出可视区（看起来像「侧栏样式变了」），而且 `.messages` 不再内部滚动，
-   * 改成整篇文档动不动就重排，长内容一多直接把渲染进程卡死。
-   * 用 `minmax(0, 1fr)` 把行高锁在容器高度内，配合子项的 `min-height: 0`，
-   * 滚动才会老老实实发生在 `.messages` 里。
+   * ⚠️ 这一行不能删。只写 `height: 100%` 时行是隐式 auto，会被内容撑高：
+   * 消息一多（例如展开长推理）整个外壳长得比窗口还高 —— 侧栏跟着被拉长、
+   * `.messages` 失去内部滚动，长内容直接把渲染进程卡死。
    */
   grid-template-rows: minmax(0, 1fr);
   height: 100%;
   overflow: hidden;
+  background: var(--dsw-alias-bg-base);
 }
 
 .sidebar {
@@ -159,53 +272,59 @@ html[data-vibrancy="native"] body {
   flex-direction: column;
   min-height: 0;
   overflow-y: auto;
-  /* 兜底色：没有原生磨砂玻璃时侧栏依然要可读 */
-  background: var(--color-surface);
-  border-right: 1px solid var(--color-line);
+  /* 官方侧栏底色 + 0.5px 发丝描边（比 1px 更细，是这套 UI 的手感来源之一） */
+  background: var(--dsw-specific-sidebar-fill);
+  border-right: 0.5px solid var(--dsw-alias-border-l3);
 }
 
-/* 有原生磨砂玻璃时，侧栏完全让出背景，只留一层极淡的染色保证文字对比度。
+/* 有原生磨砂玻璃时侧栏让出背景，只留一层极淡的同色染色保证对比度。
    这一层是纯色叠加，不含模糊。 */
 html[data-vibrancy="native"] .sidebar {
-  background: color-mix(in srgb, var(--color-canvas) 45%, transparent);
+  background: color-mix(in srgb, var(--dsw-specific-sidebar-fill) 55%, transparent);
 }
 
 .main-column {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
-  /* 两个都要：`min-width` 防长单词撑宽，`min-height` 防内容撑高（见 .app-shell）。 */
   min-width: 0;
   min-height: 0;
-  background: var(--color-canvas);
+  background: var(--dsw-alias-bg-base);
 }
 
-/* ── 顶部条（已隐藏系统标题栏，这里是唯一的拖拽区）──────────────────────── */
+/* ══════════════════════════════════════════════════════════════════════════
+   4. 顶栏
+   ══════════════════════════════════════════════════════════════════════════ */
 
 .topbar {
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 46px;
-  padding: 0 12px;
-  border-bottom: 1px solid var(--color-line);
-  background: var(--color-canvas);
+  height: 44px;
+  padding: 0 14px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-base);
 }
 
-/* macOS 的红绿灯浮在窗口左上角，顶部条左侧要让位 */
+/* macOS 的红绿灯浮在窗口左上角，顶栏左侧要让位 */
 html[data-platform="darwin"] .topbar {
-  padding-left: 86px;
+  padding-left: 88px;
+}
+
+/* Windows 的 titleBarOverlay 占住右上角，给窗口控件留位 */
+html[data-platform="win32"] .topbar {
+  padding-right: 148px;
 }
 
 .topbar__title {
-  font-size: 12.5px;
-  font-weight: 550;
-  color: var(--color-ink);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary);
 }
 
 .topbar__sub {
-  font-family: var(--font-mono);
+  font-family: var(--ds-font-family-code);
   font-size: 11px;
-  color: var(--color-ink-faint);
+  color: var(--dsw-alias-label-caption);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -215,12 +334,17 @@ html[data-platform="darwin"] .topbar {
   flex: 1;
 }
 
-/* Windows 的 titleBarOverlay 占住右上角，给窗口控件留位 */
-html[data-platform="win32"] .topbar {
-  padding-right: 148px;
-}
+/* ══════════════════════════════════════════════════════════════════════════
+   5. 侧栏：品牌 / 项目树 / 底栏
+   ══════════════════════════════════════════════════════════════════════════ */
 
-/* ── 侧栏内部 ───────────────────────────────────────────────────────────── */
+.sidebar__section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l1);
+}
 
 /* macOS 上给红绿灯留出高度 */
 html[data-platform="darwin"] .sidebar__brand {
@@ -228,189 +352,123 @@ html[data-platform="darwin"] .sidebar__brand {
   -webkit-app-region: drag;
 }
 
-/* 品牌行第二行：状态点在左，状态文字在右（就绪 / 生成中 / 不可用） */
 .sidebar__sub {
   display: flex;
   align-items: center;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* 分区小标题：caption 色 + 轻字距，和官方侧栏标题一致 */
+.sidebar__label {
   font-size: 11px;
-  color: var(--color-ink-faint);
+  font-weight: 500;
+  letter-spacing: 0.4px;
+  color: var(--dsw-alias-label-caption);
+}
+
+.sidebar__label-actions {
+  display: flex;
+  gap: 8px;
+  float: right;
+  letter-spacing: 0;
+}
+
+.sidebar__section--grow {
+  flex: 1;
+  min-height: 0;
+}
+
+/* 凭据缺失才出现的警告：可操作信息，正常时不占位置 */
+.sidebar__warn {
+  margin: 2px 0;
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-state-warn-primary);
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .sidebar__footer {
   display: flex;
   align-items: center;
+  gap: 8px;
   margin-top: auto;
-  padding: 10px 14px;
-  border-top: 1px solid var(--color-line);
-  color: var(--color-ink-faint);
+  padding: 8px 12px;
+  border-top: 0.5px solid var(--dsw-alias-border-l1);
+  color: var(--dsw-alias-label-caption);
   font-size: 11px;
 }
 
-/* 通用排布小工具（比在 JSX 里堆 Tailwind 工具类更好读） */
-.row {
-  display: flex;
+.sidebar__spacer {
+  flex: 1;
+}
+
+/* ── 状态点：官方 StateDot 的双层做法（10% 光晕 + 60% 实心核）──────── */
+.dot {
+  display: inline-flex;
   align-items: center;
   gap: 6px;
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
 }
 
-.stack {
+.dot__mark {
+  position: relative;
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  flex: none;
+}
+
+.dot__mark::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.1;
+}
+
+.dot__mark::after {
+  content: '';
+  position: absolute;
+  inset: 20%;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.dot__mark--ready { color: var(--dsw-alias-state-success-primary); }
+.dot__mark--busy { color: var(--dsh-state-ongoing); }
+.dot__mark--error { color: var(--dsw-alias-state-error-primary); }
+.dot__mark--idle { color: var(--dsw-alias-label-tertiary); }
+
+/* ── 项目 → 会话树 ─────────────────────────────────────────────────── */
+
+/* 会话清单容器（项目树与搜索结果共用）*/
+.tree {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-}
-
-.tool-list {
+  gap: 1px;
   margin: 0;
   padding: 0;
   list-style: none;
-  max-height: 190px;
-  overflow-y: auto;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  color: var(--color-ink-muted);
-}
-
-.tool-list li {
-  padding: 2px 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sidebar__section {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--color-line);
-}
-
-.sidebar__label {
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.7px;
-  text-transform: uppercase;
-  color: var(--color-ink-faint);
-}
-
-.mono {
-  font-family: var(--font-mono);
-  font-size: 11px;
-}
-
-.dot {
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  margin-right: 6px;
-  border-radius: 50%;
-  background: var(--color-ink-faint);
-  vertical-align: middle;
-}
-
-.dot--ready { background: var(--color-ok); }
-.dot--busy { background: var(--color-warn); }
-.dot--error { background: var(--color-danger); }
-
-/* ── 控件 ───────────────────────────────────────────────────────────────── */
-
-.btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 5px 11px;
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-control);
-  background: var(--color-surface-2);
-  color: var(--color-ink);
-  font: inherit;
-  font-size: 12.5px;
-  cursor: pointer;
-  transition: background-color 0.12s ease, border-color 0.12s ease, opacity 0.12s ease;
-}
-
-.btn:hover:not(:disabled) {
-  background: var(--color-surface-3);
-  border-color: var(--color-line-strong);
-}
-
-.btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-/* Codex 式主按钮：白底黑字，不用彩色渐变 */
-.btn--primary {
-  background: var(--color-ink);
-  border-color: var(--color-ink);
-  color: #0d0d0d;
-  font-weight: 600;
-}
-
-.btn--primary:hover:not(:disabled) {
-  background: #ffffff;
-  border-color: #ffffff;
-}
-
-.btn--ghost {
-  background: transparent;
-  border-color: transparent;
-  color: var(--color-ink-muted);
-}
-
-.btn--ghost:hover:not(:disabled) {
-  background: var(--color-hover);
-  border-color: transparent;
-  color: var(--color-ink);
-}
-
-.btn--stop {
-  background: transparent;
-  border-color: color-mix(in srgb, var(--color-danger) 45%, transparent);
-  color: var(--color-danger);
-}
-
-.input {
-  width: 100%;
-  padding: 5px 9px;
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-control);
-  background: var(--color-surface-2);
-  color: var(--color-ink);
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-}
-
-.input:focus {
-  outline: none;
-  border-color: var(--color-line-strong);
-}
-
-/* ── 项目 / 会话列表 ─────────────────────────────────────────────────────── */
-
-.sidebar__section--grow {
-  /* 会话列表占据剩余空间，自己滚动，状态块被顶到下面 */
-  flex: 1;
   min-height: 0;
+  overflow-y: auto;
 }
 
-.sidebar__label-actions {
+/* 一个会话叶子：只是 <li>，真正的样式在 .session 上 */
+.tree__leaf {
   display: flex;
-  gap: 9px;
-  float: right;
-  font-weight: 400;
-  letter-spacing: 0;
-  text-transform: none;
+  min-width: 0;
 }
 
-/* ── 项目树 ─────────────────────────────────────────────────────────────── */
-
-/* 项目行在上面，它的会话缩进挂在下面 */
 .project-tree {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -430,11 +488,11 @@ html[data-platform="darwin"] .sidebar__brand {
   gap: 2px;
 }
 
-/* 折叠时箭头朝右（▸），展开时朝下（▾）—— 字符由 JSX 给，这里只管位置 */
+/* 折叠 ▸ / 展开 ▾ —— 字符由 JSX 给，这里只管位置与颜色 */
 .project-node__caret {
   flex: none;
   width: 10px;
-  color: var(--color-ink-faint);
+  color: var(--dsw-alias-label-caption);
   font-size: 10px;
 }
 
@@ -444,24 +502,39 @@ html[data-platform="darwin"] .sidebar__brand {
   gap: 6px;
   flex: 1;
   min-width: 0;
-  padding: 4px 6px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-control);
+  padding: 5px 6px;
+  border: none;
+  border-radius: 8px;
   background: transparent;
   color: inherit;
   font: inherit;
   text-align: left;
   cursor: pointer;
+  transition: background-color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
 }
 
 .project-node__head:hover {
-  background: var(--color-hover);
+  background: var(--dsw-specific-sidebar-nav-item-hover);
 }
 
-/* 当前项目：描边 + 稍亮的底，与「只是列在这里」的项目分开 */
+/* 当前项目：只托一层**很轻**的底色。
+ *
+ * 这里刻意**不**复用会话那套「药丸 + 字重」：项目是当前会话的容器，展开后两行
+ * 上下相邻，如果都用竖标/药丸，看着就像两条重复的边框。层级交给底色深浅表达 ——
+ * 侧栏底 900 < 当前项目 875 < hover 850 < 当前会话 800，越靠近「你正在看的那个
+ * 会话」越亮，鼠标悬停时仍会再抬一档。
+ *
+ * 项目名本来就是 primary/500（`.project__name`），所以当前项目不需要再加字重 ——
+ * 它的强调全部由这一层底色承担。 */
 .project-node--current > .project-node__row > .project-node__head {
-  border-color: var(--color-line);
-  background: var(--color-surface-2);
+  background: var(--ym-nav-current-parent-fill);
+  box-shadow: none;
+}
+
+/* 当前项目也要有 hover 反馈。这条必须显式写：上面那条的选择器权重更高，
+   会盖掉通用的 `.project-node__head:hover`，不补就会「悬停无反应」。 */
+.project-node--current > .project-node__row > .project-node__head:hover {
+  background: var(--dsw-specific-sidebar-nav-item-hover);
 }
 
 .project-node__text {
@@ -474,22 +547,23 @@ html[data-platform="darwin"] .sidebar__brand {
 
 .project-node__count {
   flex: none;
-  color: var(--color-ink-faint);
-  font-size: 10.5px;
+  color: var(--dsw-alias-label-caption);
+  font-size: 11px;
 }
 
-/* 「切换到此项目」平时隐形，悬停整行时才出现 —— 免得和折叠手势抢注意力 */
+/* 「切换」平时隐形，悬停整行才出现 —— 免得和折叠手势抢注意力 */
 .project-node__switch {
   flex: none;
-  padding: 3px 7px;
-  border: 0;
-  border-radius: 6px;
+  padding: 3px 8px;
+  border: none;
+  border-radius: 14px;
   background: transparent;
-  color: var(--color-ink-faint);
+  color: var(--dsw-alias-label-tertiary);
   font: inherit;
-  font-size: 10.5px;
+  font-size: 11px;
   cursor: pointer;
   opacity: 0;
+  transition: opacity var(--ds-transition-duration-fast) var(--ds-ease-in-out);
 }
 
 .project-node__row:hover .project-node__switch,
@@ -498,27 +572,37 @@ html[data-platform="darwin"] .sidebar__brand {
 }
 
 .project-node__switch:hover {
-  background: var(--color-hover);
-  color: var(--color-ink);
+  background: var(--dsw-specific-sidebar-nav-item-hover);
+  color: var(--dsw-alias-label-primary);
 }
 
-/* 会话挂在项目下面：缩进 + 一条竖线，层级一眼可见。
-   用双类提高特异度 —— `.session-list` 的 margin/padding 重置在本段之后定义，
-   单类会被它盖掉（缩进消失）。滚动统一交给外层 `.project-tree`，这里关掉。 */
+/*
+ * 会话挂在项目下面：缩进 + 一条竖线，层级一眼可见。
+ *
+ * ⚠️ 缩进量不是随便定的：项目名在 ~37px，会话标题必须**明显**右于它才算「树」。
+ * 实测 16px+6px 时两者只差 7px，配上 8% 白的竖线，整块看起来就是一条平铺列表。
+ * 现在 24px+8px（会话文字约 54px，比项目名右 17px），竖线用 border-l3。
+ * 改这两个值请同步改 main.js `SMOKE_TREE_PROBE` 的缩进断言（量的就是这个差）。
+ *
+ * 双类提高特异度：`.session-list` 的 margin/padding 重置在下方定义，
+ * 单类会被它盖掉（缩进消失）。
+ */
 .session-list.session-list--child {
-  margin: 0 0 2px 16px;
-  padding-left: 6px;
-  border-left: 1px solid var(--color-line);
+  margin: 0 0 3px 24px;
+  padding-left: 8px;
+  border-left: 1px solid var(--dsw-alias-border-l3);
   overflow: visible;
 }
 
 .project__name {
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary);
 }
 
 .project__path {
-  color: var(--color-ink-faint);
+  color: var(--dsw-alias-label-caption);
+  font-size: 11px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -540,31 +624,62 @@ html[data-platform="darwin"] .sidebar__brand {
   align-items: baseline;
   gap: 8px;
   width: 100%;
-  padding: 4px 7px;
-  border: 0;
-  border-radius: 6px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 8px;
   background: transparent;
-  color: var(--color-ink-muted);
+  color: var(--dsw-alias-label-secondary);
   font: inherit;
   font-size: 12px;
   text-align: left;
   cursor: pointer;
+  /* ::before 的定位基准（当前会话的位置指示药丸）。 */
+  position: relative;
+  transition:
+    background-color var(--ds-transition-duration-fast) var(--ds-ease-in-out),
+    color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
 }
 
 .session:hover {
-  background: var(--color-hover);
-  color: var(--color-ink);
+  background: var(--dsw-specific-sidebar-nav-item-hover);
+  color: var(--dsw-alias-label-primary);
 }
 
-/* 当前会话：左侧一条竖线 + 高亮文字，不用背景色抢视线 */
+/* ── 当前会话 ────────────────────────────────────────────────────────────
+ * 早先的做法是「贴行边、贯穿整行的 2px 硬竖条 + 文字直接跳到纯白」，
+ * 观感很生硬：竖条看起来像描边，底色又比 hover 暗两档，切换时会「跳」。
+ *
+ * 现在把「我在这里」拆成三层，每层都很轻，叠起来足够清楚：
+ *   1. 形状 —— 内缩的圆角药丸（`::before`），不是描边；
+ *   2. 字重 —— 500 承担主要强调，文字色因此不必从 secondary 直接跳到纯白；
+ *   3. 底色 —— 只比 hover 深一档，切换时是一个柔和的淡入而不是闪变。
+ * 图标仍是强调色（见下方 `.session__icon`），点出「这是活着的那个会话」。
+ */
 .session--current {
-  color: var(--color-ink);
+  background: var(--ym-nav-current-fill);
+  color: var(--dsw-alias-label-primary);
+  font-weight: 500;
   cursor: default;
-  box-shadow: inset 2px 0 0 var(--color-ink);
 }
 
+/* 位置指示：2px × 14px 的圆角药丸，垂直居中、离行左边缘 3px。
+   内缩 + 圆角是它和「硬竖条」的关键区别 —— 短、圆、不贴边，看起来是刻意的标记。 */
+.session--current::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 50%;
+  width: 2px;
+  height: 14px;
+  margin-top: -7px;
+  border-radius: 999px;
+  background: var(--ym-accent);
+  opacity: 0.75;
+}
+
+/* 当前项也要有 hover 反馈（否则鼠标移上去像「死了」），只是变化幅度更小。 */
 .session--current:hover {
-  background: transparent;
+  background: var(--ym-nav-current-fill-hover);
 }
 
 .session__title {
@@ -577,69 +692,170 @@ html[data-platform="darwin"] .sidebar__brand {
 
 .session__meta {
   flex: none;
-  color: var(--color-ink-faint);
-  font-size: 10.5px;
+  color: var(--dsw-alias-label-caption);
+  font-size: 11px;
 }
 
 .session-empty {
-  padding: 4px 7px;
-  color: var(--color-ink-faint);
-  font-size: 11.5px;
+  padding: 4px 8px;
+  color: var(--dsw-alias-label-caption);
+  font-size: 12px;
 }
 
-/* ── 输入框下方的 token 统计 ─────────────────────────────────────────────── */
+.tool-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 180px;
+  overflow-y: auto;
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+}
 
-.tokenbar {
+.tool-list li {
+  padding: 2px 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   6. 构件：按钮 / 输入（对齐 ui-primitives）
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* 官方按钮 sm 档：高 28 / 圆角 14 / 12px（md 是 36 / 18 / 14px） */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+  transition: background-color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+/* ghost：官方 hover / active 两级 */
+.btn--ghost:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.btn--ghost:active:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-active);
+}
+
+/* primary：近白填充 + 深色字（这套 UI 的主按钮没有彩色） */
+.btn--primary {
+  background: var(--dsw-alias-button-primary-fill);
+  color: var(--dsw-alias-label-primary-foreground);
+  font-weight: 500;
+}
+
+.btn--primary:hover:not(:disabled) {
+  background: var(--dsw-alias-button-primary-hover);
+}
+
+.btn--stop {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.btn--stop:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-active);
+}
+
+.link {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--dsw-alias-label-tertiary);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  transition: color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.link:hover {
+  color: var(--dsw-alias-label-primary);
+}
+
+.input {
+  width: 100%;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 14px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
+}
+
+.input::placeholder {
+  color: var(--dsw-alias-label-caption);
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--dsw-alias-border-l4);
+}
+
+.row {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 4px 0;
-  color: var(--color-ink-faint);
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  cursor: default;
 }
 
-.tokenbar__item b {
-  color: var(--color-ink-muted);
-  font-weight: 600;
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
-.tokenbar__item--muted {
-  color: var(--color-ink-faint);
+.mono {
+  font-size: 11px;
 }
 
-.tokenbar__sep {
-  opacity: 0.5;
-}
-
-.tokenbar__spacer {
-  flex: 1;
-}
-
-/* ── 消息流 ─────────────────────────────────────────────────────────────── */
+/* ══════════════════════════════════════════════════════════════════════════
+   7. 消息流（对齐 ChatView：748px 内容轴 + 16px 流间距）
+   ══════════════════════════════════════════════════════════════════════════ */
 
 .messages {
   min-height: 0;
   overflow-y: auto;
-  padding: 20px 26px 6px;
+  padding: 16px 24px 8px;
+  container-type: inline-size;
 }
 
 .messages__inner {
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  max-width: 780px;
+  gap: var(--dsh-chat-flow-gap);
+  max-width: var(--dsh-chat-content-width);
   margin: 0 auto;
 }
 
+/* 用户气泡：官方 r22 + specific-bubble + 10/16 内边距 */
 .msg--user {
   align-self: flex-end;
-  max-width: 78%;
-  padding: 9px 13px;
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-card);
-  background: var(--color-surface-2);
+  max-width: min(calc(var(--dsh-chat-content-width) * 0.702), 82%);
+  padding: 10px 16px;
+  border-radius: 22px;
+  background: var(--dsw-specific-bubble);
+  color: var(--dsw-alias-label-primary);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -647,156 +863,165 @@ html[data-platform="darwin"] .sidebar__brand {
 .msg--assistant {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .msg__note {
   align-self: center;
   max-width: 92%;
-  padding: 4px 11px;
-  border: 1px solid var(--color-line);
-  border-radius: 999px;
-  background: var(--color-surface);
-  color: var(--color-ink-faint);
-  font-size: 11.5px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
   text-align: center;
   white-space: pre-wrap;
 }
 
-.msg__note--warn { color: var(--color-warn); border-color: color-mix(in srgb, var(--color-warn) 35%, transparent); }
-.msg__note--error { color: var(--color-danger); border-color: color-mix(in srgb, var(--color-danger) 40%, transparent); }
+.msg__note--warn { color: var(--dsw-alias-state-warn-primary); }
+.msg__note--error { color: var(--dsw-alias-state-error-primary); }
 
 .msg__meta {
-  color: var(--color-ink-faint);
-  font-size: 11.5px;
+  color: var(--dsw-alias-label-caption);
+  font-size: 12px;
 }
 
-.msg__meta--error { color: var(--color-danger); }
+.msg__meta--error { color: var(--dsw-alias-state-error-primary); }
 
-/* 推理过程：默认折叠，展开后是弱化的斜体块 */
+/* ── 推理行：官方折叠态固定 24px，运行中一道扫光 ───────────────────── */
 .reasoning {
-  border-left: 1px solid var(--color-line-strong);
-  padding: 2px 0 2px 11px;
-  color: var(--color-ink-muted);
-  font-size: 12.5px;
+  position: relative;
+  overflow: hidden;
 }
 
 .reasoning > summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
   cursor: pointer;
   user-select: none;
-  font-size: 11.5px;
-  color: var(--color-ink-faint);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
   list-style: none;
 }
 
 .reasoning > summary::-webkit-details-marker { display: none; }
-.reasoning > summary::before { content: "▸ "; }
-.reasoning[open] > summary::before { content: "▾ "; }
+.reasoning > summary::before { content: '▸'; font-size: 10px; color: var(--dsw-alias-label-caption); }
+.reasoning[open] > summary::before { content: '▾'; }
 
 .reasoning__body {
-  margin-top: 6px;
+  margin: 4px 0 2px;
+  padding-left: 12px;
+  border-left: 1px solid var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
+  line-height: 20px;
   white-space: pre-wrap;
-  font-style: italic;
-  /*
-   * 推理里可能出现超长且没有空格的片段（路径、base64、连续汉字）。这类内容
-   * `break-word` 只在「放不下时」才断，且不参与 min-content 计算，仍可能把容器
-   * 撑开；`anywhere` 会把断行点算进 min-content，容器因此能正常收缩 + 换行。
-   */
+  /* 推理里可能出现超长无空格片段（路径、base64、连续汉字）：
+     `break-word` 不参与 min-content 计算，容器仍会被撑开；`anywhere` 才会。 */
   overflow-wrap: anywhere;
 }
 
-/* ── 工具调用卡片 ───────────────────────────────────────────────────────── */
+/* 运行中：不做扫光之类的装饰，只把「推理过程」四个字点上强调色 */
+.reasoning--running > summary {
+  color: var(--ym-accent-text);
+}
 
+/* ── 工具调用行（官方是「行」不是「卡片」：无边框、无底色）────────── */
 .tool-card {
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-card);
-  background: var(--color-surface);
-  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .tool-card__head {
+  position: relative;
   display: flex;
-  align-items: baseline;
-  gap: 8px;
-  padding: 7px 11px;
-  font-family: var(--font-mono);
-  font-size: 11.5px;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  overflow: hidden;
+  font-size: 13px;
 }
 
 .tool-card__name {
-  color: var(--color-ink);
-  font-weight: 600;
+  flex: none;
+  color: var(--dsw-alias-label-primary);
+  font-weight: 400;
 }
 
 .tool-card__args {
-  color: var(--color-ink-faint);
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* 结果区单独一层底色，和调用参数区分开 */
 .tool-card__result {
-  padding: 6px 11px;
-  border-top: 1px solid var(--color-line);
-  background: var(--color-surface-2);
-  color: var(--color-ink-muted);
-  font-family: var(--font-mono);
-  font-size: 11px;
+  padding-left: 16px;
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
+  line-height: 18px;
   white-space: pre-wrap;
   word-break: break-word;
 }
 
 .tool-card__result--error {
-  color: var(--color-danger);
-  background: color-mix(in srgb, var(--color-danger) 8%, var(--color-surface-2));
+  color: var(--dsw-alias-state-error-primary);
 }
 
-.tool-card__exit--ok { color: var(--color-ok); margin-left: 6px; }
-.tool-card__exit--bad { color: var(--color-danger); margin-left: 6px; }
+.tool-card__exit--ok { color: var(--dsw-alias-state-success-primary); margin-left: 6px; }
+.tool-card__exit--bad { color: var(--dsw-alias-state-error-primary); margin-left: 6px; }
 
-.tool-card--pending .tool-card__result {
-  color: var(--color-ink-faint);
-}
-
-/* 运行中的呼吸点 */
-.tool-card__pulse {
+/* 运行中：工具名旁的强调色小点，不用动画 */
+.tool-card--pending .tool-card__name::after {
+  content: '';
   display: inline-block;
   width: 5px;
   height: 5px;
+  margin-left: 6px;
   border-radius: 50%;
-  background: var(--color-warn);
-  animation: pulse 1.1s ease-in-out infinite;
+  background: var(--ym-accent);
+  vertical-align: middle;
 }
 
-@keyframes pulse {
-  0%, 100% { opacity: 0.25; }
-  50% { opacity: 1; }
-}
-
-/* ── 输入区 ─────────────────────────────────────────────────────────────── */
+/* ══════════════════════════════════════════════════════════════════════════
+   8. 输入区（对齐 InputBar 卡片 + 官方 token 胶囊）
+   ══════════════════════════════════════════════════════════════════════════ */
 
 .composer {
-  padding: 10px 26px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0 24px 8px;
 }
 
 .composer__inner {
-  max-width: 780px;
-  margin: 0 auto;
+  width: 100%;
+  max-width: calc(var(--dsh-chat-content-width) + 16px);
 }
 
 .composer__box {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  padding: 9px 11px;
-  border: 1px solid var(--color-line);
-  border-radius: 14px;
-  background: var(--color-surface);
+  gap: 8px;
+  padding: 8px 12px 10px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--dsw-specific-input-major);
+  /* 官方做法：描边画成 elevation 发丝线，不占布局 */
+  box-shadow: 0 0 0 0.5px var(--dsw-alias-border-l2);
+  transition: box-shadow var(--ds-transition-duration) var(--ds-ease-in-out);
 }
 
 .composer__box:focus-within {
-  border-color: var(--color-line-strong);
+  box-shadow: 0 0 0 0.5px var(--dsw-alias-border-l4);
 }
 
 .composer__input {
@@ -806,13 +1031,15 @@ html[data-platform="darwin"] .sidebar__brand {
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--color-ink);
+  color: var(--dsw-alias-label-primary);
   font: inherit;
+  font-size: var(--dsh-content-font-size);
+  line-height: var(--dsh-content-line-height);
   resize: none;
 }
 
 .composer__input:focus { outline: none; }
-.composer__input::placeholder { color: var(--color-ink-faint); }
+.composer__input::placeholder { color: var(--dsw-alias-label-caption); }
 
 .composer__actions {
   display: flex;
@@ -823,48 +1050,87 @@ html[data-platform="darwin"] .sidebar__brand {
 
 .composer__state {
   margin-right: auto;
-  color: var(--color-ink-faint);
-  font-size: 11.5px;
+  color: var(--dsw-alias-label-caption);
+  font-size: 12px;
 }
 
-/* ── Markdown（Streamdown 输出容器）───────────────────────────────────────
- * Streamdown 自己带 Tailwind 类，但它不知道我们的色板，所以这里用一层作用域
- * 把颜色/间距统一到主题上，避免出现 Tailwind 默认的亮色排版。
- */
+/* ── token 统计：官方 StatsPills 规格（居中、13px、胶囊、tabular-nums）*/
+.tokenbar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 6px;
+  font-size: var(--dsh-content-font-size-secondary);
+  line-height: var(--dsh-content-line-height-secondary);
+}
+
+.tokenbar__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 1px 8px;
+  border-radius: 24px;
+  color: var(--dsw-alias-label-tertiary);
+  /* 数字等宽：token 数跳动时列不会左右抖 */
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: default;
+  transition: background-color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.tokenbar__item:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.tokenbar__item b {
+  color: var(--dsw-alias-label-secondary);
+  font-weight: 500;
+}
+
+.tokenbar__item--muted { color: var(--dsw-alias-label-caption); }
+
+.tokenbar__sep { color: var(--dsw-alias-label-caption); }
+
+.tokenbar__spacer { flex: 1; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   9. Markdown（Streamdown 输出容器）
+   ══════════════════════════════════════════════════════════════════════════ */
 
 .sd {
-  color: var(--color-ink);
-  font-size: 13.5px;
-  line-height: 1.7;
+  color: var(--dsw-alias-label-primary);
+  font-size: var(--dsh-content-font-size);
+  line-height: var(--dsh-content-line-height);
   word-break: break-word;
 }
 
 .sd > *:first-child { margin-top: 0; }
 .sd > *:last-child { margin-bottom: 0; }
 
-.sd p { margin: 0.55em 0; }
+.sd p { margin: 0.5em 0; }
+
 .sd h1, .sd h2, .sd h3, .sd h4 {
   margin: 1.1em 0 0.5em;
   font-weight: 600;
   line-height: 1.3;
 }
-.sd h1 { font-size: 18px; }
-.sd h2 { font-size: 16px; }
-.sd h3 { font-size: 14.5px; }
-.sd h4 { font-size: 13.5px; color: var(--color-ink-muted); }
+.sd h1 { font-size: 19px; }
+.sd h2 { font-size: 17px; }
+.sd h3 { font-size: 15px; }
+.sd h4 { font-size: 14px; color: var(--dsw-alias-label-secondary); }
 
-.sd ul, .sd ol { margin: 0.55em 0; padding-left: 1.35em; }
+.sd ul, .sd ol { margin: 0.5em 0; padding-left: 1.4em; }
 .sd ul { list-style: disc; }
 .sd ol { list-style: decimal; }
-.sd li { margin: 0.22em 0; }
+.sd li { margin: 0.2em 0; }
 
 .sd a {
-  color: var(--color-ink);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-  text-decoration-color: var(--color-ink-faint);
+  color: var(--dsw-alias-link);
+  text-decoration: none;
 }
-.sd a:hover { text-decoration-color: var(--color-ink); }
+.sd a:hover { text-decoration: underline; }
 
 .sd strong { font-weight: 600; }
 .sd em { font-style: italic; }
@@ -872,63 +1138,494 @@ html[data-platform="darwin"] .sidebar__brand {
 .sd blockquote {
   margin: 0.7em 0;
   padding: 2px 0 2px 12px;
-  border-left: 2px solid var(--color-line-strong);
-  color: var(--color-ink-muted);
+  border-left: 2px solid var(--dsw-alias-border-l3);
+  color: var(--dsw-alias-label-secondary);
 }
 
 .sd hr {
   margin: 1.1em 0;
   border: 0;
-  border-top: 1px solid var(--color-line);
+  border-top: 0.5px solid var(--dsw-alias-border-l2);
 }
 
-/* 行内代码：与代码块同一套单色处理 */
 .sd code {
-  font-family: var(--font-mono);
-  font-size: 12px;
+  font-family: var(--ds-font-family-code);
+  font-size: 13px;
 }
 
 .sd :not(pre) > code {
-  padding: 1px 5px;
-  border: 1px solid var(--color-line);
-  border-radius: 5px;
-  background: var(--color-surface-2);
-  color: var(--color-ink);
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--dsw-alias-markdown-inline-code);
+  color: var(--dsw-alias-label-primary);
 }
 
-/* 代码块：单色底 + 描边，不铺彩色主题 */
+/* 代码块：官方用 markdown-code-block 底色，不铺彩色主题 */
 .sd pre {
   margin: 0.7em 0;
-  padding: 11px 13px;
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-card);
-  background: var(--color-surface);
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--dsw-alias-markdown-code-block);
   overflow-x: auto;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.6;
 }
 
 .sd pre code {
   background: transparent;
-  border: 0;
   padding: 0;
 }
 
-/* 表格 */
 .sd table {
   width: 100%;
   margin: 0.7em 0;
   border-collapse: collapse;
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .sd th, .sd td {
   padding: 6px 10px;
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--dsw-alias-border-l2);
   text-align: left;
 }
 
 .sd th {
-  background: var(--color-surface-2);
-  font-weight: 600;
+  background: var(--dsw-alias-bg-layer-2);
+  font-weight: 500;
 }
+
+/* 尊重系统的「减少动态效果」 */
+
+/* ══════════════════════════════════════════════════════════════════════════
+   10. 工作台新增构件：侧栏头部 / 搜索 / 标签栏 / 文件卡片 / 轨迹 / 下拉 / 统计
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── 侧栏头部：「工作区」+ 新会话 ───────────────────────────────────── */
+
+.sidebar__brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px 6px;
+}
+
+.sidebar__title {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* 顶部主按钮：强调色，左图标右文字，紧凑 */
+.sidebar__new {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 9px;
+  border: none;
+  border-radius: 13px;
+  background: var(--ym-accent-soft);
+  color: var(--ym-accent-text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background-color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.sidebar__new:hover {
+  background: color-mix(in srgb, var(--ym-accent) 26%, transparent);
+}
+
+/* ── 搜索 ─────────────────────────────────────────────────────────── */
+
+.sidebar__search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 12px 8px;
+  padding: 0 8px;
+  height: 28px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-base);
+  transition: border-color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.sidebar__search:focus-within {
+  border-color: var(--ym-accent-line);
+}
+
+.sidebar__search-icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--dsw-alias-label-caption);
+}
+
+.sidebar__search-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 12px;
+}
+
+.sidebar__search-input:focus { outline: none; }
+.sidebar__search-input::placeholder { color: var(--dsw-alias-label-caption); }
+
+/* ── 会话条目：图标 + 两行（标题 / 时间）──────────────────────────── */
+
+.session {
+  align-items: center;
+  gap: 7px;
+  padding: 5px 8px;
+}
+
+.session__icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--dsw-alias-label-caption);
+}
+
+.session--current .session__icon {
+  color: var(--ym-accent-text);
+}
+
+.session__body {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  flex: 1;
+  min-width: 0;
+}
+
+.session__meta {
+  font-size: 10.5px;
+  line-height: 14px;
+}
+
+/* ── 标签栏（对话 / 轨迹）─────────────────────────────────────────── */
+
+.tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  height: 100%;
+}
+
+.tabs__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: color var(--ds-transition-duration-fast) var(--ds-ease-in-out),
+    border-color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.tabs__tab:hover {
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* 当前标签：强调色下划线 + 主文字色 —— 这是界面里最主要的「方向指示」 */
+.tabs__tab--active {
+  color: var(--dsw-alias-label-primary);
+  border-bottom-color: var(--ym-accent);
+}
+
+.tabs__badge {
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 文件卡片 ─────────────────────────────────────────────────────── */
+
+.tool-file {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.filecard {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 420px;
+  padding: 7px 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.filecard__icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.filecard__text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.filecard__name {
+  font-family: var(--ds-font-family-code);
+  font-size: 12.5px;
+  color: var(--dsw-alias-label-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.filecard__path {
+  color: var(--dsw-alias-label-caption);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.filecard__open {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: background-color var(--ds-transition-duration-fast) var(--ds-ease-in-out),
+    color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.filecard__open:hover {
+  background: var(--ym-accent-soft);
+  border-color: var(--ym-accent-line);
+  color: var(--ym-accent-text);
+}
+
+/* ── 轨迹视图：等宽、单行截断、失败标红 ───────────────────────────── */
+
+.trace {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.trace__empty {
+  padding: 12px 2px;
+  color: var(--dsw-alias-label-caption);
+  font-size: 12.5px;
+}
+
+.trace__step {
+  display: flex;
+  gap: 10px;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+
+.trace__step:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.trace__step--error {
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 10%, transparent);
+}
+
+.trace__kind {
+  flex: none;
+  width: 46px;
+  color: var(--dsw-alias-label-caption);
+  font-size: 10.5px;
+  letter-spacing: 0.4px;
+}
+
+.trace__kind--tool { color: var(--ym-accent-text); }
+.trace__kind--user { color: var(--dsw-alias-label-secondary); }
+.trace__kind--note { color: var(--dsw-alias-state-warn-primary); }
+
+.trace__body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.trace__label {
+  color: var(--dsw-alias-label-primary);
+}
+
+.trace__detail {
+  color: var(--dsw-alias-label-tertiary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ── 下拉（加号 / 权限 / 模型）──────────────────────────────────────── */
+
+.dd {
+  position: relative;
+  display: inline-flex;
+}
+
+.dd__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 9px;
+  border: none;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background-color var(--ds-transition-duration-fast) var(--ds-ease-in-out),
+    color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.dd__trigger:hover:not(:disabled),
+.dd__trigger[aria-expanded="true"] {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.dd__trigger:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.dd__label {
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 模型下拉前的小圆点：当前模型的「在用它」标记 */
+.dd__mark {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ym-accent);
+}
+
+/* 菜单：hover 打开的浮层，点空白关掉 */
+.dd__scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+}
+
+.dd__menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 21;
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+  max-width: 320px;
+  padding: 4px;
+  border: 1px solid var(--dsw-alias-border-l3);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-3);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+}
+
+.dd__item {
+  padding: 6px 9px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dd__item:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* 当前选中的模型 */
+.dd__item--active {
+  color: var(--ym-accent-text);
+}
+
+.dd__item--active::after {
+  content: ' ✓';
+}
+
+.dd__note {
+  padding: 7px 9px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11.5px;
+  line-height: 17px;
+  white-space: normal;
+}
+
+/* ── 会话统计行（输入框下方）──────────────────────────────────────── */
+
+.composer__spacer { flex: 1; }
+
+.btn--send {
+  width: 32px;
+  height: 30px;
+  padding: 0;
+  border-radius: 15px;
+}
+
+.stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 2px 0;
+  color: var(--dsw-alias-label-caption);
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.stats__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.stats__dim { color: var(--dsw-alias-label-caption); }
+.stats__sep { color: var(--dsw-alias-border-l4); }
+.stats__spacer { flex: 1; }

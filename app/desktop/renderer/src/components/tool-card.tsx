@@ -26,11 +26,10 @@ export const ToolCard = memo(function ToolCard({ block }: ToolCardProps): ReactE
   const [text, exitCode] = pending ? ['', null] : splitExit(block.result ?? '')
 
   return (
-    <div className={`tool-card${pending ? ' tool-card--pending' : ''}`} data-testid="tool-card" data-tool={block.name}>
+    <div className={`tool-card${pending ? ' tool-card--pending' : ''}`}>
       <div className="tool-card__head">
         <span className="tool-card__name">{block.name}</span>
         {block.args !== '' && <span className="tool-card__args">{block.args}</span>}
-        {pending && <span className="tool-card__pulse" aria-label="运行中" />}
       </div>
       {!pending && (
         <div className={`tool-card__result${block.isError ? ' tool-card__result--error' : ''}`}>

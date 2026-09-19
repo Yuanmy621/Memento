@@ -20,7 +20,7 @@ $ npm run desktop                        # 桌面：Electron 客户端
 
 ```
 YuanMy · 基于 DeepSeek Harness 内核的 coding agent
-模型     deepseek-official/deepseek-flash
+模型     deepseek-official/deepseek-v4-flash
 工作目录 /Users/me/project
 会话     YuanMy-20260917115410-jq637s
 工具     12 个
@@ -66,7 +66,7 @@ npm start
 | --- | --- |
 | `-p, --prompt <text>` | 一次性执行一个任务后退出（退出码 0 成功 / 1 回合失败） |
 | `--cwd <dir>` | agent 的工作目录（文件工具与 bash 的基准） |
-| `--model <id>` / `--provider <id>` | 模型与 provider（默认 `deepseek-flash` / `deepseek-official`） |
+| `--model <id>` / `--provider <id>` | 模型与 provider（默认 `deepseek-v4-flash` / `deepseek-official`） |
 | `--effort <off\|low\|high\|max>` | 推理强度 |
 | `--session <id>` / `--resume <id>` | 指定新会话 id / 恢复已持久化的会话 |
 | `--state-dir <dir>` | 会话与运行数据目录（默认 `<cwd>/.YuanMy`） |
@@ -98,26 +98,13 @@ npm run desktop          # 打开 Electron 窗口
 （macOS `vibrancy` / Windows `acrylic`，不是 CSS `backdrop-filter`）；系统标题栏隐藏，
 拖拽区由界面自己提供。改界面时用 `npm run desktop:watch` 起监听重建。
 
-改完代码先跑验证，从便宜到贵：
+改完代码至少跑一次类型检查（三个 tsconfig 一起）：
 
 ```bash
-npm run verify             # typecheck + 构建 + 界面链路 + 内核链路（一条命令全跑）
-npm run desktop:ui-smoke   # 渲染进程：静态契约 + 归约器回放 + Markdown 真渲染（不开窗口）
-npm run desktop:host-smoke # 内核链路：真起 host 子进程，-p 还能跑真实回合
-npm run desktop:smoke      # 真开 Electron 窗口，验证窗口/preload/渲染进程/内核整条链路后自动退出
-```
-
-`desktop:smoke` 不只是「窗口开了」——它会从渲染进程里读回界面状态做断言；
-再加上 prompt 就能**在真实窗口里跑完一个完整回合**（走的就是点「发送」那条路），
-并断言 Markdown 真的被解析成了标题/粗体/列表：
-
-```bash
-YuanMy_SMOKE_PROMPT="用 tree 看一下 app/desktop，然后用 markdown 汇总" npm run desktop:smoke
-# [desktop] 窗口可见 · 启动耗时 394ms
-# [smoke] renderer · status=就绪 · bridge=object · React 已挂载=true
-# [smoke] 外观 · platform=darwin · 磨砂玻璃=native · 拖拽区 2 处
-# [smoke] turn · 完成 · 1 次工具调用 · 工具卡片 1 张
-# [smoke] markdown · 块 1 · 代码块 1 · 粗体 1 · 标题 1 · 列表 1
+npm run typecheck          # Node 侧 TS + 渲染进程 TSX + Node 侧 JS
+npm run desktop            # 真开窗口（会自动重新构建渲染进程）
+npm run desktop:butian     # 带补天 MCP 起桌面端
+npm run desktop:host       # 只起内核宿主，输出 NDJSON，可 `| jq` 单看内核链路
 ```
 
 > ⚠️ 改 `main.js` 时注意：**Electron 的 ESM 主进程入口不能用顶层 `await app.whenReady()`**。
@@ -162,9 +149,13 @@ app/
       tsconfig.json      DOM + JSX 的独立类型检查
     scripts/
       build-renderer.js  渲染进程打包（esbuild + PostCSS/Tailwind）
-      host-smoke.js      内核链路冒烟（可跑真实回合）
-      ui-smoke.js        界面链路冒烟（契约 + 归约器 + Markdown 渲染）
     README.md            桌面端设计说明
+
+  mcp/                   自己带的 MCP 服务器（外部工具，默认不挂载）
+    README.md            怎么接到内核上、凭据怎么转发、pnpm 依赖坑
+    butian/              补天（butian.net）只读接口：项目大厅 / 排行 / 平台数字 / 个人中心
+      server.ts          MCP server 本体（stdio，无需构建）
+      client.ts          补天私有接口客户端（envelope 解包 + 错误分类）
 ```
 
 一屏就能读完的装配逻辑在 `app/cli/kernel.ts`，它是理解 DSH 内核最好的入口。
@@ -221,16 +212,23 @@ await ctx.plugin(AgentLoop, { agents: [] })                 // ctx.agentLoop
 
 ```
 .agents/skills/
-  yuanmy-verify/SKILL.md        改完代码怎么验证（四层防线、先让测试红一次的纪律）
   yuanmy-desktop-ui/SKILL.md    改桌面端界面的固定套路与两个已修 bug 的复现条件
+  yuanmy-mcp/SKILL.md           往 YuanMy 上接 MCP 服务器的固定套路
+  src-hunter/                   SRC / 众测漏洞挖掘工作流（27 个文件 + 上游 MIT LICENSE）
 ```
+
+`src-hunter` 是 **vendored 的第三方技能**（上游 [MyuriKanao/src-hunter-skill](https://github.com/MyuriKanao/src-hunter-skill)，MIT）：
+只落地「能力内核」约 1.1 MB（5 阶段方法论 + 19 个 playbook + 指纹库 + 合规红线），
+上游那 46 MB 的 H1 案例库与 3 MB 的 payloader 刻意没进仓库 ——
+playbook 把 payload 内联在文件里，砍掉它们不影响可用；需要时按该技能〈收录范围〉用
+`$YuanMy_SKILL_DIRS` 挂上。改写要点与 vendored 技能的规矩见 [`.agents/README.md`](.agents/README.md)。
 
 每个技能是一个目录包，`SKILL.md` 以 YAML frontmatter 开头（`name` + `description` 必填）：
 
 ```markdown
 ---
-name: yuanmy-verify
-description: 在 YuanMy 仓库改完代码后怎么验证 …… 当用户说「验证一下」时使用。
+name: yuanmy-mcp
+description: 往 YuanMy 上接 MCP 服务器的固定套路 …… 当你要给 YuanMy 加一个 MCP 服务器时使用。
 ---
 
 # 正文：写成可执行步骤
@@ -259,16 +257,15 @@ description: 在 YuanMy 仓库改完代码后怎么验证 …… 当用户说「
 技能按 `<cwd>` 定位，所以 `--cwd` / 桌面端「更换工作目录」会连带切换技能集；
 目录变化被监听，加了技能下一次请求就能用，不用重启。
 
-### 验证
+### 自查
 
 ```bash
 node app/cli/main.ts --list-tools | grep '^skill'   # skill 工具已注册
-npm run desktop:ui-smoke                            # 校验每个 SKILL.md 的 frontmatter
-node app/cli/main.ts -p "用 skill 工具加载 yuanmy-verify，告诉我它的第二节标题"
+node app/cli/main.ts -p "用 skill 工具加载 yuanmy-mcp，告诉我它的第二节标题"
 ```
 
-`ui-smoke` 会检查 `name` 与目录名一致、`description` 非空 —— frontmatter 写错的技能会被
-provider **静默忽略**，这条 lint 就是拦它的（反向验证过：写坏一个技能会红）。
+⚠️ frontmatter 写错（`name` 与目录名不一致、`description` 为空）的技能会被 provider
+**静默忽略** —— 技能没生效时先回去核这两项。
 
 ---
 
@@ -323,6 +320,10 @@ ctx.tools.register(defineTool({
 | 给桌面端加一个界面动作 | preload 加一个方法 → main 加一个 `ipcMain.handle` → renderer 调用 | `app/desktop/preload.js` / `main.js` / `renderer/src/` |
 | 给桌面端加一种 UI 帧 | 在 `host/protocol.ts` 加一个 `HostEvent` 分支，bridge 发出、renderer 消费 | `app/desktop/host/bridge.ts` |
 | 读会话历史 / 列会话 | 会话以 JSONL 落在 `<cwd>/.YuanMy/sessions/<项目>/<会话 id>/session.v3.jsonl`，第一行是头 | `app/desktop/host/sessions.ts` |
+| 列会话（项目 → 会话树） | 会话以 JSONL 落在 `<cwd>/.YuanMy/sessions/<项目>/<会话 id>/session.v3.jsonl`，第一行是头 | `app/desktop/host/sessions.ts` |
+| 跨项目列表 | 内核 stateDir 每项目一份库 → 桌面端记一份「最近打开过的项目」（`<userData>/projects.json`），经 `YuanMy_PROJECT_ROOTS` 交给 host 多扫几个根 | `app/desktop/main.js` + `host/sessions.ts` |
+| 接一个 MCP 服务器 | `YuanMy_MCP=<名字> npm start`（默认不挂）；内置的在 `app/cli/kernel.ts` 的 `mcpSpecs()`，也可以丢一个 `<cwd>/.YuanMy/mcp/<名字>.ts` | `app/mcp/` |
+| 回放一个会话的历史 | 恢复会话 = `--resume <id>` 重启内核；界面侧由 host 读日志发 `history` 帧（实时路径与回放路径共用 `protocol.ts` 的词表与 `toOutcome`） | `app/desktop/host/history.ts` |
 | 拿 token 计量 | `session/event` 的 `assistant/message` 带 `usage`（计数互斥：未命中/命中/写入分开记） | `bridge.ts` 的 `usage` 帧 |
 
 ---
@@ -332,13 +333,17 @@ ctx.tools.register(defineTool({
 - **无沙箱、无审批**：本地 provider 意味着 agent 拥有当前用户的全部读写与执行权限。这是有意的默认值（与 DSH 的 `sdk-minimal` 形态一致），生产环境请按第 4 节换成受限 provider。
 - **单 agent**：没有挂 `dsh-subagent` / `dsh-tool-workflow` / `dsh-tool-todo` / 压缩与技能等插件，这些都可以按同一套 `ctx.plugin` 方式增量加进来。
 - **桌面端还不能打包**：只做了开发态运行（`npm run desktop`）。要出安装包需要再补 `electron-builder` 配置与签名流程，参考 DSH 自己的 `apps/desktop`。
-- **改桌面端布局时注意**：`.app-shell` 的 `grid-template-rows: minmax(0, 1fr)` 与子项的 `min-height: 0` 不能删 —— 少了它，内容会把整个外壳撑高（侧栏被拉长、失去内部滚动，长内容卡死渲染进程）。`desktop:smoke` 有布局探针盯着。
+- **改桌面端布局时注意**：`.app-shell` 的 `grid-template-rows: minmax(0, 1fr)` 与子项的 `min-height: 0` 不能删 —— 少了它，内容会把整个外壳撑高（侧栏被拉长、失去内部滚动，长内容卡死渲染进程）。**改这一块时手动展开一段长推理确认**：外壳高度不该超过视口，滚动条应在 `.messages` 内部。
 - **桌面端会话列表不生成标题**：标题取会话日志里的第一条用户消息。正式标题应由 `@deepseek-ai/dsh-session-title` 生成（写 `session/title` 事件），但那个插件还需要 `dsh-invariants` 一整套 companion 插件，暂时没挂；读取端已经优先认这个事件。
 - **token 统计是会话累计的估算口径**：DSH 的 `inputTokens` 只算**未命中缓存**的部分，命中部分在 `cacheReadTokens`，所以「输入」一栏看起来会比直觉小 —— 界面里的「计费输入」才是这次请求的完整提示词量。
 - **技能不扫描全局目录**：默认只看项目里的 `.agents/skills` 与 `.dsh/skills`，`~/.dsh/skills` 里那几十个飞书/记忆类技能不会进编码 agent 的目录（想要就用 `includeDefaultRoots: true` 或 `$YuanMy_SKILL_DIRS`）。
+- **三个 tsconfig，各管一层**：`tsconfig.json`（Node 侧 TS：`app/cli` + `app/desktop/host` + `app/mcp`）、`app/desktop/renderer/tsconfig.json`（渲染进程 TSX，DOM+JSX）、`tsconfig.js.json`（Node 侧 **.js**：Electron 入口与冒烟脚本，`checkJs: false`，只管「被认领」与语法）。
+  新增源码目录时**必须把 glob 加进对应的 include** —— 漏了的话 `npm run typecheck` 根本不会检查它，编辑器还会另建推断项目、报出极具误导性的「找不到名称 "node:fs/promises"，请安装 @types/node」（真踩过）。自查办法：`npm run typecheck` 之后确认新文件确实被某个项目收进来了
+（`npx tsc --noEmit --listFiles -p <项目> | grep <文件名>`）。
+- **MCP 客户端插件用的是过期发布线**：npm 上 `@deepseek-ai/dsh-mcp-client` 只有 `0.0.1-rc.1`（其它 dsh 包锁在 `0.1.5-rc.2`），peer 范围全都对不上。已逐条核对过它实际用到的 API 在 0.1.5-rc.2 上成立，并用 `peerDependencyRules.allowedVersions` 声明；升级到同一条线时要回来清掉这段。细节见 `app/mcp/README.md`。
 - **桌面端渲染进程的 bundle 约 10 MB**：其中约 9 MB 是 shiki 的 200 多种语言语法定义（单文件 IIFE 会把「按需加载」全部内联）。实测冷启动到窗口可见约 235–400 ms，暂不处理；瘦身路线见 `app/desktop/README.md`。
 - **磨砂玻璃与隐藏标题栏只在 macOS 上验证过**：Windows 走 `backgroundMaterial: 'acrylic'` + `titleBarOverlay`，Linux 保留原生标题栏（否则没有关闭按钮），都还没实机跑过。
-- **模型目录**：默认 `deepseek-flash`；用 `--model` 或 `/model` 切换，可用值由 DeepSeek provider 决定。
+- **模型目录**：默认 `deepseek-v4-flash`；用 `--model` 或 `/model` 切换。适配器申报 4 款，但 YuanMy 只对用户暴露 `deepseek-v4-flash` 与 `deepseek-v4-pro` 两款主力（清单在 `app/cli/options.ts` 的 `SUPPORTED_MODELS`，CLI 默认值与桌面端下拉框共用它）。
 - **依赖版本锁定**：所有 `@deepseek-ai/dsh-*` 固定在 **`0.1.5-rc.2`**，即标准发布线 —— 官方 CLI `@deepseek-ai/dsh`（npm `latest`）依赖 `^0.1.5-rc.1`，解析结果正是它。安装时请认准这条线：
   - 不要按各**子包**自己的 `latest` 标签装：那些标签是过期的（核心停在 `0.1.0-rc.6`，`dsh-tool-fs` / `dsh-fs-local` / `dsh-llm-deepseek` 停在 `0.0.1-rc.1`），混装会因 `inject` 列表不一致而静默停在 PENDING；
   - 也不要用 `0.1.0-rc` 线：它本身缺包（例如没有 `dsh-deepseek-llm-api-extensions`）；

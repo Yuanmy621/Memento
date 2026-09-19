@@ -1,0 +1,36 @@
+{
+  // Node 侧 **.js** 文件的归属（Electron 主进程 / preload / ipc / 构建脚本）。
+  //
+  // 为什么单独一个项目、而不是并进根 tsconfig：这些文件是 .js（主进程要能被
+  // Electron 直接跑），根项目是 Node 侧 .ts 的严格配置；混在一起会让两边的
+  // 编译选项互相将就。
+  //
+  // checkJs 关掉：它**不负责查错**，只负责让编辑器和 tsc 都「认领」这些文件 ——
+  // 否则它们不属于任何项目，VS Code 会拿推断项目去解析，报出
+  // 「找不到名称 "node:fs/promises"，请安装 @types/node」这种误导性错误（真报过）。
+  // 语法错误仍然会在这里暴露（checkJs 关的是语义检查，不是解析）。
+  "compilerOptions": {
+      "target": "ES2023",
+      "lib": [
+          "ES2023"
+      ],
+      "module": "nodenext",
+      "moduleResolution": "nodenext",
+      "types": [
+          "node"
+      ],
+      "allowJs": true,
+      "checkJs": false,
+      "allowImportingTsExtensions": true,
+      "noEmit": true,
+      "skipLibCheck": true,
+      "forceConsistentCasingInFileNames": true
+  },
+  "include": [
+      "app/**/*.js"
+  ],
+  "exclude": [
+      "app/desktop/renderer/dist/**",
+      "node_modules/**"
+  ]
+}

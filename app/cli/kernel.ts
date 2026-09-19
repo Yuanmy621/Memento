@@ -14,6 +14,7 @@
  * @module YuanMy/kernel
  */
 
+import { existsSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { Context } from '@deepseek-ai/cordis'
 
@@ -54,6 +55,8 @@ import * as ToolFs from '@deepseek-ai/dsh-tool-fs'
 import * as ToolFsSearch from '@deepseek-ai/dsh-tool-fs-search'
 import * as ToolBash from '@deepseek-ai/dsh-tool-bash'
 import * as ToolJobs from '@deepseek-ai/dsh-tool-jobs'
+// 外部 MCP 服务器（可选挂载）：它把 MCP 服务器的工具注册成 `mcp__<名字>__<工具>`。
+import * as McpClient from '@deepseek-ai/dsh-mcp-client'
 
 // —— YuanMy 自己的扩展 ——
 import * as customTools from './tools.ts'
@@ -116,6 +119,124 @@ async function mount(ctx: Context, label: string, plugin: unknown, config?: unkn
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error)
     throw new Error(`挂载插件 ${label} 失败: ${reason}`, { cause: error })
+  }
+}
+
+/**
+ * 内置的 MCP 服务器登记表。
+ *
+ * 只登记「这个仓库自己带的」服务器 —— 补天的只读接口包装（`app/mcp/butian/`）。
+ * 用当前 node 拉起、并带上 `--experimental-strip-types`：与 CLI/host 一样
+ * 直接跑 TS，不需要构建。**不能用 Electron 的二进制**（那样跑不了 Node API）。
+ *
+ * @param cwd - agent 的工作目录（工作目录内的 MCP server 相对它解析）。
+ * @returns 名字 → 启动方式。
+ */
+function mcpSpecs(cwd: string): Record<string, McpSpec> {
+  // app/cli/kernel.ts → ../mcp/butian/server.ts
+  const here = import.meta.dirname
+  return {
+    butian: {
+      serverName: 'butian',
+      command: process.execPath,
+      args: [
+        '--experimental-strip-types',
+        '--disable-warning=ExperimentalWarning',
+        join(here, '..', 'mcp', 'butian', 'server.ts'),
+      ],
+      // MCP 客户端会用「清洗过的父环境」起子进程（KEY/PASSWORD/SECRET/TOKEN 之类的
+      // 名字会被丢掉），所以凭据必须**显式**列在这里转发，不能指望它自己继承。
+      // 注意：`BUTIAN_COOKIE` 恰好不在清洗规则里，但依赖这个巧合太脆 ——
+      // 哪天规则加个 COOKIE，登录就会悄无声息地失效。
+      forwardEnv: ['BUTIAN_COOKIE'],
+      title: '补天 butian.net（只读）',
+    },
+    // 工作目录里的自定义 MCP server：`<cwd>/.YuanMy/mcp/<名字>.ts`
+    ...customMcpSpecs(cwd),
+  }
+}
+
+/** 一个 MCP 服务器的启动方式。 */
+interface McpSpec {
+  /** MCP 里的命名空间：工具会变成 `mcp__<serverName>__<工具>`。 */
+  readonly serverName: string
+  readonly command: string
+  readonly args: readonly string[]
+  /** 显式转发给子进程的环境变量名。 */
+  readonly forwardEnv?: readonly string[]
+  /** 只用于日志。 */
+  readonly title: string
+}
+
+/**
+ * 工作目录里的自定义 MCP server：`<cwd>/.YuanMy/mcp/<名字>.ts`。
+ *
+ * 放这儿而不是写死在代码里，是为了「不重新构建就能加一个 MCP」：
+ * 丢一个 TS 文件进目录、在 `$YuanMy_MCP` 里写上名字即可。
+ * @param cwd - agent 的工作目录。
+ * @returns 名字 → 启动方式（目录不存在时是空对象）。
+ */
+function customMcpSpecs(cwd: string): Record<string, McpSpec> {
+  const dir = join(cwd, '.YuanMy', 'mcp')
+  if (!existsSync(dir)) return {}
+  const specs: Record<string, McpSpec> = {}
+  for (const entry of readdirSync(dir)) {
+    if (!entry.endsWith('.ts') && !entry.endsWith('.js')) continue
+    const name = entry.replace(/\.(ts|js)$/, '')
+    if (!/^[A-Za-z0-9_-]{1,32}$/.test(name)) continue
+    specs[name] = {
+      serverName: name,
+      command: process.execPath,
+      args: ['--experimental-strip-types', '--disable-warning=ExperimentalWarning', join(dir, entry)],
+      title: `${name}（${dir}）`,
+    }
+  }
+  return specs
+}
+
+/**
+ * 按 `$YuanMy_MCP` 挂载外部 MCP 服务器（**默认不挂**）。
+ *
+ * 为什么默认关：每挂一个都会起一个子进程，而且它的工具会进**每一次**请求的
+ * 工具表（占上下文）。所以做成显式开启，值是用冒号分隔的名字：
+ *
+ * ```bash
+ * YuanMy_MCP=butian node app/cli/main.ts            # 只挂补天
+ * YuanMy_MCP=butian:my-thing node app/cli/main.ts   # 补天 + 工作目录里的自定义 server
+ * ```
+ *
+ * 未知名字只警告不报错：写错一个名字不该让整个内核起不来。
+ * @param ctx - 内核上下文。
+ * @param options - CLI 配置（用到 cwd）。
+ */
+async function mountMcpServers(ctx: Context, options: Options): Promise<void> {
+  const wanted = (process.env.YuanMy_MCP ?? '')
+    .split(':')
+    .map(part => part.trim())
+    .filter(part => part !== '')
+  if (wanted.length === 0) return
+
+  const specs = mcpSpecs(options.cwd)
+  for (const name of wanted) {
+    const spec = specs[name]
+    if (spec === undefined) {
+      process.stderr.write(`YuanMy: 未知的 MCP 服务器 "${name}"，可用: ${Object.keys(specs).join(', ') || '（无）'}\n`)
+      continue
+    }
+    const env: Record<string, string> = {}
+    for (const key of spec.forwardEnv ?? []) {
+      const value = process.env[key]
+      if (value !== undefined && value !== '') env[key] = value
+    }
+    await mount(ctx, `mcp:${name}`, McpClient, {
+      transport: 'stdio',
+      serverName: spec.serverName,
+      command: spec.command,
+      args: [...spec.args],
+      env,
+      cwd: options.cwd,
+    })
+    process.stderr.write(`YuanMy: 已挂载 MCP 服务器 ${spec.title}\n`)
   }
 }
 
@@ -202,6 +323,9 @@ export async function bootKernel(options: Options): Promise<Kernel> {
   await mount(ctx, 'YuanMy-tools', customTools, { cwd: options.cwd })
   // 模型侧的入口：在首个请求前投递一份「可用技能目录」，并注册 `skill` 工具按需加载正文。
   await mount(ctx, 'dsh-tool-skill', ToolSkill)
+
+  // ── 6.5 外部 MCP 服务器（`$YuanMy_MCP`，默认不挂）─────────────────────
+  await mountMcpServers(ctx, options)
 
   // ── 7. prompt 扩展 ─────────────────────────────────────────────────────
   installPromptSections(ctx)

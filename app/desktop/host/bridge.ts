@@ -18,7 +18,7 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { AssistantStreamFrame } from '@deepseek-ai/dsh-agent'
 // 复用 CLI 的工具摘要格式化，避免终端与 GUI 的展示逻辑各写一份。
 import { summarizeCall, summarizeResult } from '../../cli/ui.ts'
-import type { HostEvent, TurnOutcome } from './protocol.ts'
+import { toOutcome, type HostEvent, type TurnOutcome } from './protocol.ts'
 
 /** 一次回合的统计结果。 */
 export interface TurnStats {
@@ -195,18 +195,4 @@ export class DesktopBridge {
   }
 }
 
-/** 把 DSH 的结束原因映射成本项目的枚举。 */
-function toOutcome(reason: { readonly kind: string }): TurnOutcome {
-  switch (reason.kind) {
-    case 'completed':
-      return 'completed'
-    case 'aborted':
-      return 'aborted'
-    case 'max-tokens':
-      return 'max-tokens'
-    case 'error':
-      return 'error'
-    default:
-      return 'unknown'
-  }
-}
+/** 把 DSH 的结束原因映射成本项目的枚举（与回放共用，见 `protocol.ts` 的 `toOutcome`）。 */

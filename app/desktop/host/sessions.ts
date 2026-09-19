@@ -13,6 +13,12 @@
  *       session.v3.jsonl                ← 第一行是 session 头，之后每行一个事件
  * ```
  *
+ * ⚠️ **会话库是按项目分开的**：内核的 `stateDir` 默认是 `<cwd>/.YuanMy`，
+ * 所以上面这个布局在每个项目里各有一份。只扫当前项目那一份的话，侧栏的
+ * 「项目 → 会话」树里永远只有**一个**项目 —— 换到别的项目，上一个项目就消失了。
+ * 因此列表会**同时扫「最近打开过的项目」各自的库**（{@link rootsOf}），
+ * 项目清单才是真的清单。数据位置没有变，每个项目仍然是自己那份库。
+ *
  * ## 每个会话摘要从日志里取什么
  *
  * | 字段 | 来源 |
@@ -53,6 +59,8 @@ const TITLE_MAX_CHARS = 42
 const DEFAULT_SESSIONS_PER_PROJECT = 20
 /** 最多展开多少个项目；当前项目永远在内。 */
 const DEFAULT_MAX_PROJECTS = 12
+/** 额外扫描多少个「最近打开过」的项目的会话库（防止登记文件异常时拖慢首屏）。 */
+const DEFAULT_MAX_EXTRA_PROJECTS = 8
 
 /** 一个已落盘会话的摘要。 */
 export interface SessionSummary {
@@ -296,18 +304,29 @@ async function summarizeDirs(
   return summaries
 }
 /**
- * 定位所有项目：每个项目只读「最新那个会话」的头，拿到真实 cwd。
+ * 定位所有项目：每层**会话库根**下扫一遍，每个项目只读「最新那个会话」的头，拿到真实 cwd。
  *
  * 项目目录名是 cwd 的转义形式且**不可逆**，所以真实路径只能从日志头里读，
  * 这里刻意不去猜转义规则。
- * @param root - 持久化根目录（`<stateDir>/sessions`）。
+ *
+ * 同一个项目可能在多个根里都有日志（例如它既被登记为「最近打开」、又恰好把
+ * 日志写在了当前项目的库里），按 cwd 去重、**先到先得** —— 根的顺序是
+ * 「当前项目优先」，所以当前库里的那份说了算。
+ * @param roots - 要扫描的会话库根（`<stateDir>/sessions`），按优先级排列。
  * @returns 每个项目的 cwd 与它的会话目录（按 mtime 倒序）。
  */
-async function locateProjects(root: string): Promise<ProjectScan[]> {
+async function locateProjects(roots: readonly string[]): Promise<ProjectScan[]> {
   const found: ProjectScan[] = []
-  for (const projectDir of await projectDirsOf(root)) {
-    const scan = await scanProject(projectDir)
-    if (scan !== undefined) found.push(scan)
+  const seen = new Set<string>()
+  for (const root of roots) {
+    for (const projectDir of await projectDirsOf(root)) {
+      const scan = await scanProject(projectDir)
+      if (scan === undefined) continue
+      const key = resolve(scan.cwd)
+      if (seen.has(key)) continue
+      seen.add(key)
+      found.push(scan)
+    }
   }
   return found
 }
@@ -321,6 +340,41 @@ function projectSummary(scan: ProjectScan, currentPath: string, sessionCount = s
     updatedAt: scan.dirs[0]?.mtimeMs ?? Date.now(),
     current: resolve(scan.cwd) === currentPath,
   }
+}
+
+/**
+ * 把一个项目根目录换算成它的**会话库根**。
+ *
+ * 与内核的约定一致：`stateDir` 默认是 `<cwd>/.YuanMy`，会话落在它的 `sessions/` 下。
+ * 所以「每个项目一份会话库」—— 光扫当前项目的库，侧栏就永远只看得见一个项目。
+ * @param projectPath - 项目根目录。
+ * @returns 该项目的会话库根（可能并不存在）。
+ */
+export function sessionsRootOf(projectPath: string): string {
+  return join(projectPath, '.YuanMy', 'sessions')
+}
+
+/**
+ * 汇总一次列表要扫描的全部会话库根：**当前项目的 + 最近打开过的项目各自的**。
+ *
+ * 顺序即优先级：当前项目的库排第一（同一个项目在两处都有日志时以它为准，
+ * 见 {@link locateProjects} 的去重规则）。额外根的数量有上限 ——
+ * 登记文件被写坏、或用户打开过几十个项目时，首屏不该跟着变慢。
+ * @param root - 当前项目的会话库根。
+ * @param extraProjectPaths - 最近打开过的其他项目路径。
+ * @returns 去重后的会话库根列表。
+ */
+function rootsOf(root: string, extraProjectPaths?: readonly string[]): string[] {
+  const roots = [root]
+  const seen = new Set([resolve(root)])
+  for (const path of (extraProjectPaths ?? []).slice(0, DEFAULT_MAX_EXTRA_PROJECTS)) {
+    const candidate = sessionsRootOf(path)
+    const key = resolve(candidate)
+    if (seen.has(key)) continue
+    seen.add(key)
+    roots.push(candidate)
+  }
+  return roots
 }
 
 /**
@@ -342,10 +396,16 @@ function withCurrentSession(sessions: SessionSummary[], currentSessionId: string
  * 只读当前项目的会话：项目清单随首屏一起到，其他项目的明细等被点开时再读
  * （{@link listProjectSessions}），所以项目再多也不会拖慢首屏。
  *
+ * ⚠️ 项目清单**不止来自当前项目的会话库**：内核的 `stateDir` 默认是
+ * `<cwd>/.YuanMy`，每个项目一份库，只扫一个根的话侧栏永远只有一个项目。
+ * 所以还要扫「最近打开过的项目」各自的库（{@link rootsOf}）——
+ * 数据一个字节都不动，只是多读几个根。
+ *
  * @param options - 查询参数。
- * @param options.root - 持久化根目录（`<stateDir>/sessions`）。
+ * @param options.root - 当前项目的会话库根（`<stateDir>/sessions`）。
  * @param options.cwd - 当前 agent 的工作目录。
  * @param options.currentSessionId - 当前会话 id（用来高亮 / 补合成记录）。
+ * @param options.extraProjectPaths - 最近打开过的其他项目路径（各自的库也会被扫）。
  * @param options.sessionsPerProject - 当前项目最多列几个会话。
  * @param options.maxProjects - 最多返回几个项目（当前项目一定在内）。
  * @returns 项目清单与当前项目的会话。目录还不存在时是「只有当前项目、没有会话」。
@@ -354,6 +414,7 @@ export async function listWorkspaceSessions(options: {
   readonly root: string
   readonly cwd: string
   readonly currentSessionId: string
+  readonly extraProjectPaths?: readonly string[]
   readonly sessionsPerProject?: number
   readonly maxProjects?: number
 }): Promise<WorkspaceListing> {
@@ -361,7 +422,7 @@ export async function listWorkspaceSessions(options: {
   const maxProjects = options.maxProjects ?? DEFAULT_MAX_PROJECTS
   const currentPath = resolve(options.cwd)
 
-  const located = await locateProjects(options.root)
+  const located = await locateProjects(rootsOf(options.root, options.extraProjectPaths))
   const currentScan = located.find((scan) => resolve(scan.cwd) === currentPath)
   const others = located
     .filter((scan) => resolve(scan.cwd) !== currentPath)
@@ -404,10 +465,12 @@ export async function listWorkspaceSessions(options: {
  * 读**某一个项目**的会话明细（侧栏里折叠的项目被点开时调用）。
  *
  * @param options - 查询参数。
- * @param options.root - 持久化根目录（`<stateDir>/sessions`）。
+ * @param options.root - 当前项目的会话库根（`<stateDir>/sessions`）。
  * @param options.path - 目标项目根目录（`ProjectSummary.path`）。
  * @param options.currentSessionId - 当前会话 id；命中的那条标记为 `current`。
  * @param options.currentCwd - agent 当前的工作目录；与 `path` 相同才补「还没落盘」的当前会话。
+ * @param options.extraProjectPaths - 最近打开过的其他项目路径（各自的库也会被扫）——
+ *   项目清单可能来自别的库，这里必须扫同样的根，否则点开会是「读不到」。
  * @param options.sessionsPerProject - 最多列几个会话。
  * @returns 项目摘要 + 会话明细；找不到该项目（目录被删等）时返回 `undefined`。
  */
@@ -416,11 +479,13 @@ export async function listProjectSessions(options: {
   readonly path: string
   readonly currentSessionId: string
   readonly currentCwd?: string
+  readonly extraProjectPaths?: readonly string[]
   readonly sessionsPerProject?: number
 }): Promise<ProjectSessions | undefined> {
   const perProject = options.sessionsPerProject ?? DEFAULT_SESSIONS_PER_PROJECT
   const wanted = resolve(options.path)
-  const scan = (await locateProjects(options.root)).find((entry) => resolve(entry.cwd) === wanted)
+  const located = await locateProjects(rootsOf(options.root, options.extraProjectPaths))
+  const scan = located.find((entry) => resolve(entry.cwd) === wanted)
   if (scan === undefined) return undefined
 
   let sessions = await summarizeDirs(scan.dirs, perProject, options.currentSessionId)

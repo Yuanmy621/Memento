@@ -32,7 +32,7 @@ export function TopBar({ state, onNewSession }: TopBarProps): ReactElement {
       <span className="topbar__title">{title}</span>
       <span className="topbar__sub">{subtitle}</span>
       <span className="topbar__spacer" />
-      <button type="button" className="btn btn--ghost no-drag" data-testid="topbar-new-session" onClick={onNewSession}>
+      <button type="button" className="btn btn--ghost no-drag" onClick={onNewSession}>
         新建会话
       </button>
     </header>

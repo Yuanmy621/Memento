@@ -18,8 +18,7 @@ npm run desktop          # 打开窗口
 > **Electron 加载 preload 时会忽略 `"type": "module"`**，一律按 CommonJS 执行
 > （官方文档 *ES Modules (ESM) in Electron*：「Preload scripts will ignore
 > `type: module` fields」），沙箱化 preload 也不支持 ESM `import`。
-> 所以这里的 `require('electron')` 是有效的，`npm run desktop:smoke` 实测
-> `bridge=object` 验证过；`ui-smoke.js` 里也有一条断言拦着它被改成 ESM。
+> 所以这里的 `require('electron')` 是有效的（实测 `window.YuanMy` 能拿到 bridge）。
 >
 > 代价要说清楚：**除了 Electron，所有工具都会以为它是 ESM**（Node、编辑器、linter、打包器）。
 > 想消除这个歧义，把文件名换回 `preload.cjs` 就行 —— 官方的 DSH 桌面端正是这么做的
@@ -110,8 +109,8 @@ renderer/dist/renderer.css    Tailwind 产出（含 Streamdown 的类名）
    ABI 不同，直接在主进程里 `import` 会在加载 `.node` 时失败。
 2. **隔离**。渲染进程崩溃 / 窗口重载 / 用户点「刷新」都不会带走内核状态；
    反过来，内核里跑飞的子进程也不会卡住窗口。
-3. **可单独调试**。`npm run desktop:host-smoke` 能在完全没有 Electron 的情况下
-   把整条内核链路跑一遍。
+3. **可单独调试**。`npm run desktop:host` 能在完全没有 Electron 的情况下
+   把内核跑起来（输出是 NDJSON，可以直接 `| jq` 看）。
 
 代价是多一层 IPC —— 但消息是结构化对象（`child_process` 的 Node IPC，不是解析 stdout），
 所以没有「日志和协议混在一条流里」的麻烦。父进程消失时子进程会收到 `disconnect`，
@@ -129,9 +128,8 @@ renderer/dist/renderer.css    Tailwind 产出（含 Streamdown 的类名）
    所以频道字面量必须重复一份**）；
 4. `renderer/src/` 里调用 `api.theme(...)`（组件或 `use-agent.ts`）。
 
-第 3 步的两处重复是最容易出错的地方，所以 `scripts/ui-smoke.js` 里有一条静态检查：
-它会比对 `ipc.js` 与 `preload.js` 的频道名集合、渲染进程调用的 api 方法是否都已暴露、
-`getElementById` 用到的 id 是否都在 `index.html` 里。**改完先跑 `npm run desktop:ui-smoke`。**
+第 3 步的两处重复是最容易出错的地方：`ipc.js` 与 `preload.js` 的频道名必须逐字一致，
+渲染进程能调的方法必须在 preload 里都暴露出来。**加界面动作时对着这两份表逐个核对。**
 
 想让界面显示一种**新的内核事件**，则是另一条链路：
 
@@ -139,8 +137,8 @@ renderer/dist/renderer.css    Tailwind 产出（含 Streamdown 的类名）
 2. `host/bridge.ts`：在对应事件里 `this.send({ type: '...' })`；
 3. `renderer/src/use-agent.ts`：在归约器的 `switch` 里加 `case`，再到 `components/message.tsx` 里决定怎么渲染。
 
-`ui-smoke.js` 也会检查 renderer 里 case 的事件类型在协议里有定义（或属于
-`ipc.js` 的 `SHELL_EVENT_TYPES`，那是主进程自己产生的事件）。
+渲染进程里 `case` 的事件类型必须来自 `host/protocol.ts` 的 `HostEvent`，
+或者是 `ipc.js` 里 `SHELL_EVENT_TYPES` 那一组（主进程自己产生的事件）。
 
 ---
 
@@ -294,6 +292,40 @@ blocks: [ {type:'text', text:'我先看目录。'}
 首屏只读当前项目的会话，其他项目等被点开时才读盘 —— 项目再多也不会拖慢启动。
 展开状态存在组件里（`currentOpen` + `expandedProjects`），首次展开才请求，之后先用缓存。
 
+#### 项目树为什么能跨项目：一份「最近打开过」的登记
+
+内核的 `stateDir` 默认是 `<cwd>/.YuanMy`，所以**每个项目一份会话库**，
+项目自己的 `.YuanMy` 里看不到别的项目。只扫当前项目那一个根的话，树里永远只有
+**一个**项目 —— 换到别的项目，上一个就直接消失了。数据位置不动，改用一份线索补齐：
+
+```
+main.js                                    host（sessions.ts）
+<userData>/projects.json                   roots = [当前项目的库]
+  { version, projects: [                   + 每个「最近打开」项目的 <path>/.YuanMy/sessions
+      { path, lastOpenedAt }, …            ↓
+  ] }                                      locateProjects(roots)
+  ↓ 启动 host 时                          · 逐根扫项目目录，按日志头里的 cwd 分组
+  env YuanMy_PROJECT_ROOTS=a:b:c           · 按 cwd 去重，**先扫的根优先**（当前库说了算）
+```
+
+几条刻意定的规则：
+
+- **只在 host 起来了才登记**（`restartWith` 成功之后），启动失败的路径不会攒进表里；
+- 登记只是**线索**：路径可能早被删了、库可能还不存在，host 读不到就跳过，
+  **读写失败一律不影响启动**（顶多是侧栏少列一个项目）；
+- 有界：登记最多 20 条，单次最多**多扫 8 个根**（`DEFAULT_MAX_EXTRA_PROJECTS`），
+  项目清单总数仍受 `DEFAULT_MAX_PROJECTS` 限制；
+- `list-project-sessions` 用**同一套根与同一套去重**，否则会出现
+  「列出来的」和「点开的」不是同一个项目的诡异现象；
+- 项目要**被打开过一次**才会进登记 —— 没跑过 YuanMy 的项目不会凭空出现在树里。
+
+> ⚠️ 会话只属于它的项目。`main.js` 的 `restartWith()` 里有条规则：换 cwd 时，
+> **上一个**会话的 `resume` / `sessionId` 要丢掉 —— 否则会拿着旧项目的会话 id
+> 去新项目里找。但「恢复另一个项目里的会话」是**合法**组合（侧栏会同时给出目标
+> cwd 和该项目的会话 id），所以判据是「调用方有没有明确要求恢复」，
+> 不是「cwd 变没变」。早先写成后者，点别的项目下的会话会用**全新会话**启动，
+> 界面一片空白 —— 就是用户报的「切换工作区中的会话后读不到历史」。
+
 **侧栏刻意不放的东西**（都是重复或只在排查时才有用的「参数」）：
 状态行 → 并进底栏一个小圆点；模型名 → 就是下面那个输入框；会话 id → 树里已高亮；
 工具清单 → 底栏 `13 工具` 点一下展开；凭据 → **只在缺失时**以警告形式出现。
@@ -301,12 +333,50 @@ blocks: [ {type:'text', text:'我先看目录。'}
 点击会话 = `restart({ resume: id, cwd })`（CLI 的 `--resume` 早就通了，这里只是给它一个界面）。
 点击其它项目的「切换」= `restart({ cwd })`，即用新工作目录启一个新会话。
 
-> ⚠️ 会话只属于它的项目。`main.js` 的 `restartWith()` 里有条规则：**cwd 变了就丢掉
-> `resume` / `sessionId`** —— 否则会拿着上一个项目的会话 id 去新项目里找。
-
 `title` 的正式来源是 `@deepseek-ai/dsh-session-title`（写 `session/title` 日志事件）。
 本项目**暂时没挂它**（它还需要 `dsh-invariants` 那套 companion 插件），
 但读取端已经优先认这个事件 —— 以后挂上，或用 DSH 自己的 CLI 建过会话，标题会自动变好。
+
+### 恢复会话：历史回放由 **host** 提供
+
+点侧栏里的一个会话 = 用 `--resume <会话 id>` 重启内核。内核恢复的是 **agent 的
+上下文**，界面这边还是空的（实时帧只描述「之后」发生的事），所以 host 会在
+`ready` 之后补一帧 `history`：
+
+```
+点击会话 → IPC.restart({ resume }) → host 带 --resume 起来
+        → ready（内核就绪）→ workspace（侧栏清单）→ history（历史记录）
+```
+
+渲染进程收到 `history` 后**整段替换** `items`（不是追加 —— 回放与实时是两条独立
+路径，混起来会重复），`usage` / `turns` 也一并重置成「历史总和」。
+
+回放在 `host/history.ts` 里做，读的是会话日志本身（`session.v3.jsonl`）——
+不另存一份 UI 状态，因为 agent 的上下文也是从这份日志重建的，两边必须是同一份内容：
+
+| 日志事件 | 变成界面上的 |
+| --- | --- |
+| `user/message`（`source.kind === 'user'`） | 用户气泡 |
+| `assistant/message` 的 `reasoning` / `text` 块 | 推理行 / 正文 |
+| `tool/call` + `tool/result`（按 `callId` 配对） | 工具卡片 / 文件卡片 |
+| `turn/end` | 回合结论（完成 / 中断 / 失败） |
+| `assistant/message` 的 `usage` | 累加成会话 token 统计 |
+
+几个必须记住的坑（都有测试盯着）：
+
+- **`source.kind === 'skill-catalog'` 的 `user/message` 要过滤掉**。技能目录是注入给
+  模型看的，不是用户说的话 —— 不过滤的话界面上会冒出一大段「用户消息」。
+- **`turn/end` 的 `reason.kind` 比界面枚举长**（还有 `blocked` / `interrupted`）。
+  映射统一放在 `protocol.ts` 的 `toOutcome`，实时路径（`bridge.ts`）与回放路径
+  共用它 —— 各写一份的话，同一个回合「刷新前 / 刷新后」会显示成不同结论。
+- **回合结束了却没有助手消息**（被打断、崩在第一步）时补一条「这一回合没有产生输出」
+  的提示，而不是留一条光秃秃的用户消息让人以为界面丢了东西。
+- **只回放最近 50 个回合**（`maxTurns`），被截掉多少如实告知。更早的内容 agent 仍然
+  记得（它的上下文来自完整日志），这个差异不藏着。
+- **回放必须幂等**：条目 id 由 `sessionId + 序号` 生成，读两次得到同样的 key。
+
+判断回放是否正常，看一眼就够：点侧栏里的历史会话，**旧对话应该消失、历史应该出现**
+（同项目与跨项目都要试）。如果历史是空的，先看 `--resume` 有没有真的传下去。
 
 ### 输入框下的 token 统计
 
@@ -328,7 +398,124 @@ cacheWriteTokens 写入缓存的输入
 
 展示上是**会话累计**（每帧累加），鼠标悬停看最近一次调用的明细
 （未命中 / 命中 / 写入 / 输出含推理 / 合计）。判定与累加都是纯函数
-（`billedInputTokens` / `cacheHitRate` / `accumulate`），`ui-smoke.js` 有真值表。
+（`billedInputTokens` / `cacheHitRate` / `accumulate`）—— 改这里时盯住两点：
+没有输入 token 时命中率是 `null`（显示 `—`），以及三种输入 token 都要进分母。
+
+### 工作台布局（左侧工作区 + 右侧对话/轨迹）
+
+```
+┌───────────────┬──────────────────────────────────────┐
+│ 工作区  [+新会话]│  对话 | 轨迹            <cwd>         │ ← 标签栏（拖拽区）
+│ [搜索会话   ]  ├──────────────────────────────────────┤
+│ ▾ 项目         │  对话面板：推理行 / Markdown /        │
+│    ● 会话  时间 │  工具行 / 文件卡片（图标+名字+打开）    │
+│ ▸ 另一个项目   ├──────────────────────────────────────┤
+│ ─────────────  │  [+][完全访问][模型▾]         [发送]   │
+│ ● 就绪 13 工具 │  3.2k in/88 out · 3.0s · 1 轮         │ ← 会话统计
+└───────────────┴──────────────────────────────────────┘
+```
+
+新增的构件与它们的**真实数据来源**：
+
+| 构件 | 数据来自 |
+| --- | --- |
+| 搜索框 | 前端过滤会话标题 / id；命中后切成跨项目平铺结果（找会话时层级是干扰） |
+| 标签栏「对话 / 轨迹」 | 同一个 `state.items`，轨迹走 `traceSteps()` 摊平（纯函数） |
+| 文件卡片 + 打开 | `fileActionOf()` 认出 read/write/edit 的路径；打开走主进程 `shell.openPath` |
+| 权限下拉 | **如实显示现状**：本地 provider 无沙箱无审批，所以只有「完全访问」一项 |
+| 模型下拉 | 内核 `ctx.llm.listModels(provider)`（`ready.info.models`），再按**本地清单**过滤 |
+
+##### 模型清单：内核申报 + 本地白名单
+
+适配器（`dsh-llm-deepseek`）申报的目录有 4 款：`deepseek-flash`（V4.1 旧版）、
+`deepseek-v4-flash`、`deepseek-v4-pro`、`deepseek-v4-flash-vision-exp`（实验视觉）。
+YuanMy 只对用户暴露**两款主力**，清单定义在 `app/cli/options.ts` 的
+`SUPPORTED_MODELS` —— 那里同时是 `--model` 的默认值来源，CLI 与桌面端因此不会漂移。
+
+host 侧（`host/index.ts` 的 `listModels`）的规则：
+
+1. **以本地清单为准过滤 / 排序**，顺序即产品意图（Flash 在前、Pro 在后）；
+2. 名称与描述**优先用适配器给的**（它才是权威），缺失才用清单里的兜底名；
+3. 读不到目录（离线、适配器不申报）就退回整份本地清单 —— 下拉框依然可用，
+   而不是只剩一个当前值；
+4. 一款都没匹配上（适配器换了模型族）时**宁可露出真实目录**，也不给空下拉框。
+
+⚠️ 默认模型必须落在清单里，否则下拉框显示不出自己的当前值。
+第一版的默认是 `deepseek-flash`，而白名单一过滤就把它删掉了 —— 两处必须一起改。
+| 会话统计 | token 来自 `usage` 帧；耗时来自 `turn-end.durationMs`；轮次由归约器计数 |
+
+两处刻意的取舍：
+
+- **权限不做成能选的假开关**。YuanMy 的本地 provider 没有沙箱与审批，
+  给一个「只读 / 工作区可写 / 完全访问」的选择器会让人**以为**有沙箱 ——
+  假的安全控件比没有控件更糟。所以它只显示「完全访问」并说明怎么换成受限形态。
+- **统计里的「耗时」是上一轮的墙钟耗时**，由 host 在回合前后量（`durationMs`），
+  不是前端估算；「轮次」是本会话已完成的回合数。
+
+### 视觉体系：炭黑 + 低饱和蓝紫
+
+本版按工作台规格调整了配色（上一版是官方 DSH 的中性近白体系）：
+
+- 底色**炭黑**（`rgb(17,17,19)`，侧栏 `rgb(23,23,26)`），白正文 + 浅灰次要文字；
+- **强调色**：低饱和蓝紫 `rgb(126,134,222)`，只用在「活的东西」上 ——
+  当前标签下划线、发送按钮、焦点环、链接、运行中状态点、当前会话图标；
+- **选中会话是灰色高亮**（不用强调色填充），避免和「当前标签」抢注意力；
+- **无多余装饰**：去掉了上一版的运行中扫光动画，运行中只用一个强调色小点 / 文字变色。
+
+#### 当前项高亮：三层轻量信号，而不是一根硬竖条
+
+第一版的当前会话是「贴行边、贯穿整行的 2px 硬竖条 + 文字直接跳到纯白 + 比 hover
+深两档的底色」，观感很生硬：竖条看起来像描边，切换时底色又是「跳变」。
+现在把「我在这里」拆成三层，每层都很轻，叠起来足够清楚：
+
+| 层 | 做法 | 为什么 |
+| --- | --- | --- |
+| 形状 | `::before` 画 **2×14px 圆角药丸**，`left: 3px` 内缩、垂直居中 | 短、圆、不贴边 —— 看起来是刻意的标记，不是边框 |
+| 字重 | `font-weight: 500` 承担主要强调 | 文字色因此不必从 secondary 直接跳到纯白 |
+| 底色 | `bluish-800`（只比 hover 的 850 深一档） | 切换会话时是柔和的淡入，不是闪变 |
+
+底色梯度是设计意图的一部分，**四档都不同**：
+侧栏底 `900` < 当前项目 `875` < hover `850` < **当前会话 `800`**。
+越靠近「你正在看的那个会话」越亮。当前项目刻意**不用**药丸：它是当前会话的容器，
+展开后两行上下相邻，两层都用竖标会像两条重复的边框。
+
+⚠️ 一条容易踩的样式坑：高亮规则的选择器权重高于通用 `:hover`，所以**必须显式补**
+`.session--current:hover` 与 `.project-node--current … :hover`，否则当前项悬停没反应、
+像「死了」。另外别退回「贴边硬竖条」：那正是被反馈「太生硬」的第一版。
+
+令牌名仍沿用官方的 `--dsw-*`（除了 `--ym-accent*` 这组强调色），
+所以官方调色板一变，同步令牌值即可。
+
+### 视觉体系的令牌来源
+
+界面的配色 / 圆角 / 字号 / 动效**不是自己定的**，而是照搬官方 DSH 桌面端（`apps/desktop`
+加载的 Web 客户端 UI）那套设计令牌。做法是**沿用官方令牌名**（`--dsw-*`）：
+以后官方调色板一变，同步令牌值即可，不用逐个组件找。
+
+| 令牌 / 规格 | 来源 |
+| --- | --- |
+| 静态色阶 + 语义别名（`bg-base` / `label-*` / `border-l1..l4` / `state-*` / `specific-*`） | `packages/client/ui-theme/src/styles/design-platform.css` |
+| 字体栈、动效曲线与时长 | `ui-theme/src/styles/base.css` |
+| 滚动条（8px、无边框、两级色） | `ui-theme/src/styles/scrollbar.css` |
+| 按钮（sm 28/圆角 14、md 36/圆角 18、主按钮近白填充） | `ui-primitives/src/Button.module.css` |
+| 状态点（10% 光晕 + 60% 实心核两层） | `ui-primitives/src/StateDot.module.css` |
+| 外壳栅格 + 侧栏 0.5px 发丝描边 | `ui-layout/src/client/AppFrame.module.css` |
+| 用户气泡 r22 + `specific-bubble` | `ui-chat/.../MessageItem.module.css` |
+| token 统计胶囊（13px / r24 / tabular-nums） | `ui-chat/.../StatsPills.module.css` |
+| 工具行与推理行（无边框的「行」+ 运行中扫光） | `ui-chat/.../GenericCommandCard|ReasoningRow.module.css` |
+| 内容轴 748px、正文 14px、流间距 16px | 同名 `--dsh-*` 变量 |
+
+几个容易忽略但很定调的点：
+
+- **底色是「bluish neutral」不是纯灰**：`bg-base` = `rgb(21,21,23)`，侧栏 `rgb(27,27,28)`；
+- **主按钮是近白填充 + 深色字**（`rgb(249,250,251)` / `rgb(15,17,21)`），这套 UI 的主色不是彩色；
+- **描边分四级**（6% / 12% / 16% / 20% 白）且大量用 **0.5px**：层级靠它和背景微差拉，不靠大色块；
+- **工具调用与推理是「行」不是「卡片」**：无边框无底色，运行中跑一道 300px 扫光（`dsh-row-sweep`，2.6s）；
+- **token 数字用 `tabular-nums`**，跳数时列不会左右抖。
+
+改配色时**不要往组件里写死 hex**：一律走这些令牌，否则主题一改就散架。
+注意 `body` 在磨砂玻璃开启时**必须是透明的**（让系统材质透出来），
+真正刷底色的是 `.app-shell`。
 
 ### 布局：为什么 `.app-shell` 必须写 `grid-template-rows: minmax(0, 1fr)`
 
@@ -359,10 +546,9 @@ cacheWriteTokens 写入缓存的输入
 （路径、base64、连续汉字），`break-word` 不参与 min-content 计算，`anywhere` 才会，
 容器因此能正常收缩 + 换行。
 
-`desktop:smoke` 的**布局探针**盯着这件事：注入一段带 4000 字符不可断 token 的推理，
-展开后断言「外壳/侧栏/body 高度 ≤ 视口」「内容撑高的是 `.messages` 的内部滚动区」
-「展开耗时 < 250ms」。反向验证过：把 `minmax(0, 1fr)` 去掉，它会打印
-`侧栏 800→1723` 并以退出码 1 失败。
+**改这一块时的自查**：展开一段长推理，看外壳（含侧栏）高度是否**没有**超过视口、
+滚动条是否出现在 `.messages` 内部而不是整个窗口上。把 `minmax(0, 1fr)` 去掉会立刻
+复现老 bug（实测侧栏被拉到 1723px，底部内容顶出可视区）。
 
 ### 输入法（IME）组字守卫
 
@@ -387,96 +573,30 @@ cacheWriteTokens 写入缓存的输入
 输入框（`composer.tsx`）与侧栏的模型输入框（`sidebar.tsx`）都挂上了 ——
 后者不拦的话，浏览器会顺手提交那个 `<form>`，等于拿半截拼音去切模型。
 
-验证分两层：`ui-smoke.js` 跑纯函数真值表（其中「普通回车不能被拦」这条用来防止
-守卫把回车卡死）；`desktop:smoke` 在真实窗口里派发
-`compositionstart → keydown(isComposing) → compositionend → keydown(229)`，
-断言**组字中发送 0 次、组字刚结束发送 0 次、普通回车发送 1 次**。
+**改这里时的自查**（用中文输入法真打一次最快）：组字中按回车**不能**发出消息、
+组字刚结束那一次回车也**不能**、而普通回车**必须**能发出去。
+第三条同样重要 —— 守卫写错会把回车彻底卡死。
 
 ---
 
-## 7. 怎么验证
 
-`desktop:smoke` 现在由 `scripts/smoke-desktop.js` 包一层，先造一个**临时工作区**再跑：
-
-- 测试会话写进临时目录，**不再落到你真实的 `.YuanMy/sessions`**
-  （早先每次冒烟都会在你侧栏里留下一条「只回答两个字：好的」）；
-- 顺便造出「两个项目」的 fixture，让**项目树的懒加载**能被真正验证
-  （折叠的项目点开前 0 条会话、点开后从磁盘读出来）。
-
-```bash
-npm run verify              # typecheck + 构建 + 界面链路 + 内核链路
-npm run desktop:ui-smoke    # 纯 Node：静态契约 + 归约器回放 + Markdown 真渲染
-npm run desktop:host-smoke  # 真起 host；加 --keep 保持，加 -p "…" 跑真实回合
-npm run desktop:host-smoke -- -p "用 tree 看下 app/desktop"
-npm run desktop:smoke       # 真开窗口，验证窗口/preload/渲染进程/内核后自动退出
-```
-
-`ui-smoke.js` 不需要窗口，分四层：
-
-1. **静态契约** —— `data-testid` 是否都在源码里、IPC 频道名两边一致、
-   渲染进程只调用 preload 暴露的方法、preload 是否仍是 CommonJS、构建产物是否比源码新；
-2. **归约器回放** —— 直接 import 那个纯函数，按真实顺序灌事件，断言消息结构
-   （正文被工具切成两块且顺序正确、结果按 callId 回填、中断/错误/重启的状态迁移）；
-3. **输入法守卫真值表** —— `isImeKeyEvent()` 的 8 条断言，含两条防回归：
-   「组字中的回车要拦」与「普通回车**不能**拦」；
-4. **Markdown 真渲染** —— 用 `react-dom/server` 把 Streamdown 渲染成 HTML，
-   断言 `# 标题` → `<h1>`、`**粗体**` → `data-streamdown="strong"`、表格/列表/代码块
-   都被解析，且**没有把 Markdown 源码原样贴出来**。
-
-**加界面功能后，往这个脚本里补一条断言**，比手动点窗口可靠得多，CI 里也能跑。
-
-`desktop:smoke` 还有三个「踩过坑才加的」东西，改动这个脚本时别删：
-
-- **逐行立即输出**（`say()`）：原先攒到最后一起打印，一卡住就什么都看不到；
-- **总看门狗**（180s 强制失败退出）：曾经因为一个探针 `ReferenceError` 让 Promise
-  永不 settle，把 CI 死等到超时；
-- **转发渲染进程的 console**：界面侧的异常（React 抛错、CSP 拦截、未处理的 Promise）
-  只有这条通道能看到 —— 上面那个 `ReferenceError` 就是它一句话点出来的；
-- **布局探针**：注入长推理并展开，断言外壳没有被内容撑高（见上一节）；
-- **项目树探针**：折叠当前项目（会话必须从 DOM 消失）→ 再展开 → 点开另一个项目并等懒加载。
-
-> 探针脚本与界面是两套作用域：`SMOKE_WAIT_TURN` 必须自带助手函数，
-> 不能借用 `SMOKE_PROBE` 里的（借用过一次，报 `text is not defined`，
-> 而且现象是「界面好像卡住了」，极难定位）。
-
-> `desktop:smoke` 用**独立的 userData 目录**（`<tmp>/YuanMy-Agent-smoke`），
-> 所以它可以在你正开着桌面端的时候照跑不误。这一点是必须的：早先它和运行中的
-> 实例抢单实例锁，失败后走的是 `app.quit()`，于是**安静地退出、什么都没测**，
-> 而 `verify` 会把它当成通过。现在拿不到锁会明确报错并以非零码退出。
-
-`desktop:smoke` 是**真窗口**验证：开窗口 → 等内核就绪 → 用
-`webContents.executeJavaScript` 反向读取 React 渲染出来的 DOM（状态灯、侧栏字段、
-拖拽区数量、平台与磨砂玻璃标记），所以「窗口开了但界面是白的 / preload 没注入 /
-React 没挂载」这类问题一定会被它抓到。加 `YuanMy_SMOKE_PROMPT` 还能在真实窗口里
-跑完一个完整回合（走渲染进程的 `window.YuanMy.sendPrompt`，即用户点「发送」那条路径），
-并断言 Markdown 真的被解析成标题/粗体/代码块：
-
-```bash
-YuanMy_SMOKE_PROMPT="用 tree 看一下 app/desktop，然后用 markdown 汇总" npm run desktop:smoke
-# [desktop] 窗口可见 · 启动耗时 254ms
-# [smoke] renderer · status=就绪 · bridge=object · React 已挂载=true
-# [smoke] 外观 · platform=darwin · 磨砂玻璃=native · 拖拽区 2 处
-# [smoke] turn · 完成 · 1 次工具调用 · 工具卡片 1 张
-# [smoke] markdown · 块 1 · 代码块 0 · 粗体 0 · 标题 1 · 列表 1
-# 退出码 0 表示全绿
-```
-
----
-
-## 8. 已知限制与下一步
+## 7. 已知限制与下一步
 
 - **不能打包**：目前只有开发态运行。出安装包需要补 `electron-builder` 配置与签名，
   可参考 DSH 的 `apps/desktop`（它的做法是把整个运行时打进 asar）。
 - **bundle 偏大（~10 MB）**：见第 1 节的说明与两条瘦身路线（去 code 插件 / 换 `app://` 协议）。
 - **只有一个会话窗口**：换会话 = 重启内核。要做多会话需要把 `host` 从「单例」改成
   「按会话 id 管理多个子进程」，协议里再加会话维度。
-- **没有历史回放**：会话 JSONL 已经落盘（`<cwd>/.YuanMy/sessions/…`），
-  但界面还没读它；`--resume` 目前只能从主进程传参（可以先用
-  `restart({ resume: '<会话 id>' })` 试）。
+  （换会话本身带**历史回放**，见「恢复会话」一节；实测重启 + 历史可见 ≈ 300ms。）
+- **跨项目列表靠一份「最近打开过」的登记**（不是靠共享会话库）：内核 `stateDir`
+  默认 `<cwd>/.YuanMy`，每个项目一份库，所以桌面端维护
+  `<userData>/projects.json` 并在启动 host 时把清单交过去，由 host 多扫几个根。
+  代价与边界见「项目树为什么能跨项目」一节：项目要**被打开过一次**才会进登记，
+  登记最多 20 条、单次最多多扫 8 个根。
 - **没有附件 / 图片**：`dsh-attachment-local` 已经在内核里挂好了，
   补一条「把文件路径塞进用户消息」的协议字段就能用起来。
 - **代码块没有「复制」按钮与行号**：Streamdown 支持，但需要在
   `markdown.tsx` 里补自定义 renderer。
-- **Windows / Linux 未验证**：磨砂玻璃、`titleBarOverlay`、菜单角色、
-  `desktop:smoke` 的 `VAR=1` 语法都按平台分了支，但只在 macOS 上跑过。
+- **Windows / Linux 未验证**：磨砂玻璃、`titleBarOverlay`、菜单角色都按平台分了支，
+  但只在 macOS 上跑过。
   Linux 保留原生标题栏（否则没有关闭按钮），代码块与磨砂玻璃会自动退回不透明样式。

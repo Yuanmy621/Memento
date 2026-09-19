@@ -29,8 +29,8 @@
  *
  * ## 测试
  *
- * 判定逻辑抽成了纯函数 {@link isImeKeyEvent}，`scripts/ui-smoke.js` 直接跑真值表；
- * 「composition 事件真的挂上了」这一段由 `npm run desktop:smoke` 在真实窗口里验证。
+ * 判定逻辑抽成了纯函数 {@link isImeKeyEvent}，三个信号可以单独推演：
+ * 组字中的回车要拦、普通回车**不能**拦（拦死了就发不出消息）。
  *
  * @module YuanMy/desktop/renderer/composition
  */

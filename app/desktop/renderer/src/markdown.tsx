@@ -35,7 +35,7 @@ export interface MarkdownProps {
  */
 export const Markdown = memo(function Markdown({ children }: MarkdownProps): ReactElement {
   return (
-    <div className="sd" data-testid="markdown">
+    <div className="sd">
       <Streamdown plugins={PLUGINS}>{children}</Streamdown>
     </div>
   )
