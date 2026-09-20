@@ -102,7 +102,20 @@ export interface AssistantItem {
   readonly meta: TurnMeta | null
 }
 
-export type Item = UserItem | NoteItem | AssistantItem
+/**
+ * 中途的目标调整（用户在回合进行中插的话）。
+ *
+ * 与 {@link UserItem} 分开记：它不是「一轮的开始」，而是**对正在跑的那一轮的纠偏**
+ * （内核 `agent.steer()` 会在下一个 step 边界消费它）。界面上也要长得不一样，
+ * 否则事后回看会以为那是新一轮提问。
+ */
+export interface SteerItem {
+  readonly id: string
+  readonly kind: 'steer'
+  readonly text: string
+}
+
+export type Item = UserItem | NoteItem | AssistantItem | SteerItem
 
 /**
  * 会话级 token 累计（回放历史时由日志里的 usage 求和得到）。
@@ -172,6 +185,34 @@ export interface ModelInfo {
   readonly name: string
   /** 可选的补充说明（同一 provider 下相似模型的区分）。 */
   readonly description?: string
+}
+
+/**
+ * 输入框 `/` 菜单要的**精简**技能信息。
+ *
+ * 与 {@link SkillEntry}（设置界面用）的区别：这里不要路径、不要大小 ——
+ * 菜单只需要「名字 + 一句话 + 属于哪一类」，而它要在**每次启动**就绪时发给界面，
+ * 所以刻意做得轻（`ctx.skills.list()` 直接就有这些字段，不用逐个读正文）。
+ */
+export interface SkillBrief {
+  readonly name: string
+  readonly description: string
+  /** `global` 进模型目录；`command` 只由 `/命令` 加载。 */
+  readonly invocation: 'global' | 'command' | 'user-only'
+}
+
+/** 输入框 `/` 菜单要的命令信息。 */
+export interface CommandBrief {
+  readonly name: string
+  readonly description: string
+  readonly argsHint: string
+}
+
+/** `#` 引用菜单要的一个路径。 */
+export interface FileBrief {
+  /** 相对工作目录的路径。 */
+  readonly path: string
+  readonly kind: 'file' | 'dir'
 }
 
 /**
@@ -256,6 +297,14 @@ export interface HostReadyInfo {
   readonly tools: readonly HostToolInfo[]
   /** 该 provider 申报的可选模型（界面下拉用）。 */
   readonly models: readonly ModelInfo[]
+  /**
+   * 输入框菜单用的技能与命令（就绪时一次性发过去）。
+   *
+   * 为什么不复用设置界面的 `settings:list`：那个要读盘、要逐个读正文、还带路径与大小，
+   * 只在打开面板时才值得付；而输入框的菜单**随时可能被触发**，所以走 ready。
+   */
+  readonly skills?: readonly SkillBrief[]
+  readonly commands?: readonly CommandBrief[]
   /** host 进程的 Node 版本，便于排查环境问题。 */
   readonly nodeVersion: string
 }
@@ -308,6 +357,17 @@ export type HostRequest =
     /** 用户输入的自然语言任务。 */
     readonly text: string
   }
+  /**
+   * **中途调整目标**：把这段话作为「纠偏」交给正在跑的回合。
+   *
+   * 对应内核的 `agent.steer()` —— 语义是「在最近的 step 边界消费」：
+   * 已经在跑就在下一个 step 生效（不打断已发出的请求），空闲时则直接开一个新回合。
+   * 与 `prompt` 的区别：`prompt` 是**排队**（当前回合跑完才轮到它），
+   * `steer` 是**插进去改方向**。
+   */
+  | { readonly type: 'steer'; readonly text: string }
+  /** 要一份可引用的文件清单（`#` 菜单）。 */
+  | { readonly type: 'files:list'; readonly query: string; readonly limit?: number }
   /**
    * 要一次设置数据（skill / 命令 / MCP），回一个 `settings` 帧。
    *
@@ -436,6 +496,12 @@ export type HostEvent =
     /** 配置文件存在但解析失败时的原因。 */
     readonly mcpConfigError?: string
   }
+  /**
+   * `#` 引用菜单要的路径清单（响应 `files:list`）。
+   *
+   * `query` 原样回传：输入是异步的，界面据此丢弃过期结果（用户又打了一个字）。
+   */
+  | { readonly type: 'files'; readonly query: string; readonly items: readonly FileBrief[] }
   | { readonly type: 'notice'; readonly level: 'info' | 'warn' | 'error'; readonly message: string }
   /** 致命错误：host 即将退出。 */
   | { readonly type: 'fatal'; readonly message: string }
@@ -464,6 +530,8 @@ export function isHostEvent(value: unknown): value is HostEvent {
       return Array.isArray(candidate['projects']) && Array.isArray(candidate['sessions'])
     case 'history':
       return Array.isArray(candidate['items'])
+    case 'files':
+      return typeof candidate['query'] === 'string' && Array.isArray(candidate['items'])
     case 'settings':
       return Array.isArray(candidate['skills']) && Array.isArray(candidate['commands']) && Array.isArray(candidate['mcp'])
     case 'project-sessions':

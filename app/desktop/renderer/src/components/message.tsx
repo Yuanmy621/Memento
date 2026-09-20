@@ -13,6 +13,7 @@
  */
 
 import { memo, type ReactElement } from 'react'
+import { RichText } from './rich-text.tsx'
 import { Markdown } from '../markdown.tsx'
 import { ToolCard } from './tool-card.tsx'
 import { FileCard } from './file-card.tsx'
@@ -49,7 +50,7 @@ function ToolBlockView({ block, onOpenPath }: {
       <FileCard path={file.path} action={file.action} onOpen={onOpenPath} />
       {/* 文件卡片已经表达了「读了哪个文件」；只有失败时才需要把结果露出来 */}
       {block.isError && block.result !== null && (
-        <div className="tool-card__result tool-card__result--error">{block.result}</div>
+        <div className="tool-card__result tool-card__result--error"><RichText text={block.result} /></div>
       )}
     </div>
   )
@@ -102,12 +103,27 @@ export interface MessageItemProps {
 
 export const MessageItem = memo(function MessageItem({ item, onOpenPath }: MessageItemProps): ReactElement {
   if (item.kind === 'user') {
-    return <div className="msg--user">{item.text}</div>
+    // 用户消息里可能带 `/命令`、`@工具`、`#文件`：按类型染色，一眼看出这条消息用了什么
+    return <div className="msg--user"><RichText text={item.text} /></div>
   }
   if (item.kind === 'note') {
     return (
       <div className={`msg__note${item.level === 'info' ? '' : ` msg__note--${item.level}`}`}>
         {item.text}
+      </div>
+    )
+  }
+  /**
+   * 中途的目标调整。
+   *
+   * 长得像用户消息但**更矮、更淡、靠右**，并带一个「目标调整」标：它是往正在跑的
+   * 那一轮里插的话，不是新一轮提问 —— 事后回看时这个区别很重要。
+   */
+  if (item.kind === 'steer') {
+    return (
+      <div className="msg--steer">
+        <span className="msg--steer__tag">目标调整</span>
+        <span className="msg--steer__text"><RichText text={item.text} /></span>
       </div>
     )
   }

@@ -31,7 +31,10 @@ import type { SkillSummary } from '@deepseek-ai/dsh-skill'
 import { listProjectSessions, listWorkspaceSessions } from './sessions.ts'
 import {
   PROTOCOL_VERSION,
+  type CommandBrief,
   type CommandEntry,
+  type FileBrief,
+  type SkillBrief,
   type HostEvent,
   type HostReadyInfo,
   type HostRequest,
@@ -43,6 +46,12 @@ import {
 import type { DesktopBridge } from './bridge.ts'
 import type { Kernel } from '../../cli/kernel.ts'
 import type { LlmCallConfig } from '@deepseek-ai/dsh-llm'
+
+/** `#` 文件索引的上限与缓存时长（见 `fileIndex()`）。 */
+const FILE_INDEX_MAX = 4000
+const FILE_INDEX_TTL_MS = 30_000
+/** 索引时跳过的目录名（依赖、版本库、构建产物）。 */
+const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', 'out', 'target', 'coverage', '.next', '.cache', '.YuanMy'])
 
 /** host 致命退出时的退出码。 */
 const EXIT_FATAL = 1
@@ -311,6 +320,103 @@ async function main(): Promise<void> {
   }
 
   /**
+   * 输入框菜单要的技能与命令（就绪时随 `ready` 一次性发过去）。
+   *
+   * 刻意做得轻：技能只取 `ctx.skills.list()` 的现成字段（不读正文），
+   * 命令复用已经读好的命令表。菜单随时可能被敲出来，不能让首屏为它读一堆文件。
+   */
+  async function inputBriefs(): Promise<{ skills: SkillBrief[]; commands: CommandBrief[] }> {
+    let skills: SkillBrief[] = []
+    try {
+      skills = (await kernel.ctx.skills.list()).map(summary => ({
+        name: summary.name,
+        description: summary.description,
+        invocation: summary.invocation.modelInvocable
+          ? 'global'
+          : summary.invocation.userInvocable ? 'command' : 'user-only',
+      }))
+    } catch {
+      // 技能表读不到不该拦住启动：菜单少一组而已
+    }
+    return {
+      skills,
+      commands: commands.map(def => ({
+        name: def.name,
+        description: def.description,
+        argsHint: def.argsHint,
+      })),
+    }
+  }
+
+  /**
+   * 工作目录下的**可引用文件**索引（`#` 菜单）。
+   *
+   * 三条约束，都是为了「按一次键不能卡住」：
+   *   - **有界**：最多 {@link FILE_INDEX_MAX} 个，超过就停；
+   *   - **跳过噪声**：`node_modules` / `.git` / 构建产物 / 点目录；
+   *   - **缓存**：{@link FILE_INDEX_TTL_MS} 内复用，避免每敲一个字就重走一遍目录树。
+   */
+  let fileIndexCache: { at: number; files: string[] } | undefined
+
+  /** 走一遍工作目录，产出相对路径清单（带缓存与上限）。 */
+  async function fileIndex(): Promise<string[]> {
+    const now = Date.now()
+    if (fileIndexCache !== undefined && now - fileIndexCache.at < FILE_INDEX_TTL_MS) return fileIndexCache.files
+    const files: string[] = []
+    const queue: string[] = ['']
+    while (queue.length > 0 && files.length < FILE_INDEX_MAX) {
+      const rel = queue.shift() ?? ''
+      const abs = rel === '' ? options.cwd : join(options.cwd, rel)
+      let entries
+      try {
+        entries = await readdir(abs, { withFileTypes: true })
+      } catch {
+        continue
+      }
+      for (const entry of entries) {
+        if (files.length >= FILE_INDEX_MAX) break
+        const child = rel === '' ? entry.name : `${rel}/${entry.name}`
+        if (entry.isDirectory()) {
+          // 点目录与依赖/产物目录不进索引：`#` 菜单里它们只会淹没有用结果
+          if (entry.name.startsWith('.') || SKIP_DIRS.has(entry.name)) continue
+          queue.push(child)
+          continue
+        }
+        if (!entry.isFile()) continue
+        files.push(child)
+      }
+    }
+    fileIndexCache = { at: now, files }
+    return files
+  }
+
+  /**
+   * 按关键字挑文件。
+   *
+   * 排序规则：**匹配位置越靠前越优先**，同位置按路径短的优先 ——
+   * 敲 `#comp` 时 `app/desktop/.../composer.tsx` 应该排在
+   * `docs/old/components-composer.md` 前面。点文件（`.DS_Store`、`.gitignore`）
+   * 在同位置里再往后压一档：它们路径最短，不压的话「刚打出一个 `#`、还没说要找什么」
+   * 时前几条全是点文件，看着像坏了。
+   *
+   * 分数就是「(匹配位置, 是否点文件, 路径长度) 三元组」压成一个整数（依次比较）。
+   */
+  async function filesMatching(query: string, limit: number): Promise<FileBrief[]> {
+    const needle = query.toLowerCase()
+    const files = await fileIndex()
+    const scored: { path: string; score: number }[] = []
+    for (const path of files) {
+      const at = path.toLowerCase().indexOf(needle)
+      if (at === -1) continue
+      const name = path.slice(path.lastIndexOf('/') + 1)
+      const dot = name.startsWith('.') ? 1 : 0
+      scored.push({ path, score: (at * 2 + dot) * 10_000 + path.length })
+    }
+    scored.sort((a, b) => a.score - b.score)
+    return scored.slice(0, limit).map(item => ({ path: item.path, kind: 'file' as const }))
+  }
+
+  /**
    * 收集设置界面的数据并发一帧 `settings`。
    *
    * 三样东西来源不同，但界面要一起看：
@@ -502,6 +608,32 @@ async function main(): Promise<void> {
       case 'cancel':
         kernel.agent.cancel({ kind: 'user' })
         break
+      case 'steer': {
+        // 中途调整目标：交给内核的 steer —— 运行中的回合会在下一个 step 边界消费它。
+        // 这里**不排队**（不走 queue）：排队就变成「等这轮跑完再说」，正是要改掉的行为。
+        const message = createUserMessage({
+          content: [{ type: 'text', text: request.text }],
+          source: { kind: 'user' },
+        })
+        try {
+          kernel.agent.steer(message)
+        } catch (error) {
+          send({
+            type: 'notice',
+            level: 'warn',
+            message: `没能把这条目标调整交给内核：${error instanceof Error ? error.message : String(error)}`,
+          })
+        }
+        break
+      }
+      case 'files:list': {
+        const query = request.query
+        void filesMatching(query, Math.min(request.limit ?? 20, 50)).then(
+          items => { send({ type: 'files', query, items }) },
+          () => { send({ type: 'files', query, items: [] }) },
+        )
+        break
+      }
       case 'settings:list':
         void sendSettings()
         break
@@ -542,6 +674,7 @@ async function main(): Promise<void> {
       : `${credential.origin} ${fingerprint(credential.key)}`,
     tools: listTools(kernel.ctx),
     models: await listModels(kernel.ctx, options.provider),
+    ...await inputBriefs(),
     nodeVersion: process.version,
   }
   send({ type: 'ready', info })

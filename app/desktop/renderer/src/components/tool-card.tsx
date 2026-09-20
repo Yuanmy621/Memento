@@ -9,6 +9,7 @@
 
 import { memo, type ReactElement } from 'react'
 import type { ToolBlock } from '../use-agent.ts'
+import { RichText } from './rich-text.tsx'
 
 /** 从结果摘要末尾挑出 `exit N`，单独上色。 */
 function splitExit(summary: string): [string, string | null] {
@@ -29,7 +30,7 @@ export const ToolCard = memo(function ToolCard({ block }: ToolCardProps): ReactE
     <div className={`tool-card${pending ? ' tool-card--pending' : ''}`}>
       <div className="tool-card__head">
         <span className="tool-card__name">{block.name}</span>
-        {block.args !== '' && <span className="tool-card__args">{block.args}</span>}
+        {block.args !== '' && <span className="tool-card__args"><RichText text={block.args} /></span>}
       </div>
       {!pending && (
         <div className={`tool-card__result${block.isError ? ' tool-card__result--error' : ''}`}>

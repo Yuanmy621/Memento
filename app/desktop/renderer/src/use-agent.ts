@@ -29,6 +29,7 @@ import type {
   McpEntry,
   ModelInfo,
   ProjectSummary,
+  FileBrief,
   SessionSummary,
   SkillEntry,
   ToolBlock,
@@ -37,8 +38,9 @@ import type {
 
 /** 重新导出协议里的类型，让组件只依赖本模块这一处「界面类型面」。 */
 export type {
-  AssistantItem, Block, CommandEntry, HostReadyInfo, Item, LlmUsage, McpEntry, ModelInfo,
-  ProjectSummary, SessionSummary, SkillEntry, TextBlock, ToolBlock, TurnMeta, TurnOutcome, UserItem,
+  AssistantItem, Block, CommandBrief, CommandEntry, FileBrief, HostReadyInfo, HostToolInfo, Item,
+  LlmUsage, McpEntry, ModelInfo, ProjectSummary, SessionSummary, SkillBrief, SkillEntry, SteerItem,
+  TextBlock, ToolBlock, TurnMeta, TurnOutcome, UserItem,
 } from '../../host/protocol.ts'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -135,6 +137,10 @@ export interface AgentApi {
   openPath(path: string): Promise<string>
   /** 读某个项目的会话明细（结果以 `project-sessions` 事件回来）。 */
   listProjectSessions(path: string): Promise<void>
+  /** 中途调整目标：插给正在跑的回合（不排队、不新开回合）。 */
+  steer(text: string): Promise<void>
+  /** 要一批 `#` 候选文件（结果以 `files` 事件回来）。 */
+  listFiles(query: string): Promise<void>
   /** 要一次设置数据（结果以 `settings` 事件回来）。 */
   settingsList(): Promise<void>
   /** 读写设置界面里的文件（主进程只允许配置与技能/命令目录）。 */
@@ -240,7 +246,7 @@ export function fileActionOf(
 /** 轨迹视图的一步。 */
 export interface TraceStep {
   readonly id: string
-  readonly kind: 'user' | 'reasoning' | 'text' | 'tool' | 'note'
+  readonly kind: 'user' | 'reasoning' | 'text' | 'tool' | 'note' | 'steer'
   /** 一行标题（工具名 / 用户 / 推理 等）。 */
   readonly label: string
   /** 细节：工具参数、结果摘要、正文片段。 */
@@ -266,6 +272,10 @@ export function traceSteps(items: readonly Item[]): TraceStep[] {
     }
     if (item.kind === 'note') {
       steps.push({ id: item.id, kind: 'note', label: `提示(${item.level})`, detail: item.text, isError: item.level === 'error' })
+      continue
+    }
+    if (item.kind === 'steer') {
+      steps.push({ id: item.id, kind: 'steer', label: '目标调整', detail: item.text, isError: false })
       continue
     }
     if (item.reasoning !== '') {
@@ -319,6 +329,10 @@ export interface AgentState {
   readonly lastTurnMs: number | null
   /** 本会话已完成的回合数。 */
   readonly turns: number
+  /** `#` 菜单的候选文件（响应 `files` 帧）。 */
+  readonly files: readonly FileBrief[]
+  /** 上面这批候选对应的查询串（界面据此丢弃过期结果）。 */
+  readonly filesQuery: string
   /** 设置界面的数据；没打开过设置面板时为 null。 */
   readonly settings: SettingsData | null
   /** 正在等 host 回 `settings` 帧。 */
@@ -334,6 +348,7 @@ export type Action =
   | { readonly type: 'project-sessions-loading'; readonly path: string }
   | { readonly type: 'project-sessions-error'; readonly path: string; readonly message: string }
   | { readonly type: 'settings-loading' }
+  | { readonly type: 'steer-send'; readonly text: string }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 纯函数工具
@@ -356,6 +371,8 @@ export const initialState: AgentState = {
   turns: 0,
   settings: null,
   settingsBusy: false,
+  files: [],
+  filesQuery: '',
 }
 
 /** 生成条目 id（渲染列表的 key）。 */
@@ -365,9 +382,17 @@ function newId(): string {
 
 /** 取当前正在流式渲染的助手条目；turnId 为 null 表示「还没拿到 id，先认领」。 */
 function activeAssistant(items: readonly Item[], turnId: string | null): number {
-  const last = items[items.length - 1]
-  if (last === undefined || last.kind !== 'assistant') return -1
-  if (last.turnId === null || last.turnId === turnId) return items.length - 1
+  // ⚠️ 从后往前找**最后一条助手条目**，而不是只看最后一项：
+  // 回合进行中用户可以「中途调整目标」，那会在助手条目后面追加一条 steer 条目 ——
+  // 只看末项的话，后续的流式增量会找不到正在写的那条助手消息，
+  // 于是把同一次回复拆成两个气泡。
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index]
+    if (item === undefined || item.kind !== 'assistant') continue
+    if (item.turnId === null || item.turnId === turnId) return index
+    // 最近的一条助手条目属于别的回合：不再往前找（那是历史）
+    return -1
+  }
   return -1
 }
 
@@ -463,6 +488,22 @@ export function reducer(state: AgentState, action: Action): AgentState {
 
     case 'settings-loading':
       return { ...state, settingsBusy: true }
+
+    /** `#` 菜单的候选文件到了。 */
+    case 'files':
+      return { ...state, files: action.items, filesQuery: action.query }
+
+    /**
+     * 中途调整目标：本地先把这条记进会话，再让 host 转交给内核的 `steer`。
+     *
+     * 为什么不像 `user-send` 那样建一条助手占位：纠偏**不开启新回合** ——
+     * 正在跑的那条助手消息还在写，凭空插一个占位会把它的流式增量引到新气泡上。
+     */
+    case 'steer-send':
+      return {
+        ...state,
+        items: [...state.items, { id: newId(), kind: 'steer', text: action.text }],
+      }
 
     /**
      * 历史回放：恢复会话时 host 读日志送来的完整记录。
@@ -671,6 +712,15 @@ export interface AgentController {
    * MCP 服务器是启动时挂的，不重启不会变。
    */
   readonly restartKernel: () => Promise<ShellState> | undefined
+  /**
+   * 中途调整目标：把这段话插给正在跑的回合。
+   *
+   * 用内核的 `steer` 而不是再发一个 `prompt`：后者是排队（等这轮跑完才轮到它），
+   * 而「调整目标」要的是**立刻改方向** —— 内核会在下一个 step 边界消费它。
+   */
+  readonly steer: (text: string) => Promise<void>
+  /** 要一批 `#` 候选文件（结果以 `files` 事件回来）。 */
+  readonly listFiles: (query: string) => Promise<void>
   /** 拉一次设置数据（打开设置面板时调用）。 */
   readonly loadSettings: () => Promise<void>
   /** 读一个配置文件。 */
@@ -811,6 +861,26 @@ export function useAgent(): AgentController {
     return api?.restart(cwd === undefined ? {} : { cwd })
   }, [api, state.info?.cwd])
 
+  const steer = useCallback(async (text: string): Promise<void> => {
+    const trimmed = text.trim()
+    if (trimmed === '' || api === undefined) return
+    dispatch({ type: 'steer-send', text: trimmed })
+    try {
+      await api.steer(trimmed)
+    } catch (error) {
+      dispatch({ type: 'user-error', message: `目标调整没送出去：${String((error as Error | undefined)?.message ?? error)}` })
+    }
+  }, [api])
+
+  const listFiles = useCallback(async (query: string): Promise<void> => {
+    if (api === undefined) return
+    try {
+      await api.listFiles(query)
+    } catch {
+      // 文件索引拿不到就是菜单空着，不值得打断输入
+    }
+  }, [api])
+
   const loadSettings = useCallback(async (): Promise<void> => {
     if (api === undefined) return
     dispatch({ type: 'settings-loading' })
@@ -850,6 +920,8 @@ export function useAgent(): AgentController {
     openPath,
     pickDirectory,
     getAppInfo,
+    steer,
+    listFiles,
     restartKernel,
     loadSettings,
     readFile,

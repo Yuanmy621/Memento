@@ -42,6 +42,8 @@ const CHANNEL = Object.freeze({
   openPath: 'YuanMy:open-path',
   listProjectSessions: 'YuanMy:list-project-sessions',
   appInfo: 'YuanMy:app-info',
+  steer: 'YuanMy:steer',
+  listFiles: 'YuanMy:list-files',
   settingsList: 'YuanMy:settings-list',
   settingsRead: 'YuanMy:settings-read',
   settingsWrite: 'YuanMy:settings-write',
@@ -88,6 +90,10 @@ const api = {
    * @param {string} path - 项目根目录。
    */
   listProjectSessions: (path) => ipcRenderer.invoke(CHANNEL.listProjectSessions, path),
+  /** 中途调整目标：插给正在跑的回合（内核在下个 step 边界消费）。 */
+  steer: (text) => ipcRenderer.invoke(CHANNEL.steer, text),
+  /** 要一批 `#` 候选文件；结果以 `files` 事件异步回来。 */
+  listFiles: (query) => ipcRenderer.invoke(CHANNEL.listFiles, query),
   /** 要一次设置数据（skill / 命令 / MCP）；结果以 `settings` 事件异步回来。 */
   settingsList: () => ipcRenderer.invoke(CHANNEL.settingsList),
   /** 读一个配置文件；返回 `{ ok, content?, error? }`。 */

@@ -1024,22 +1024,37 @@ html[data-platform="darwin"] .sidebar__brand {
   box-shadow: 0 0 0 0.5px var(--dsw-alias-border-l4);
 }
 
+/* EditorContent 的包裹层：占满宽度，其余交给里面的 contenteditable。 */
+.composer__editor { width: 100%; }
+
+/* 真正的输入区 = ProseMirror 的 contenteditable（class 见 composer.tsx 的 editorProps.attributes） */
 .composer__input {
-  width: 100%;
-  max-height: 190px;
   min-height: 24px;
+  max-height: 190px;
+  overflow-y: auto;
   padding: 0;
-  border: 0;
-  background: transparent;
+  outline: none;
   color: var(--dsw-alias-label-primary);
-  font: inherit;
   font-size: var(--dsh-content-font-size);
   line-height: var(--dsh-content-line-height);
-  resize: none;
+  /* 长 URL / 长路径要能断行，否则会把卡片顶宽（`.messages` 那条教训同样适用） */
+  overflow-wrap: anywhere;
 }
 
-.composer__input:focus { outline: none; }
-.composer__input::placeholder { color: var(--dsw-alias-label-caption); }
+/* 段落是块级元素，默认的上下 margin 会让一行输入变成两行高 */
+.composer__input p { margin: 0; }
+
+/* 空输入框的提示语：Tiptap 的 Placeholder 给空段落挂 is-empty + data-placeholder */
+.composer__input p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  color: var(--dsw-alias-label-caption);
+  pointer-events: none;
+}
+
+/* 内核没就绪时不可编辑：光标给回箭头，别让人以为能打字 */
+.composer__input[contenteditable='false'] { cursor: default; }
 
 .composer__actions {
   display: flex;
@@ -1826,7 +1841,7 @@ html[data-platform="darwin"] .sidebar__brand {
   border: none;
   background: transparent;
   color: var(--dsw-alias-label-primary);
-  font-family: var(--ds-font-family-mono);
+  font-family: var(--ds-font-family-code);
   font-size: 12px;
   line-height: 18px;
   resize: none;
@@ -1876,3 +1891,212 @@ html[data-platform="darwin"] .sidebar__brand {
 }
 
 .setmodal__foot .sethint { flex: 1; padding: 0; }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * 输入框的触发符补全（`/` 命令与技能 · `@` MCP 工具 · `#` 文件）
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+.mention {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  /* 贴在输入框上方：往下弹会盖住输入内容与工具栏 */
+  bottom: calc(100% - 6px);
+  z-index: 30;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-2);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.45);
+}
+
+/* 顶部说明：这一栏是哪个触发符 + 键盘怎么用 */
+.mention__title {
+  padding: 4px 8px 5px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l1);
+  color: var(--dsw-alias-label-caption);
+  font-size: 10.5px;
+}
+
+.mention__group {
+  padding: 6px 8px 2px;
+  color: var(--dsw-alias-label-caption);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+}
+
+.mention__item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mention__item--active { background: var(--ym-nav-current-fill); }
+
+.mention__label {
+  flex: none;
+  max-width: 46%;
+  color: var(--dsw-alias-label-primary);
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * 候选的名字按类型上色，与它落到输入框里的 chip **同一个颜色**（`--ym-tok-*`）：
+ * 选之前就知道它会变成什么样子，不用选完才发现。
+ */
+.mention__item[data-kind='command'] .mention__label { color: var(--ym-tok-command-fg); }
+.mention__item[data-kind='tool'] .mention__label { color: var(--ym-tok-tool-fg); }
+.mention__item[data-kind='skill'] .mention__label { color: var(--ym-tok-skill-fg); }
+.mention__item[data-kind='file'] .mention__label {
+  color: var(--ym-tok-file-fg);
+  font-family: var(--ds-font-family-code);
+  font-size: 11.5px;
+}
+
+.mention__hint {
+  flex: 1;
+  min-width: 0;
+  color: var(--dsw-alias-label-caption);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── 中途的目标调整（不是新一轮提问，所以更矮更淡、靠右）────────────────── */
+
+.msg--steer {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  align-self: flex-end;
+  max-width: 82%;
+  margin: 6px 0 6px auto;
+  padding: 5px 10px;
+  border: 0.5px dashed var(--dsw-alias-border-l3);
+  border-radius: 14px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+}
+
+.msg--steer__tag {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: var(--ym-accent-soft);
+  color: var(--ym-accent-text);
+  font-size: 10.5px;
+  line-height: 16px;
+}
+
+.msg--steer__text { min-width: 0; overflow-wrap: anywhere; }
+
+.trace__kind--steer { color: var(--ym-accent-text); }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * 指令 token 的样式（`/命令` · `@工具` · `#文件` · 技能名）
+ *
+ * 这四种东西在会话记录里原本是同一种灰字，扫一眼分不出哪个是命令、哪个是工具、
+ * 哪个是文件 —— 而它们恰恰是「这条消息让 agent 干了什么」的关键信息。
+ *
+ * 分色原则：**不同类不同色相，同一类永远同色**，且都压低饱和度（暗色界面里高饱和
+ * 会像报错）。这些色只用在 token 上，不参与按钮/链接等其它语义（那套是 --ym-accent）。
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  /* 命令：沿用强调色（它是「要执行的动作」，和发送按钮同族） */
+  --ym-tok-command-bg: var(--ym-accent-soft);
+  --ym-tok-command-fg: var(--ym-accent-text);
+  /* 工具：青绿（外部能力，和本地的命令区分开） */
+  --ym-tok-tool-bg: rgba(86, 184, 166, 0.14);
+  --ym-tok-tool-fg: rgb(140, 214, 199);
+  /* 技能：紫（可复用的指令包） */
+  --ym-tok-skill-bg: rgba(168, 140, 214, 0.16);
+  --ym-tok-skill-fg: rgb(199, 179, 236);
+  /* 文件：中性（它只是「东西」，不该抢眼） */
+  --ym-tok-file-bg: rgba(255, 255, 255, 0.06);
+  --ym-tok-file-fg: var(--dsw-alias-label-secondary);
+}
+
+.rt { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.tok {
+  padding: 0 5px;
+  border-radius: 5px;
+  font-size: 0.94em;
+  /* 文件路径用等宽：和 `read` 的输出、编辑器里的样子对得上 */
+  white-space: nowrap;
+}
+
+.tok--command { background: var(--ym-tok-command-bg); color: var(--ym-tok-command-fg); font-weight: 500; }
+.tok--tool { background: var(--ym-tok-tool-bg); color: var(--ym-tok-tool-fg); }
+.tok--skill { background: var(--ym-tok-skill-bg); color: var(--ym-tok-skill-fg); }
+.tok--file {
+  background: var(--ym-tok-file-bg);
+  color: var(--ym-tok-file-fg);
+  font-family: var(--ds-font-family-code);
+  font-size: 0.9em;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * 输入框里的 chip（选中命令/工具/技能/文件之后的样子）
+ *
+ * 和上面的 `.tok--*` **共用同一组颜色令牌**（`--ym-tok-*`）：在输入框里看到的颜色，
+ * 就是它落到会话记录里的颜色。这是刻意的 —— 用户不需要学两套配色。
+ *
+ * chip 是 ProseMirror 的 inline atom（`contenteditable="false"`）：光标进不去、
+ * 退格删掉一整个、方向键一次跨过去。所以这里只需要管长相，不用管「里面的字怎么编辑」。
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+.chip {
+  padding: 1px 6px;
+  border-radius: 5px;
+  font-size: 0.94em;
+  /* 光标停在 chip 两侧时是「插入位置」，给个箭头更像一个整体 */
+  cursor: default;
+}
+
+/*
+ * ⚠️ 选择器比 `.chip` 多一个元素名是**故意的**：Tiptap 会往 <head> 注入
+ * `.ProseMirror [contenteditable="false"] { white-space: normal }`，且注入的样式表在
+ * renderer.css **之后**，同权重时它赢。加 `span` 提高权重，路径才不会在 chip 内部折行。
+ */
+.composer__input span.chip { white-space: nowrap; }
+
+.chip--command { background: var(--ym-tok-command-bg); color: var(--ym-tok-command-fg); font-weight: 500; }
+.chip--tool { background: var(--ym-tok-tool-bg); color: var(--ym-tok-tool-fg); }
+.chip--skill { background: var(--ym-tok-skill-bg); color: var(--ym-tok-skill-fg); }
+.chip--file {
+  background: var(--ym-tok-file-bg);
+  color: var(--ym-tok-file-fg);
+  font-family: var(--ds-font-family-code);
+  font-size: 0.9em;
+}
+
+/* 菜单开着时，正在输入的那截触发词（Tiptap suggestion 的 decoration）给一点提示：
+   否则 `#app/cli` 和普通文字长得一样，用户不知道「现在这一截是待选中的」 */
+.composer__input .suggestion {
+  border-radius: 4px;
+  background: var(--ym-nav-current-fill);
+}
+
+/* 被方向键整块选中时（NodeSelection）：一圈自己的颜色，别用系统高亮 */
+.composer__input .chip.ProseMirror-selectednode {
+  outline: 1.5px solid currentcolor;
+  outline-offset: 1px;
+}

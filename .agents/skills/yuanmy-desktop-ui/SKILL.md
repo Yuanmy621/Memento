@@ -72,6 +72,106 @@ Tailwind **只为已定义的 token 生成工具类**，缺了会被静默丢掉
 轨迹视图走 `traceSteps()` 纯函数把 `state.items` 摊平 —— 这两个都是纯函数，
 改动后自己走一遍：打开一个带工具调用的回合，确认文件卡片与轨迹两步都对得上。
 
+## 输入框：Tiptap 富文本 + 触发符 chip + 「中途调整目标」
+
+输入框是 **Tiptap（ProseMirror）**，不是 textarea：`/` `@` `#` 选中的东西插成 **chip**
+（带底色的内联原子节点）。相关文件都在 `components/editor/`：
+
+| 文件 | 管什么 |
+| --- | --- |
+| `kit.ts` | 扩展集（刻意做小：**没有**标题/列表/引用/加粗，理由见下） |
+| `chip.ts` | chip 节点（`atom: true`，`contenteditable="false"`，`class="chip chip--命令/tool/skill/file"`） |
+| `chip-text.ts` | 四种 chip 各自「显示什么 / 落库什么」（纯逻辑，只 import 类型） |
+| `doc-text.ts` | **唯一的**序列化：文档 → 纯文本（纯逻辑） |
+| `triggers.ts` | `/` `@` `#` 的允许规则（纯逻辑） |
+| `suggestions.ts` | 三个 Tiptap suggestion 插件 + `SuggestController`（菜单状态机） |
+
+改输入框时记住这几条，都容易被改回去：
+
+1. **不要用 `state.busy` 去禁用输入框**。回合进行中输入框必须可用：Enter 在空闲时是
+   发一轮，在生成中是**纠偏**（`steer`，内核在下一个 step 边界消费）。
+   禁用它是被明确否掉的行为（用户要先按停止再重发，等于白扔已跑出的进度）。
+2. **键盘只有一条路径，在 `composer.tsx` 的 `editorProps.handleKeyDown` 里**，顺序是
+   「输入法 → 菜单 → 提交/中断」。ProseMirror 取 `handleKeyDown` 是**先 view props、后插件**
+   （`EditorView.someProp` 先查 `_props`），所以这个顺序是确定的；不要在插件的
+   `render().onKeyDown` 里再处理半截键。
+3. **`editorProps` 与扩展只在首帧建一次**：里面要用的数据（命令/技能/工具/文件）、回调、
+   `state.busy` 一律走 ref（composer 里的 `sourceRef` / `actionsRef`），直接闭包会永远停在
+   首帧的值上 —— 表现是「内核启动后加载出来的命令表进不了菜单」「回合中按 Enter 不纠偏」。
+4. **菜单项的选中用 `onMouseDown`**（不是 `onClick`）—— 否则编辑器先失焦、光标位置丢失。
+5. **不要用 `editor.getText()`**：chip 是 atom、没有文本，`getText()` 会把它整个丢掉
+   （`/report` 选完发出去等于空消息）。序列化只走 `doc-text.ts` 的 `docToText()`。
+6. **不要给 StarterKit 打开标题/列表/引用/代码块**：它们的输入规则会在正常打字时生效
+   （`# ` 变标题、`- ` 变列表），而 `#` 正是文件触发符。要加功能逐个打开并想清楚冲不冲突。
+
+### 触发符规则：`@` `#` 要求词首，汉字算词首
+
+`triggers.ts` 的 `triggerAllowed(trigger, from, charBefore)`：
+
+- `/` **只在整条消息的第一个位置**（`from === 1`）—— host 的 `matchCommand` 只认 `^/名字`；
+- `@` `#` 要求词首，判据是 `rich-text-tokens.ts` 的 **`isBoundaryChar`**（与消息记录的
+  token 染色**共用同一份**）：空白 / 左右括号引号 / 中英标点 / **中日韩文字**。
+  ⚠️ 汉字那条不能删：中文不用空格分词，`帮我把#composer` 是正常写法 —— 最早漏了它，
+  `#` 在汉字后面永远弹不出菜单（实测踩到）。反例也要保住：`foo@bar`、`C#code`、`https://x`
+  都不该弹。
+
+`#` 的候选是**异步**来的（host 的 `files:list`，有界 + 30s 缓存）。菜单是「先开菜单、后到货」，
+靠 `SuggestController.refresh()` 重算，并按 `state.filesQuery` 丢弃过期结果，别把「后到的旧结果」
+直接铺上去。另外 `askedQuery` 的初值必须是 `null` 而不是 `''`：空查询（刚打出 `#`）是合法的一次
+请求，用空串当初值会让它跟「已经问过」撞车，于是光打一个 `#` 永远没有候选。
+
+Esc = 「这个触发词我不要菜单」（走 `exitSuggestion`，同一触发词内不再弹，打空白或把触发词
+删掉后复位）；失焦 = 只收起菜单（`controller.hide()`），回来接着打字还会弹。
+
+### ⚠️ 输入法：`event.isComposing` 不够，还要 `view.composing`
+
+中文组字时回车是「确认候选词」。第一句必须同时判两件事：
+
+```tsx
+if (view.composing || ime.isImeKeyNative(event)) return false
+```
+
+`view.composing` 不是保险，是**必需**：ProseMirror 在「DOM 变化看起来像按了 Enter」时会自己
+合成一个 Enter 键事件（`readDOMChange` → `keyEvent(13, 'Enter')` = `document.createEvent('Event')`），
+那个事件**没有 `isComposing`**、`isTrusted === false`，只有 `keyCode === 13`。输入法用回车确认
+候选词正好产生一次「新增段落」的 DOM 变化 → 合成 Enter 打进来 → 只信 `event.isComposing` 的
+守卫会放行，半成品被当成消息发出去（实测踩到，日志里连一次 `compositionend` 都没有）。
+
+组字事件（`ime.compositionProps`）挂在**外层 `.composer__box`** 上（从 contenteditable 冒泡上来）。
+
+给会话记录加新条目类型时（`SteerItem` 就是这么加的）：协议里加进 `Item` 联合类型 →
+`use-agent.ts` 的 `traceSteps()` 加分支（否则轨迹里会漏）→ `components/trace.tsx` 的
+`KIND_LABEL` 补标签（那个 Record 是穷尽的，漏了会编译报错，是好事）→ `message.tsx` 渲染。
+
+## 指令 token 的样式：纯文本要染色，Markdown 不要碰
+
+用户在输入框里用 `/` `@` `#` 选出来的东西，落到会话记录里要**按类型染色**
+（`components/rich-text.tsx` + 纯逻辑 `rich-text-tokens.ts`）：命令=强调色、
+工具=青绿、技能=紫、文件=中性等宽。加渲染点时别漏了这几处：
+用户消息、目标调整、工具卡参数与错误结果、轨迹明细。
+
+⚠️ 四条容易改坏的地方：
+
+1. **助手正文不要套 RichText** —— 那是 Markdown，模型自己会用反引号包住工具名，
+   套上去会把 `` `mcp__x` `` 里的反引号也染色。
+2. **识别判据宁紧勿松**：裸词必须「含 `/` 且末段有扩展名」才算路径，
+   否则 `and/or`、`HTTP/2` 会被染色。
+3. **必须要求真词边界**（`isWordBoundary` / `isBoundaryChar`）。扫描逐字符推进，判据一松就会从
+   `https://example.com/x.md` 中间切出 `xample.com/x.md` 当成路径 —— 真踩过。
+   反过来，**汉字必须算边界**：中文不用空格分词，`见app/cli/main.ts` 也要染色，
+   同一份判据还管着输入框的触发符（见上）。
+4. **输入框里的 chip 与记录里的 token 共用 `--ym-tok-*` 颜色**：加一种 chip 类型时
+   `.chip--x` 与 `.tok--x` 一起加，别让用户在输入框里看到一个颜色、发出去变另一个。
+   文件路径类一律等宽，变量名是 `--ds-font-family-code`（**没有** `--ds-font-family-mono`，
+   写错了会静默退化成 inherit）。
+
+改完**先跑一遍真值表**：纯逻辑在 `.ts` 里就是为了能在 Node 里直接 import
+（`node --experimental-strip-types` 跑个临时脚本，正例 + 负例 + 「拼回去与原文本逐字相同」）。
+仓库里不放测试文件，所以这一步是手动的 —— 别省。
+输入框相关的纯逻辑有四个模块可测：`doc-text.ts`（序列化）、`chip-text.ts`（四种 chip 的文案）、
+`triggers.ts`（触发符规则）、`rich-text-tokens.ts`（染色）。最值钱的一条是**跨模块**的：
+「chip 落库的文本，恰好被记录端认成同一种 token」—— 它保证输入框和会话记录不会各说各话。
+
 ## 设置界面：技能 / 命令 / MCP 的查看编辑
 
 `components/settings-panel.tsx` 是一个居中模态：左边列表（`.setrow`），右边文本框
@@ -204,7 +304,7 @@ document.querySelector('.session__title').getBoundingClientRect().left
 路径被删、库不存在都只是跳过，**读写失败绝不影响启动**（顶多少列一个项目）。
 没被 YuanMy 打开过的项目不会出现在树里。
 
-## 两个已修的 bug —— 改布局/输入框前先看
+## 三个已修的 bug —— 改布局/输入框前先看
 
 ### 布局失控（症状：展开推理后侧栏「样式变了」并卡死）
 
@@ -217,18 +317,25 @@ document.querySelector('.session__title').getBoundingClientRect().left
 
 ### 输入法组字（症状：中文打词按回车就把半成品发出去）
 
-`renderer/src/composition.ts` 的守卫必须放在 `onKeyDown` 的**第一句**：
+守卫必须是键盘处理的**第一句**。textarea / 表单（`sidebar.tsx` 那种）：
 
 ```tsx
 onKeyDown={(event) => {
-  if (ime.isImeKey(event)) return      // ← 必须是第一句
+  if (ime.isImeKeyNative(event.nativeEvent)) return   // ← 必须是第一句
   if (event.key === 'Enter' && !event.shiftKey) submit()
 }}
 ```
 
 判定用三个信号（`isComposing` / `keyCode 229` / `compositionend` 后的临时标记），
-细节见该文件注释。**不要**改成持久标志位：`compositionend` 不触发时会永久卡住，
-表现是回车彻底发不出去。表单里的输入框（如侧栏模型输入）也要挂，否则组字回车会提交表单。
+细节见 `composition.ts` 注释。**不要**改成持久标志位：`compositionend` 不触发时会永久卡住，
+表现是回车彻底发不出去。表单里的输入框也要挂，否则组字回车会提交表单。
+
+### 富文本输入框的合成 Enter（症状：输入法确认候选词时把半成品发出去）
+
+Tiptap 里光判 `event.isComposing` **不够**（那个事件里根本没有这个属性）—— 必须加
+`view.composing`，原因与实测现象见上面「输入法：`event.isComposing` 不够」一节。
+这条是重写输入框时才暴露出来的：同样一句 `if (isComposing) return`，在 textarea 上是对的，
+在 ProseMirror 上会被它的合成 Enter 绕过。
 
 ## 改完怎么验
 
@@ -240,5 +347,27 @@ npm run desktop            # 真开窗口，把改的地方操作一遍
 
 **没有自动化测试**，所以「操作一遍」要具体：改侧栏就跑一次会话切换、
 改输入框就用中文输入法打一个词、改布局就展开一段长推理。
+
+输入框这块可以只靠 CDP 验到底（窗口被遮住也能跑，`Input` 域照样投递真按键）：
+
+```bash
+YuanMy_DEV=1 ./node_modules/.bin/electron app/desktop/main.js --remote-debugging-port=9225
+# 然后：Input.dispatchKeyEvent 打字 / Page.captureScreenshot / Runtime.evaluate 量 getComputedStyle
+```
+
+要点与坑：
+
+- 目标页要挑 `type === 'page' && url.startsWith('file://')`（另一个 target 是 DevTools 自己）；
+- 先 `Runtime.evaluate` 里 `element.focus()` 再投键 —— `Input.dispatchMouseEvent` 在
+  `document.visibilityState === 'hidden'`（窗口被遮）时点不中；
+- 量「chip 到底长什么样」用 `getComputedStyle` 的**实际值**（背景/字色/字重/字族），
+  别只看 CSS 源码 —— 未定义的 CSS 变量会静默退化成继承（`--ds-font-family-mono` 就是这么
+  空转了不知道多久）；
+- 端到端最强的一条证据是**会话日志**：`<项目>/.YuanMy/sessions/*/*/session.v3.jsonl`，
+  发一条 `用 /report 写稿` 就能看到 `user/message` 里是**展开后**的命令正文（说明 chip 序列化
+  成 `/report …` 且 host 认出来了）；
+- 中文/日文输入法没法用 CDP 完全模拟：`Input.imeSetComposition` 能造出真组字，但**不会发
+  `compositionend`**，于是 `view.composing` 一直为 true、之后所有回车都不响应 —— 到这一步就
+  刷新页面重来，别误判成守卫坏了。
 
 `app/desktop/README.md` 里有每个子系统的设计说明与坑。

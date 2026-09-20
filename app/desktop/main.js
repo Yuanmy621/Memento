@@ -706,6 +706,20 @@ function registerIpc() {
     if (!host.send({ type: 'settings:list' })) throw new Error('agent host 不可用')
   })
 
+  ipcMain.handle(IPC.steer, (event, text) => {
+    assertSender(event)
+    if (typeof text !== 'string' || text.trim() === '') throw new Error('目标调整内容为空')
+    // 走 host 的 steer：内核会在下一个 step 边界消费它（不排队、不打断已发出的请求）。
+    if (!host.send({ type: 'steer', text })) throw new Error('agent host 不可用')
+  })
+
+  ipcMain.handle(IPC.listFiles, (event, query) => {
+    assertSender(event)
+    if (!host.send({ type: 'files:list', query: typeof query === 'string' ? query : '' })) {
+      throw new Error('agent host 不可用')
+    }
+  })
+
   ipcMain.handle(IPC.listSessions, (event) => {
     assertSender(event)
     // 清单由 host 扫描磁盘后以 `workspace` 事件推回来，这里只负责触发。

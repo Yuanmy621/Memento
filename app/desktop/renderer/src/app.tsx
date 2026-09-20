@@ -35,7 +35,7 @@ export function App(): ReactElement {
   const {
     state, send, cancel, setModel, newSession, pickDirectory, getAppInfo,
     resumeSession, openProject, refreshSessions, loadProjectSessions, openPath,
-    loadSettings, readFile, writeFile, restartKernel,
+    loadSettings, readFile, writeFile, restartKernel, steer, listFiles,
   } = useAgent()
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null)
   const [tab, setTab] = useState<Tab>('chat')
@@ -155,6 +155,8 @@ export function App(): ReactElement {
 
         <Composer
           state={state}
+          onSteer={(value) => { void steer(value) }}
+          onListFiles={(query) => { void listFiles(query) }}
           onSend={(text) => { void send(text) }}
           onCancel={() => { void cancel() }}
           onSetModel={(model) => { void setModel(model) }}

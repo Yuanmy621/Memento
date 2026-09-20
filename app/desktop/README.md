@@ -407,6 +407,152 @@ main.js                                    host（sessions.ts）
 判断回放是否正常，看一眼就够：点侧栏里的历史会话，**旧对话应该消失、历史应该出现**
 （同项目与跨项目都要试）。如果历史是空的，先看 `--resume` 有没有真的传下去。
 
+### 输入框：Tiptap 富文本 + 触发符 chip + 回合中途调整目标
+
+输入框是 **Tiptap**（ProseMirror）编辑器，不是 textarea：选中的命令/工具/技能/文件会变成
+**chip**（带底色的内联原子节点），在输入框里就能看出「这条消息用了什么」。
+
+```
+打字                 →  ProseMirror 文档（doc > paragraph > text | chip | hardBreak）
+Enter / 发送按钮      →  docToText(doc).trim()  →  纯文本  →  host / 内核
+```
+
+**触发符**（`components/mention-menu.tsx` 给候选，`components/editor/*` 管编辑器）：
+
+| 触发符 | 选什么 | chip 上显示 | 落库文本 |
+| --- | --- | --- | --- |
+| `/` | 命令 + 技能（按组分列） | `/名字` / 技能名 | 命令落 `/名字`（host 展开，见下）；技能落「用 skill 工具加载 … 后按它执行：」 |
+| `@` | MCP 工具（按 server 分组） | 工具名 | `用 mcp__<server>__<tool> 工具：` |
+| `#` | 工作目录里的文件 | 相对路径 | 相对路径（`read` 与文件卡片都认相对路径） |
+
+↑↓ 选择、Enter/Tab 确认、Esc 关闭；点一下也能选（用 `onMouseDown` 而不是 `onClick` ——
+否则编辑器先失焦、光标位置就丢了）。菜单项的名字**按类型上色**，颜色就是它落进输入框后的
+chip 颜色（`--ym-tok-*`）。
+
+**`/` 只认整条消息的第一个位置**：host 的 `matchCommand` 只认 `^/名字`，出现在句中时给一个
+点了没用的选项反而误导。`@` `#` 要求**词首**（`editor/triggers.ts` 的 `triggerAllowed`）：
+
+- 空白 / 左右括号引号 / 中英标点 / **中日韩文字**之后都算词首 —— 中文不用空格分词，
+  `帮我把#composer` 是正常写法（最早漏了汉字这条，`#` 在中文后面永远弹不出菜单，实测踩到）；
+- 拉丁字母、数字后面**不算**：`foo@bar`、`C#code`、`https://x` 都不会弹菜单。
+- 这份边界判据（`isBoundaryChar`）与**消息记录的 token 染色共用同一份**：输入框里认出来的
+  东西，落到会话记录里必须还是同一种颜色。
+
+**选中后插的是 chip，不是一段文本**（`components/editor/chip.ts`）：`atom: true` + 不声明
+`content`，于是 ProseMirror 给它 `contenteditable="false"`，光标进不去、退格一次删掉整个、
+方向键一次跨过去。显示的文字（`label`）与落库的文字（`text`）是两回事，四个构造器集中在
+`editor/chip-text.ts`。⚠️ **不要用 `editor.getText()`**：chip 是 atom、没有文本，`getText()`
+会把它整个丢掉，`/report` 选完发出去等于空消息。序列化只走 `editor/doc-text.ts` 的
+`docToText()`（纯函数，可被真值表脚本直接跑）。
+
+`#` 的候选来自 host（`files:list` → `files` 帧）：只读一次目录树**有界**（最多 4000 个文件）、
+跳过 `node_modules`/`.git`/构建产物/点目录、并缓存 30 秒 —— 按一次键不能卡住。排序是
+「匹配位置 → 是否点文件 → 路径长度」（点文件靠后：不然刚打出一个 `#` 时前几条全是
+`.DS_Store`，看着像坏了）。菜单是「**先开菜单、后到货**」：候选到了靠
+`SuggestController.refresh()` 重算，并且按 `state.filesQuery` 丢弃过期结果。
+
+#### 键盘只有一条路径：输入法 → 菜单 → 提交
+
+ProseMirror 取 `handleKeyDown` 的顺序是「**view 自己的 props 先，然后才是各插件**」
+（`EditorView.someProp` 先查 `_props`），Tiptap 又把 `editorProps` 直接摊进 view props。
+所以 composer 里的 `handleKeyDown` 是唯一的总闸，按这个顺序问：
+
+1. `view.composing || ime.isImeKeyNative(event)` → 交给输入法；
+2. `controller.key(event)` → 菜单开着时方向键/Enter/Tab/Esc 归菜单；
+3. Enter（不带修饰键）→ 提交；Esc → 中断本回合。
+
+⚠️ 第 1 步为什么**必须**有 `view.composing`：ProseMirror 在「DOM 变化看起来像按了 Enter」时
+会**自己合成**一个 Enter 键事件（`readDOMChange` → `keyEvent(13, 'Enter')`，即
+`document.createEvent('Event')`）再走一遍 handleKeyDown 链 —— 那个事件**没有 `isComposing`、
+`isTrusted === false`**，只有 `keyCode === 13`。输入法用回车确认候选词时，提交动作恰好产生
+一次「新增段落」的 DOM 变化，于是这个合成 Enter 打进来：只信 `event.isComposing` 的守卫会
+**放行**，半成品就被当成消息发出去（本项目实测踩到，日志里能看到一次 `compositionend` 都没有
+却收到了 `keyCode 13`）。`view.composing` 是 ProseMirror 自己的组字状态，此时仍为 `true`。
+
+> 顺带一条：非 Android 上 ProseMirror 的组字状态**只由 `compositionend` 清除**
+> （`timeoutComposition = android ? 5000 : -1`）。真实输入法一定会发 `compositionend`；
+> 但用 CDP 的 `Input.imeSetComposition` 造组字时不会 —— 那时 `view.composing` 会一直是 true，
+> Enter 就彻底不响应（看着像守卫坏了，其实是测试手法不完整）。
+
+**回合中途调整目标**：输入框**不再因为「正在生成」而禁用**。空闲时 Enter 是发一轮
+（`prompt`）；**生成中 Enter 是纠偏**（`steer`）：
+
+```
+点击/回车 ──▶ IPC steer ──▶ host ──▶ kernel.agent.steer(message)
+                                        └─ 运行中：在**下一个 step 边界**消费
+                                           空闲时：直接开一个回合
+```
+
+为什么用 `steer` 而不是再发一个 `prompt`：后者是**排队**（这轮跑完才轮到它），
+而「调整目标」要的是立刻改方向。实测日志（同一轮内、工具调用之后）：
+
+```
+── turn/start turn=1
+   step/start step=1 → tool/call glob
+   step/start step=2
+   user[user] :: 目标调整：不要逐个读了，直接给出结论。   ← 这个边界被消费
+   tool/call read ×5
+   step/start step=3
+── turn/end turn=1 reason="completed"
+```
+
+两点如实说明：
+
+- **已经发出的请求不撤回**：纠偏在下一个 step 生效，所以那一批已经在跑的工具调用仍会跑完
+  （上例里 step 2 的 5 次 read）。
+- **它是「一轮里的插话」，不是新一轮**：会话记录里单独一种条目（`SteerItem`），
+  界面上是更矮更淡、靠右的「目标调整」气泡，轨迹里标 `GOAL` —— 事后回看不会误以为是新提问。
+  也正因为会在助手条目后面追加内容，`activeAssistant()` 改成**从后往前找最后一条助手条目**
+  （只看末项的话，流式增量会被拆到两个气泡里）。
+
+#### 编辑器扩展集：刻意做小
+
+`components/editor/kit.ts` 只开「打字本身」要用的东西（Document / Paragraph / Text /
+HardBreak / UndoRedo / TrailingNode / Placeholder / Chip / 三个 suggestion）。
+StarterKit 的其余部分（标题、列表、引用、代码块、加粗…）全部 `false`：它们的**输入规则**会在
+用户正常打字时生效 —— `# ` 变标题、`- ` 变列表 —— 而 `#` 正是文件触发符。用户想写
+`#123 ` 却看着输入框变成大标题，是功能变成了 bug。要加功能时请逐个打开，并想清楚它的输入规则
+会不会和 `/` `@` `#` 打架。
+
+
+### 指令 token：不同指令不同样式
+
+`/命令`、`@工具`、`#文件`、技能名混在一句话里时，全是同一种灰字 —— 扫一眼分不出
+哪个是命令、哪个是工具、哪个是文件，而它们恰恰是「这条消息让 agent 干了什么」的关键。
+所以纯文本的地方走 `components/rich-text.tsx` 渲染，按类型染色：
+
+| 类型 | 识别 | 样式 | 色相 |
+| --- | --- | --- | --- |
+| 命令 | 词首的 `/名字` | `.tok--command` | 强调色（和发送按钮同族：都是「要执行的动作」） |
+| 工具 | `mcp__<server>__<tool>` | `.tok--tool` | 青绿（外部能力，和本地命令区分） |
+| 技能 | 「用 skill 工具加载 `<名字>`」里的名字 | `.tok--skill` | 紫（可复用的指令包） |
+| 文件 | `#路径`，或**看起来像路径**的裸词 | `.tok--file` | 中性灰 + 等宽（它只是「东西」，不该抢眼） |
+
+渲染点：用户消息、中途目标调整、工具卡片的参数与错误结果、轨迹明细。
+**助手正文不走这里** —— 它是 Markdown，模型自己会用反引号包住工具名（`markdown.tsx` 管）。
+
+**输入框里的 chip 用同一组颜色令牌**（`--ym-tok-*`，`.chip--command` 等）：在输入框里看到的
+颜色，就是它落进会话记录后的颜色 —— 用户不需要学两套配色。菜单项的候选名字也按类型上色。
+
+两条实现上的取舍（都踩过）：
+
+- **只认「有把握」的**：`#` 前缀一律认；裸词必须**含 `/` 且末段带扩展名**才当路径。
+  否则 `and/or`、`HTTP/2`、`24/7` 也会被染色，反而更乱。
+- **必须有真词边界**（`isWordBoundary` → `isBoundaryChar`：空白 / 左右括号引号 / 中英标点 /
+  **中日韩文字**）。扫描是逐字符推进的，中途会停在词内部 —— 宽松判据下
+  `https://example.com/x.md` 会被切出 `xample.com/x.md` 染成文件 chip。真值表里专门有这条负例。
+  汉字算边界是后来补的：中文不用空格分词，`见app/cli/main.ts` 这种写法必须能染色
+  （同一个判据也管输入框的触发符，见上面「输入框」一节）。
+
+纯逻辑（`tokenizeRichText` / `looksLikePath` / `isWordBoundary` / `isBoundaryChar`）在
+`rich-text-tokens.ts` 里，与组件分文件，就是为了能在 Node 里直接 import 跑真值表 ——
+`.tsx` 带 JSX，纯 Node 加载不了。`editor/doc-text.ts` / `editor/chip-text.ts` /
+`editor/triggers.ts` 同样是为了这个（都只 import 类型或纯函数）。
+
+> 顺手修掉的一个隐形 bug：`font-family: var(--ds-font-family-mono)` 里的变量**从来没定义过**
+> （真实名字是 `--ds-font-family-code`），于是「文件路径用等宽」这条一直是空转 ——
+> 无效值在计算时退化成 `inherit`，看起来跟没写一样。现在四处引用都改成真名字了。
+
 ### 输入框下的 token 统计
 
 数字来自 `assistant/message` 事件上的 `TokenUsage`（`bridge.ts` 发 `usage` 帧）。
@@ -597,14 +743,43 @@ host 侧（`host/index.ts` 的 `listModels`）的规则：
 标志位会永久卡在 `true`，表现是**回车彻底发不出去**（社区有 Windows 上的真实案例）。
 所以第 3 条只活一个宏任务，由定时器保证清掉。
 
-用法：`const ime = useImeGuard()`，把 `ime.compositionProps` 展开到输入元素上，
-然后在 `onKeyDown` 的**第一句**写 `if (ime.isImeKey(event)) return`。
-输入框（`composer.tsx`）与侧栏的模型输入框（`sidebar.tsx`）都挂上了 ——
+#### 富文本输入框还要多一道：`view.composing`
+
+Tiptap 的键盘回调在 ProseMirror 里，拿到的**不一定是真事件**。上面那三个信号建立在
+「事件是浏览器派发的 KeyboardEvent」这个前提上，而 ProseMirror 会**自己合成**键事件：
+`readDOMChange` 在「这次 DOM 变化看起来像是按了 Enter」时，用
+`keyEvent(13, 'Enter')`（= `document.createEvent('Event')`）再走一遍 `handleKeyDown` 链。
+那个事件里 **`isComposing` 根本不存在**（`'isComposing' in event === false`）、
+`isTrusted === false`，只有 `keyCode === 13`。
+
+输入法用回车确认候选词，正好会产生一次「新增段落」的 DOM 变化 —— 于是这个合成 Enter 打进来，
+三个信号全部落空，半成品被当成消息发出去（实测踩到：日志里连一次 `compositionend` 都没有，
+却收到了一个 `keyCode 13`）。所以 `composer.tsx` 的 `handleKeyDown` 第一句是：
+
+```tsx
+if (view.composing || ime.isImeKeyNative(event)) return false
+```
+
+`view.composing` 是 ProseMirror **自己**的组字状态，在这个时刻仍为 `true`，是唯一可靠的
+判据。它不会带来新的风险：真事件在组字期间本来就被 ProseMirror 的 `inOrNearComposition`
+挡在 `handleKeyDown` 之外（`editHandlers.keydown` 开头就 `return`），这一句补的正是
+「合成事件绕过那道门」的洞。
+
+用法：`const ime = useImeGuard()`，把 `ime.compositionProps` 展开到**外层容器**上
+（组字事件会从 contenteditable 冒泡上来），然后在键盘处理的**第一句**写
+`if (ime.isImeKeyNative(event.nativeEvent)) return`（原生回调直接传 `event`）。
+富文本输入框（`composer.tsx`）与侧栏的模型输入框（`sidebar.tsx`）都挂上了 ——
 后者不拦的话，浏览器会顺手提交那个 `<form>`，等于拿半截拼音去切模型。
 
 **改这里时的自查**（用中文输入法真打一次最快）：组字中按回车**不能**发出消息、
 组字刚结束那一次回车也**不能**、而普通回车**必须**能发出去。
 第三条同样重要 —— 守卫写错会把回车彻底卡死。
+
+> 用 CDP 的 `Input.imeSetComposition` 造组字来验时要注意：它不会发 `compositionend`，
+> 而非 Android 上 ProseMirror 的组字状态**只由 `compositionend` 清除**
+> （`timeoutComposition = android ? 5000 : -1`）。于是 `view.composing` 会一直是 `true`，
+> 之后所有回车都不响应 —— 看着像守卫坏了，其实是测试手法不完整，刷新页面即可。
+
 
 ---
 
@@ -622,6 +797,10 @@ host 侧（`host/index.ts` 的 `listModels`）的规则：
   `<userData>/projects.json` 并在启动 host 时把清单交过去，由 host 多扫几个根。
   代价与边界见「项目树为什么能跨项目」一节：项目要**被打开过一次**才会进登记，
   登记最多 20 条、单次最多多扫 8 个根。
+- **输入框是「纯文本 + chip」，不是排版编辑器**：Markdown 语法、加粗、列表都没有
+  （理由见「编辑器扩展集：刻意做小」—— 输入规则会和 `#` 触发符打架）。
+  Enter 发送、Shift+Enter 换行、Cmd+Enter 也是换行（Tiptap 的 `Mod-Enter` 默认绑定，
+  我们没抢它）。要加富文本能力，记得同时想清楚它的**输入规则**会不会和 `/` `@` `#` 冲突。
 - **没有附件 / 图片**：`dsh-attachment-local` 已经在内核里挂好了，
   补一条「把文件路径塞进用户消息」的协议字段就能用起来。
 - **代码块没有「复制」按钮与行号**：Streamdown 支持，但需要在

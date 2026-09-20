@@ -12,6 +12,7 @@
 
 import { memo, type ReactElement } from 'react'
 import type { TraceStep } from '../use-agent.ts'
+import { RichText } from './rich-text.tsx'
 
 /** 每一步左侧的类型标签。 */
 const KIND_LABEL: Record<TraceStep['kind'], string> = {
@@ -20,6 +21,8 @@ const KIND_LABEL: Record<TraceStep['kind'], string> = {
   text: 'REPLY',
   tool: 'TOOL',
   note: 'NOTE',
+  // 中途的目标调整：单独一类，别和 NOTE（系统提示）混在一起
+  steer: 'GOAL',
 }
 
 export interface TraceViewProps {
@@ -42,7 +45,7 @@ export const TraceView = memo(function TraceView({ steps, empty }: TraceViewProp
           <span className={`trace__kind trace__kind--${step.kind}`}>{KIND_LABEL[step.kind]}</span>
           <span className="trace__body">
             <span className="trace__label">{step.label}</span>
-            <span className="trace__detail">{step.detail}</span>
+            <span className="trace__detail"><RichText text={step.detail} /></span>
           </span>
         </div>
       ))}

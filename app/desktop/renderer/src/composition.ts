@@ -35,7 +35,7 @@
  * @module YuanMy/desktop/renderer/composition
  */
 
-import { useCallback, useMemo, useRef, type KeyboardEvent } from 'react'
+import { useCallback, useMemo, useRef } from 'react'
 
 /** 「这次按键已被输入法处理」的历史哨兵值，Chromium 仍会在组字确认时带上。 */
 export const IME_PROCESS_KEYCODE = 229
@@ -67,8 +67,11 @@ export function isImeKeyEvent(native: ImeKeyShape, justEndedComposition: boolean
 export interface ImeGuard {
   /**
    * 这次按键该不该被忽略。在 `onKeyDown` 里**第一句**就该问它。
+   *
+   * 参数是**原生**键盘事件：React 的合成事件上取 `event.nativeEvent`，
+   * ProseMirror/Tiptap 的 `handleKeyDown` 拿到的本来就是原生的。
    */
-  readonly isImeKey: (event: KeyboardEvent<HTMLElement>) => boolean
+  readonly isImeKeyNative: (event: ImeKeyShape) => boolean
   /** 要展开到输入元素上的组字事件监听。 */
   readonly compositionProps: {
     readonly onCompositionStart: () => void
@@ -79,17 +82,22 @@ export interface ImeGuard {
 /**
  * 给输入元素加一层输入法守卫。
  *
- * 用法：
+ * 用法（textarea —— 把组字监听挂在元素上）：
  * ```tsx
  * const ime = useImeGuard()
  * <textarea
  *   {...ime.compositionProps}
  *   onKeyDown={(event) => {
- *     if (ime.isImeKey(event)) return          // ← 第一句
+ *     if (ime.isImeKeyNative(event.nativeEvent)) return   // ← 第一句
  *     if (event.key === 'Enter' && !event.shiftKey) submit()
  *   }}
  * />
  * ```
+ *
+ * 富文本输入框（Tiptap）的键盘回调在 ProseMirror 里，拿不到 React 事件，
+ * 但组字事件**会冒泡**：把 `compositionProps` 挂到编辑器的外层容器（`.composer__box`）
+ * 就行，判定照旧用 `isImeKeyNative(event)`。
+ *
  * @returns 判定函数与组字事件监听。
  */
 export function useImeGuard(): ImeGuard {
@@ -118,9 +126,9 @@ export function useImeGuard(): ImeGuard {
     },
   }), [])
 
-  const isImeKey = useCallback((event: KeyboardEvent<HTMLElement>) => {
-    return isImeKeyEvent(event.nativeEvent, justEndedRef.current)
+  const isImeKeyNative = useCallback((event: ImeKeyShape) => {
+    return isImeKeyEvent(event, justEndedRef.current)
   }, [])
 
-  return { isImeKey, compositionProps }
+  return { isImeKeyNative, compositionProps }
 }
