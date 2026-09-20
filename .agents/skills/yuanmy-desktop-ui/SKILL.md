@@ -345,6 +345,8 @@ npm run typecheck          # 三个项目：Node 侧 TS + 渲染进程 TSX + Nod
 npm run desktop            # 真开窗口，把改的地方操作一遍
 ```
 
+打包成 .app / .dmg 是另一条链路，见技能 **`yuanmy-package`**（`npm run package` / `npm run make`）。
+
 **没有自动化测试**，所以「操作一遍」要具体：改侧栏就跑一次会话切换、
 改输入框就用中文输入法打一个词、改布局就展开一段长推理。
 

@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "A minimal coding agent built on the DeepSeek Harness kernel",
+  "main": "app/desktop/main.js",
   "type": "module",
   "scripts": {
     "start": "node app/cli/main.ts",
@@ -10,6 +11,9 @@
     "build:renderer": "node app/desktop/scripts/build-renderer.js",
     "desktop": "npm run build:renderer && electron app/desktop/main.js",
     "desktop:watch": "node app/desktop/scripts/build-renderer.js --watch",
+    "app:build": "npm run build:renderer && node app/desktop/scripts/build-app.js",
+    "package": "npm run app:build && electron-forge package build/app",
+    "make": "npm run app:build && electron-forge make build/app",
     "desktop:host": "node app/desktop/host/index.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p app/desktop/renderer/tsconfig.json && tsc --noEmit -p tsconfig.js.json",
     "mcp:butian": "node app/mcp/butian/server.ts",
@@ -65,6 +69,12 @@
     "zod": "4.6.5"
   },
   "devDependencies": {
+    "@electron-forge/cli": "7.11.2",
+    "@electron-forge/maker-dmg": "7.11.2",
+    "@electron-forge/maker-zip": "7.11.2",
+    "@electron-forge/plugin-auto-unpack-natives": "7.11.2",
+    "@electron-forge/plugin-fuses": "7.11.2",
+    "@electron/fuses": "2.1.3",
     "@streamdown/cjk": "^1.0.3",
     "@streamdown/code": "^1.1.1",
     "@tailwindcss/postcss": "^4.3.3",

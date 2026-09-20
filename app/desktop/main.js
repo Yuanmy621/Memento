@@ -49,9 +49,30 @@ let state = { phase: 'booting' }
  * 所以这里缓存一份，随 `YuanMy:state` 一起返回（「推 + 拉」两条腿，与 ready 同理）。
  */
 let workspaceSnapshot = null
+/**
+ * 默认打开哪个项目。
+ *
+ * 开发时就是「你启动 electron 时所在的目录」（现状不变，跑 `npm run desktop`
+ * 打开的就是仓库自己）；**打包后 `process.cwd()` 是 `/`**，拿它当工作目录会让
+ * agent 在一个没有意义的根目录上工作，所以那里换成：上次打开过的项目 → 家目录。
+ *
+ * `YuanMy_CWD` 可以显式指定（冒烟测试与「从终端打开某个项目」都用它）。
+ * @returns {string} 项目根目录的绝对路径。
+ */
+function defaultProjectDir() {
+  const fromEnv = process.env.YuanMy_CWD
+  if (fromEnv !== undefined && fromEnv !== '') return resolve(fromEnv)
+  if (app.isPackaged) {
+    const recent = readRecentProjects()[0]
+    if (recent !== undefined) return recent
+    return app.getPath('home')
+  }
+  return process.cwd()
+}
+
 /** 当前 host 启动配置：重启 / 换工作目录时以它为基线。 */
 let launchConfig = {
-  cwd: process.cwd(),
+  cwd: defaultProjectDir(),
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -127,14 +148,35 @@ function rememberProject(path) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * 找到用来跑 host 的 node 可执行文件。
+ * 找到用来跑 host 的运行时（可执行文件 + 它需要的环境变量）。
  *
- * 优先用环境变量显式指定，其次用 npm / pnpm 注入的 node 路径（开发时最准），
- * 最后退回 PATH 里的 `node`。
- * @returns {string} node 可执行文件路径或命令名。
+ * 三种情形，优先级从高到低：
+ *
+ * | 情形 | 用什么 | 为什么 |
+ * | --- | --- | --- |
+ * | `YuanMy_NODE_BIN` 显式指定 | 照用 | 逃生口：想指定别的 node 时不改代码 |
+ * | **打包后**（`app.isPackaged`） | **App 自带的那颗 Electron 二进制** + `ELECTRON_RUN_AS_NODE=1` | 用户机器上不该假设有 Node；Electron 自带的 Node 24 与开发机一致，实测能跑内核（含 node-pty/koffi 的原生模块） |
+ * | 开发时 | npm/pnpm 注入的 node，退回 PATH | 与 CLI 完全同一条路，行为不会两套 |
+ *
+ * ⚠️ 打包形态依赖 `ELECTRON_RUN_AS_NODE`，所以 `forge.config.js` 里
+ * **`FuseV1Options.RunAsNode` 必须保持 true**（Forge 模板默认是关掉的）。
+ * 关掉的表现是：窗口能开，但 agent 永远是「不可用」。
+ *
+ * @returns {{ command: string, env: Record<string, string> }} 可执行文件与附加环境变量。
  */
-function resolveNodeBinary() {
-  return process.env.YuanMy_NODE_BIN || process.env.npm_node_execpath || 'node'
+function resolveHostRuntime() {
+  if (process.env.YuanMy_NODE_BIN) return { command: process.env.YuanMy_NODE_BIN, env: {} }
+  if (app.isPackaged) {
+    return {
+      command: process.execPath,
+      // 让 Electron 以「纯 Node」身份启动这个子进程（不起 GUI、按 node 语义解析参数）。
+      // 这个变量会随 scrubbed parent env 传给 MCP 子进程 —— 它们同样用 process.execPath 拉起
+      // （见 app/cli/kernel.ts 的 availableMcpSpecs），所以「Electron 当 Node 用」这一条
+      // 必须一路传下去。kernel.ts 里还显式把它列进了 forwardEnv 兜底。
+      env: { ELECTRON_RUN_AS_NODE: '1' },
+    }
+  }
+  return { command: process.env.npm_node_execpath || 'node', env: {} }
 }
 
 /**
@@ -148,6 +190,7 @@ function resolveNodeBinary() {
 function buildHostArgs(config) {
   const args = [
     // Node 原生类型擦除：直接运行 .ts，无需构建步骤（与 CLI 一致的取舍）。
+    // Electron 44 自带的 Node 24 同样支持，所以打包形态下这一条不用改。
     '--experimental-strip-types',
     '--disable-warning=ExperimentalWarning',
     HOST_ENTRY,
@@ -206,10 +249,11 @@ class AgentHost {
     // 把「最近打开过的其他项目」交给 host：它只扫当前项目的会话库，
     // 不带上这份清单，侧栏的项目树里就永远只有当前项目（见文件上半部分的说明）。
     const recentProjects = readRecentProjects().filter((path) => path !== config.cwd)
-    const child = spawn(resolveNodeBinary(), buildHostArgs(config), {
+    const runtime = resolveHostRuntime()
+    const child = spawn(runtime.command, buildHostArgs(config), {
       cwd: config.cwd,
       stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
-      env: { ...process.env, YuanMy_PROJECT_ROOTS: recentProjects.join(':') },
+      env: { ...process.env, ...runtime.env, YuanMy_PROJECT_ROOTS: recentProjects.join(':') },
     })
     this.child = child
 

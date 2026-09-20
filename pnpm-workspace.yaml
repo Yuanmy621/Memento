@@ -1,5 +1,9 @@
 allowBuilds:
   '@deepseek-ai/dsh-subprocess-local': true
+  # Electron Forge 的 DMG maker（appdmg）用它们读扩展属性 / 写 Finder 别名。
+  # 只是为了 `npm run make` 能出 .dmg；不想装就把 maker-dmg 从 forge.config.js 里去掉。
+  fs-xattr: true
+  macos-alias: true
   # 渲染进程的打包器：postinstall 负责放置平台二进制。
   esbuild: true
   koffi: true
@@ -20,3 +24,14 @@ peerDependencyRules:
     '@deepseek-ai/dsh-subprocess': '0.1.5-rc.2'
     '@deepseek-ai/dsh-tools': '0.1.5-rc.2'
     '@deepseek-ai/cordis': '4.0.2'
+
+# Electron Forge 的 @electron/rebuild@3.x 把 `@electron/node-gyp` 写成了 git 依赖
+# （`git+https://github.com/electron/node-gyp.git#06b29aa…`），而 pnpm 12 默认开启的
+# blockExoticSubdeps 拒绝安装「子依赖里的 git 依赖」。
+#
+# Electron 官方把同一个包发布到了 registry，所以这里用 override 指回 registry ——
+# **不关掉** blockExoticSubdeps 那道供应链闸门（关掉它会影响整个仓库的依赖解析）。
+# 这个包只在打包时被 @electron/rebuild 用到，且我们并不重建原生模块（见 forge.config.js
+# 里的 rebuildConfig），版本差异不影响产物。
+overrides:
+  '@electron/node-gyp': '10.2.0-electron.2'

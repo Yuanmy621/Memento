@@ -783,8 +783,113 @@ if (view.composing || ime.isImeKeyNative(event)) return false
 
 ---
 
+## 7. 打包：Electron Forge
 
-## 7. 已知限制与下一步
+```bash
+npm run app:build        # 只生成 staging（build/app/），排查打包问题时用
+npm run package          # → out/YuanMy Agent-darwin-arm64/YuanMy Agent.app
+npm run make             # → out/make/…（zip + dmg）
+```
+
+（`package` / `make` 内部都是 `app:build` + `electron-forge <命令> build/app`。）
+
+### 为什么要先搭一个 staging 目录，而不是直接打包仓库根
+
+Forge 的 `package` 会把项目目录整个复制进 `app.asar`，再按 `package.json` 的生产依赖
+做一次 prune。仓库根不满足它的两个隐含假设：
+
+| 假设 | 这个仓库的现实 | 后果 |
+| --- | --- | --- |
+| `node_modules` 是**扁平**布局 | pnpm 是「符号链接 + `.pnpm` 同级解析」 | prune 的依赖遍历看不到那些边，**删掉还要用的包** |
+| 依赖关系写在 `dependencies` | DSH 用 **`peerDependencies`** 装配内核 | prune 不认 peer，把半个内核装配线删掉 |
+
+所以 `scripts/build-app.js` 先物化一个**自包含目录** `build/app/`：
+
+```
+build/app/
+  package.json          # 生成：main=desktop/main.js + config.forge + 生产依赖 + electron 精确版本
+  forge.config.js       # 从 app/desktop/ 复制
+  pnpm-workspace.yaml   # 复制 + nodeLinker: hoisted
+  node_modules/         # pnpm install --prod（**扁平真实文件**，93MB）
+  desktop/…             # main.js / preload.js / ipc.js / host/*.ts / renderer/{index.html,dist}
+  cli/…  mcp/…          # host 运行时 import 的 CLI 与会内置 MCP 服务器
+```
+
+目录结构照抄 `app/desktop/`：`main.js` 里所有资源路径都是
+`new URL('./xxx', import.meta.url)`，布局不变，主进程代码一行都不用改。
+
+### 打包形态下内核怎么跑：**不依赖系统 Node**
+
+`main.js` 的 `resolveHostRuntime()` 分三种情形：
+
+| 情形 | 用什么 |
+| --- | --- |
+| `YuanMy_NODE_BIN` 显式指定 | 照用（逃生口） |
+| **打包后** | **App 自带的那颗 Electron 二进制** + `ELECTRON_RUN_AS_NODE=1` |
+| 开发时 | npm/pnpm 注入的 node，退回 PATH（现状不变） |
+
+Electron 44 自带的 Node 是 **24.21**（与开发机一致），`--experimental-strip-types` 照旧可用，
+所以 host 仍然是「直接跑 `.ts`、不构建」。实测（`PATH` 里连 `node` 都没有）：
+
+```
+$ env PATH=/usr/bin:/bin "out/…/YuanMy Agent.app/Contents/MacOS/YuanMy Agent"
+→ 界面「就绪」，跑一轮 bash 工具调用 → echo no-node-needed ✓
+```
+
+MCP 子进程也是 `process.execPath` 拉起的（`app/cli/kernel.ts` 的 `availableMcpSpecs`），
+所以 `ELECTRON_RUN_AS_NODE` 必须一路传下去：它通常能靠 scrubbed parent env 自动继承
+（名字不匹配敏感词规则），但那里**显式兜底**了一份 —— 不传的后果是子进程以 GUI 身份启动，
+不报错也不干活，只在 Dock 里多一个图标。
+
+⚠️ 这条链路决定了 `forge.config.js` 里 **`FuseV1Options.RunAsNode` 必须保持 `true`**
+（Forge 模板默认关掉它）。关掉的表现是「窗口能开、agent 永远不可用」。
+
+### 四个踩过的坑（都是**静默失效**型）
+
+1. **`asarUnpack` 在这里不存在。** 那是 electron-builder 的键名；`@electron/packager`
+   只认 **`asar.unpack`**（glob 字符串）。写错的后果是它被原样忽略、只有
+   `AutoUnpackNativesPlugin` 兜住了 `.node`：
+   - `sharp` 的 `libvips-cpp.*.dylib`（**只有 .dylib、没有 .node**）留在 asar 里 →
+     `Library not loaded: @rpath/libvips-cpp.8.18.6.dylib`；
+   - `node-pty` 的 `spawn-helper`（**没有 .node 后缀的可执行文件**）留在 asar 里。
+2. **Forge 的 prune 不认 `peerDependencies`。** 现象：打包一路 ✔，启动后
+   `Cannot find package '@deepseek-ai/dsh-credentials' imported from …/app.asar/node_modules/@deepseek-ai/dsh-llm-deepseek/lib/index.js`。
+   已用 `prune: false` 关掉（staging 本来就是按需物化的，没有开发依赖可删）。
+3. **staging 目录必须自己声明「我是 Forge 项目」。** Forge 的 `resolveDir()` 从目标目录
+   逐级**向上**找标记（`config.forge` / `devDependencies['@electron-forge/cli']`），
+   staging 一个都不占时会一路找到**仓库根**，然后把仓库当成要打包的项目 ——
+   报错却是 `Failed to locate module "@standard-schema/spec" from …/YuanMy/node_modules/…`，
+   完全不提「项目目录认错了」。所以生成的 `package.json` 里写了
+   `config: { forge: './forge.config.js' }`，并保留 `devDependencies.electron`（精确版本，
+   它同时是 `getElectronVersion()` 的数据源）。
+4. **别在块注释里写裸 glob。** `**` + `/` + `*` 这种字面量会**提前结束块注释**，
+   报出来的是莫名其妙的 `Unexpected token '.'`。`build-app.js` 里为此加了一条
+   `node --check forge.config.js` 的语法自检（Forge 自己的报错不给行号）。
+
+另外两条小的：`devDependencies.electron` 只是给 Forge 看版本号，**不用真装** ——
+但 Forge 的依赖遍历要求声明的包**物理存在**，而它的向上查找循环
+（`dirname(dirname(testPath))`）会跳过仓库根，所以 staging 里放了一个只有
+`package.json` 的占位包（prune 关掉后它会留在 asar 里，1KB，无害）。
+
+### 产物与签名
+
+```
+out/YuanMy Agent-darwin-arm64/YuanMy Agent.app      # 未压缩的 .app（约 395MB）
+out/make/YuanMy Agent-0.1.0-arm64.dmg               # 146MB，拖进 Applications
+out/make/zip/darwin/arm64/YuanMy Agent-…-0.1.0.zip  # .app 的压缩包（自动更新要的形态）
+```
+
+`out/` 与 `build/` 都在 `.gitignore` 里。
+
+**没有做开发者签名与公证**（需要 Apple Developer 证书）：产物是 **ad-hoc 签名**的
+（Apple Silicon 上必须如此，否则连本机都跑不起来），本机双击可以开；拷到别的机器会被
+Gatekeeper 拦，需要「右键 → 打开」或 `xattr -dr com.apple.quarantine`。要正式分发就得加
+`packagerConfig.osxSign` + `osxNotarize`，以及一枚 Developer ID 证书。
+
+---
+
+
+## 8. 已知限制与下一步
 
 - **不能打包**：目前只有开发态运行。出安装包需要补 `electron-builder` 配置与签名，
   可参考 DSH 的 `apps/desktop`（它的做法是把整个运行时打进 asar）。

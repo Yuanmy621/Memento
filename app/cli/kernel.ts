@@ -282,6 +282,16 @@ async function mountMcpServers(ctx: Context, options: Options): Promise<string[]
       const value = process.env[key]
       if (value !== undefined && value !== '') env[key] = value
     }
+    // 桌面端打包后，host 自己是「Electron 当 Node 用」跑起来的（`ELECTRON_RUN_AS_NODE=1`），
+    // 而 MCP 子进程用的也是 `process.execPath`（= App 里的 Electron 二进制）。
+    // 没有这个变量，子进程会以 **GUI 应用**身份启动：不报错、也不干活，只会在 Dock 里
+    // 多一个图标，MCP 工具则永远连不上。
+    //
+    // 它通常能靠 scrubbed parent env 自动继承过去（名字不匹配敏感词规则），
+    // 但那是**巧合**（和 BUTIAN_COOKIE 那条注释同一个道理），所以这里显式兜底。
+    if (process.versions.electron !== undefined && process.env.ELECTRON_RUN_AS_NODE !== undefined) {
+      env.ELECTRON_RUN_AS_NODE = '1'
+    }
     if (spec.transport === 'streamable-http') {
       if (spec.url === undefined) {
         process.stderr.write(`YuanMy: MCP 服务器 "${name}" 声明了 streamable-http 但没有 url，跳过。\n`)
