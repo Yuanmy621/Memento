@@ -174,6 +174,68 @@ export interface ModelInfo {
   readonly description?: string
 }
 
+/**
+ * 设置界面要的一条 skill 记录。
+ *
+ * `invocation` 是这次重构的核心区分（内核的 `SkillInvocationPolicy`）：
+ *   - `global`：进模型的会话目录，模型能自己按需加载（**长期**）；
+ *   - `command`：`disable-model-invocation: true`，不进目录，只由 `/命令` 触发（**短期**）；
+ *   - `user-only`：连人工入口都不给（`user-invocable: false`）。
+ */
+export interface SkillEntry {
+  readonly name: string
+  readonly description: string
+  readonly invocation: 'global' | 'command' | 'user-only'
+  readonly modelInvocable: boolean
+  readonly userInvocable: boolean
+  /** 来源（`project-agents` / `custom` / …，来自内核的 SkillSource）。 */
+  readonly source: string
+  /** SKILL.md 绝对路径；内核没给路径时为空串。 */
+  readonly path: string
+  /** 正文大小（字符数）。 */
+  readonly bytes: number
+  /**
+   * 盘上有、内核却没加载时的原因。
+   *
+   * 为什么要有这个字段：磁盘上的 `SKILL.md` 一旦 frontmatter 不合法（缺 name/description、
+   * YAML 写坏），provider 只写一条 `logger.warn` 就**静默忽略**整个 skill ——
+   * 从界面上看就是「文件明明在，技能却不生效」。真踩过：上游 `report` skill 的
+   * description 里有 `EN: ` 这种「冒号+空格」，YAML 判定成嵌套映射直接抛错。
+   */
+  readonly warning?: string
+}
+
+/** 设置界面要的一条命令记录（`.agents/commands/<名字>.md`）。 */
+export interface CommandEntry {
+  readonly name: string
+  readonly description: string
+  readonly argsHint: string
+  /** `project` / `user` / `extra`。 */
+  readonly scope: string
+  readonly path: string
+  /** 会被内联进这一回合的文件（绝对路径）。 */
+  readonly includes: readonly string[]
+  readonly bytes: number
+}
+
+/** 设置界面要的一条 MCP 服务器记录。 */
+export interface McpEntry {
+  readonly name: string
+  /** 是否会被挂载。 */
+  readonly enabled: boolean
+  /** 为什么是这个状态：配置文件 / 环境变量 / 关着。 */
+  readonly reason: 'config' | 'env' | 'off'
+  readonly transport: 'stdio' | 'streamable-http'
+  readonly command: string
+  readonly args: readonly string[]
+  /** streamable-http 的端点。 */
+  readonly url: string
+  /** 显式转发的环境变量名。 */
+  readonly forwardEnv: readonly string[]
+  /** 定义来自哪里。 */
+  readonly source: 'builtin' | 'project' | 'config'
+}
+
 /** `ready` 帧里携带的、足以渲染整个界面侧栏的信息。 */
 export interface HostReadyInfo {
   /** 协议版本，渲染进程用来判断自己是否太旧。 */
@@ -246,6 +308,13 @@ export type HostRequest =
     /** 用户输入的自然语言任务。 */
     readonly text: string
   }
+  /**
+   * 要一次设置数据（skill / 命令 / MCP），回一个 `settings` 帧。
+   *
+   * 与之配套的文件读写**不在这里** —— 那是主进程的活（它有 fs，也是安全边界），
+   * 见 `main.js` 的 `YuanMy:settings-read` / `YuanMy:settings-write`。
+   */
+  | { readonly type: 'settings:list' }
   | {
     /** 重新扫描落盘会话，回一个 `workspace` 帧（侧栏刷新用）。 */
     readonly type: 'list-sessions'
@@ -351,6 +420,22 @@ export type HostEvent =
    * 非致命提示（例如凭据缺失），界面以系统消息展示。
    * `error` 目前只由渲染进程自己使用（例如 preload 没注入），host 只发 info / warn。
    */
+  /**
+   * 设置界面的数据：把「现有 skill / 命令 / MCP」一次性发过去。
+   *
+   * 只在界面打开设置面板时请求（`settings:list`），不放在 `ready` 里 ——
+   * 它要读盘、要问内核，没必要让每次启动都付这个成本。
+   */
+  | {
+    readonly type: 'settings'
+    readonly skills: readonly SkillEntry[]
+    readonly commands: readonly CommandEntry[]
+    readonly mcp: readonly McpEntry[]
+    /** MCP 配置文件路径（界面「编辑配置」用）。 */
+    readonly mcpConfigPath: string
+    /** 配置文件存在但解析失败时的原因。 */
+    readonly mcpConfigError?: string
+  }
   | { readonly type: 'notice'; readonly level: 'info' | 'warn' | 'error'; readonly message: string }
   /** 致命错误：host 即将退出。 */
   | { readonly type: 'fatal'; readonly message: string }
@@ -379,6 +464,8 @@ export function isHostEvent(value: unknown): value is HostEvent {
       return Array.isArray(candidate['projects']) && Array.isArray(candidate['sessions'])
     case 'history':
       return Array.isArray(candidate['items'])
+    case 'settings':
+      return Array.isArray(candidate['skills']) && Array.isArray(candidate['commands']) && Array.isArray(candidate['mcp'])
     case 'project-sessions':
       return typeof candidate['path'] === 'string' && Array.isArray(candidate['sessions'])
     case 'notice':

@@ -72,6 +72,23 @@ Tailwind **只为已定义的 token 生成工具类**，缺了会被静默丢掉
 轨迹视图走 `traceSteps()` 纯函数把 `state.items` 摊平 —— 这两个都是纯函数，
 改动后自己走一遍：打开一个带工具调用的回合，确认文件卡片与轨迹两步都对得上。
 
+## 设置界面：技能 / 命令 / MCP 的查看编辑
+
+`components/settings-panel.tsx` 是一个居中模态：左边列表（`.setrow`），右边文本框
+（`.setedit__area`）。加东西时记住这几条：
+
+- **数据来自 host**：`settings:list` → `settings` 帧 → `use-agent.ts` 的
+  `state.settings`；打开面板时 `loadSettings()` 拉一次，**写完文件会自动重拉**
+  （列表里的大小/告警要跟着变）。
+- **文件读写走主进程**（`window.YuanMy.settingsRead/settingsWrite`），主进程有白名单
+  （只允许配置与技能/命令目录）。**别在渲染进程里想办法绕过它** —— 那是安全边界。
+- **编辑的是纯文本**：技能是 Markdown（含 frontmatter）、MCP 是 JSON。所以用 textarea，
+  不要改成结构化表单。
+- **保存后未必生效**：技能/命令要重开内核（面板上有「重启内核」），MCP 一定要重启。
+- 调用方式徽章有三种底色（`.settag--global/--command/--user-only`），
+  对应内核的 `SkillInvocationPolicy`；别把「命令专用」标成红色之类的「错误色」，
+  它是正常状态。
+
 ## 视觉一律走官方令牌，别写死颜色
 
 配色 / 圆角 / 字号 / 动效对齐官方 DSH 桌面端，并且**沿用了它的令牌名**（`--dsw-*`）：

@@ -1,0 +1,13 @@
+来源: https://github.com/v-yun/vuln-report-skill
+commit: 016e66e70809a20862d86326b4520f842db85300 (2026-08-21)
+许可: MIT（见同目录 LICENSE）
+
+本仓库的改动（正文内容未改）：
+1. frontmatter 里的 description 加了单引号 —— 上游原样是非法 YAML：
+   描述中间含 "EN: "（ASCII 冒号+空格），YAML 会判定成嵌套映射并**抛错**，
+   而 DSH 的技能 provider 遇到解析失败的 SKILL.md 只写一句 logger.warn 就忽略，
+   表现是「文件明明在、技能却完全不生效」。加引号后正常。
+2. 追加两行调用政策：disable-model-invocation: true / user-invocable: true
+   —— 让它成为「命令专用技能」：不进模型会话目录（长期零上下文成本），
+   由 .agents/commands/report.md 的 /report 触发。
+3. 上游 README.md 改名为 UPSTREAM-README.md（避免与仓库里的技能文档重名混淆）。

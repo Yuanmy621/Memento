@@ -61,6 +61,7 @@ import * as McpClient from '@deepseek-ai/dsh-mcp-client'
 // —— YuanMy 自己的扩展 ——
 import * as customTools from './tools.ts'
 import { installPromptSections, personaText } from './prompt.ts'
+import { readMcpConfig, type McpConfigEntry } from './mcp-config.ts'
 import type { Options } from './options.ts'
 
 /** 内核启动结果。 */
@@ -88,9 +89,14 @@ const REQUIRED_SERVICES = ['llm', 'sessions', 'sessionProjections', 'systemPromp
  * @param cwd - agent 的工作目录。
  * @returns 要扫描的技能根目录列表。
  */
-function skillDirs(cwd: string): string[] {
+export function skillRoots(cwd: string): string[] {
   // `.dsh/skills` 是 DSH 里优先级更高的项目级目录（rank 100），一并认。
   return [join(cwd, '.agents', 'skills'), join(cwd, '.dsh', 'skills')]
+}
+
+/** 兼容旧名字（内核内部用）。 */
+function skillDirs(cwd: string): string[] {
+  return skillRoots(cwd)
 }
 
 /**
@@ -98,10 +104,15 @@ function skillDirs(cwd: string): string[] {
  * @returns 匹配 `dsh-skill-filesystem` Config 的片段。
  */
 function skillDirsFromEnv(): { customSkillDirs?: string[] } {
-  const extra = process.env.YuanMy_SKILL_DIRS?.trim()
-  if (extra === undefined || extra === '') return {}
-  const dirs = extra.split(':').map(part => part.trim()).filter(part => part !== '')
+  const dirs = extraSkillDirs()
   return dirs.length === 0 ? {} : { customSkillDirs: dirs }
+}
+
+/** `$YuanMy_SKILL_DIRS` 里追加的技能目录（设置界面扫盘也要用同一份）。 */
+function extraSkillDirs(): string[] {
+  const extra = process.env.YuanMy_SKILL_DIRS?.trim()
+  if (extra === undefined || extra === '') return []
+  return extra.split(':').map(part => part.trim()).filter(part => part !== '')
 }
 
 /** 生成一个新的会话 id。 */
@@ -132,12 +143,13 @@ async function mount(ctx: Context, label: string, plugin: unknown, config?: unkn
  * @param cwd - agent 的工作目录（工作目录内的 MCP server 相对它解析）。
  * @returns 名字 → 启动方式。
  */
-function mcpSpecs(cwd: string): Record<string, McpSpec> {
+export function availableMcpSpecs(cwd: string): Record<string, McpSpec> {
   // app/cli/kernel.ts → ../mcp/butian/server.ts
   const here = import.meta.dirname
   return {
     butian: {
       serverName: 'butian',
+      transport: 'stdio',
       command: process.execPath,
       args: [
         '--experimental-strip-types',
@@ -150,22 +162,33 @@ function mcpSpecs(cwd: string): Record<string, McpSpec> {
       // 哪天规则加个 COOKIE，登录就会悄无声息地失效。
       forwardEnv: ['BUTIAN_COOKIE'],
       title: '补天 butian.net（只读）',
+      origin: 'builtin',
     },
     // 工作目录里的自定义 MCP server：`<cwd>/.YuanMy/mcp/<名字>.ts`
     ...customMcpSpecs(cwd),
   }
 }
 
-/** 一个 MCP 服务器的启动方式。 */
-interface McpSpec {
+/** 一个 MCP 服务器的启动方式（两种传输共用）。 */
+export interface McpSpec {
   /** MCP 里的命名空间：工具会变成 `mcp__<serverName>__<工具>`。 */
   readonly serverName: string
-  readonly command: string
-  readonly args: readonly string[]
+  /** 传输方式；缺省按 stdio 处理（本地子进程）。 */
+  readonly transport?: 'stdio' | 'streamable-http'
+  /** stdio：可执行文件。 */
+  readonly command?: string
+  /** stdio：参数。 */
+  readonly args?: readonly string[]
   /** 显式转发给子进程的环境变量名。 */
   readonly forwardEnv?: readonly string[]
+  /** streamable-http：端点。 */
+  readonly url?: string
+  /** streamable-http：请求头。 */
+  readonly headers?: Readonly<Record<string, string>>
   /** 只用于日志。 */
   readonly title: string
+  /** 定义来自哪里（设置界面用来显示「内置」还是「项目目录」）。 */
+  readonly origin?: 'builtin' | 'project'
 }
 
 /**
@@ -189,6 +212,7 @@ function customMcpSpecs(cwd: string): Record<string, McpSpec> {
       command: process.execPath,
       args: ['--experimental-strip-types', '--disable-warning=ExperimentalWarning', join(dir, entry)],
       title: `${name}（${dir}）`,
+      origin: 'project',
     }
   }
   return specs
@@ -209,34 +233,115 @@ function customMcpSpecs(cwd: string): Record<string, McpSpec> {
  * @param ctx - 内核上下文。
  * @param options - CLI 配置（用到 cwd）。
  */
-async function mountMcpServers(ctx: Context, options: Options): Promise<void> {
-  const wanted = (process.env.YuanMy_MCP ?? '')
+/**
+ * 算出这一次要挂哪些 MCP 服务器。
+ *
+ * 三个来源合并（见 `mcp-config.ts` 的说明）：
+ *   1. `$YuanMy_MCP`（冒号分隔）—— 临时开一个；
+ *   2. `<cwd>/.YuanMy/mcp.json` 里 `enabled` 的条目 —— 持久开关，可内联覆盖启动参数；
+ *   3. 配置文件里 `enabled: false` 的条目 —— **强制关掉**（盖过前两者）。
+ *
+ * @param ctx - 内核上下文（未使用，保留签名一致性）。
+ * @param options - CLI 配置（用到 cwd）。
+ * @returns 已挂载的服务器名字。
+ */
+async function mountMcpServers(ctx: Context, options: Options): Promise<string[]> {
+  const config = readMcpConfig(options.cwd)
+  if (config.error !== undefined) {
+    process.stderr.write(`YuanMy: MCP 配置文件解析失败（已忽略）：${config.path} — ${config.error}\n`)
+  }
+  const specs = availableMcpSpecs(options.cwd)
+  const disabled = new Set(config.entries.filter(entry => !entry.enabled).map(entry => entry.name))
+
+  // 名字 → 启动方式：配置里的内联定义优先，其次内置/项目目录
+  const wanted: { name: string; spec: McpSpec }[] = []
+  const fromEnv = (process.env.YuanMy_MCP ?? '')
     .split(':')
     .map(part => part.trim())
     .filter(part => part !== '')
-  if (wanted.length === 0) return
+  const names = [...new Set([...fromEnv, ...config.entries.filter(entry => entry.enabled).map(entry => entry.name)])]
 
-  const specs = mcpSpecs(options.cwd)
-  for (const name of wanted) {
-    const spec = specs[name]
+  for (const name of names) {
+    if (disabled.has(name)) continue
+    const entry: McpConfigEntry | undefined = config.entries.find(item => item.name === name)
+    const base = specs[name]
+    const spec = mergeSpec(name, entry, base)
     if (spec === undefined) {
-      process.stderr.write(`YuanMy: 未知的 MCP 服务器 "${name}"，可用: ${Object.keys(specs).join(', ') || '（无）'}\n`)
+      process.stderr.write(
+        `YuanMy: 未知的 MCP 服务器 "${name}"（配置文件里也没有它的启动参数），可用: ${Object.keys(specs).join(', ') || '（无）'}\n`,
+      )
       continue
     }
+    wanted.push({ name, spec })
+  }
+
+  const mounted: string[] = []
+  for (const { name, spec } of wanted) {
     const env: Record<string, string> = {}
     for (const key of spec.forwardEnv ?? []) {
       const value = process.env[key]
       if (value !== undefined && value !== '') env[key] = value
     }
-    await mount(ctx, `mcp:${name}`, McpClient, {
-      transport: 'stdio',
-      serverName: spec.serverName,
-      command: spec.command,
-      args: [...spec.args],
-      env,
-      cwd: options.cwd,
-    })
+    if (spec.transport === 'streamable-http') {
+      if (spec.url === undefined) {
+        process.stderr.write(`YuanMy: MCP 服务器 "${name}" 声明了 streamable-http 但没有 url，跳过。\n`)
+        continue
+      }
+      await mount(ctx, `mcp:${name}`, McpClient, {
+        transport: 'streamable-http',
+        serverName: spec.serverName,
+        url: spec.url,
+        headers: { ...(spec.headers ?? {}) },
+      })
+    } else {
+      await mount(ctx, `mcp:${name}`, McpClient, {
+        transport: 'stdio',
+        serverName: spec.serverName,
+        command: spec.command ?? process.execPath,
+        args: [...(spec.args ?? [])],
+        env,
+        cwd: options.cwd,
+      })
+    }
+    mounted.push(name)
     process.stderr.write(`YuanMy: 已挂载 MCP 服务器 ${spec.title}\n`)
+  }
+  return mounted
+}
+
+/**
+ * 合并「配置文件条目」与「内置/项目目录定义」。
+ *
+ * 配置里写了什么就用什么，没写的从 base 继承 —— 这样配置文件里只写
+ * `{ "name": "butian", "enabled": true }` 也能用。
+ * @param name - 服务器名。
+ * @param entry - 配置条目（可能没有）。
+ * @param base - 内置/项目目录的定义（可能没有）。
+ * @returns 启动方式；两边都缺关键字段时返回 `undefined`。
+ */
+function mergeSpec(name: string, entry: McpConfigEntry | undefined, base: McpSpec | undefined): McpSpec | undefined {
+  if (entry === undefined) return base
+  const transport = entry.transport ?? base?.transport ?? 'stdio'
+  const command = entry.command ?? base?.command
+  const url = entry.url ?? base?.url
+  if (transport === 'streamable-http') {
+    if (url === undefined) return undefined
+    return {
+      serverName: name,
+      transport,
+      url,
+      headers: entry.headers ?? base?.headers ?? {},
+      title: base?.title ?? `${name}（来自 mcp.json）`,
+    }
+  }
+  if (command === undefined) return undefined
+  return {
+    serverName: name,
+    transport: 'stdio',
+    command,
+    args: entry.args ?? base?.args ?? [],
+    forwardEnv: entry.forwardEnv ?? base?.forwardEnv ?? [],
+    title: base?.title ?? `${name}（来自 mcp.json）`,
   }
 }
 

@@ -1629,3 +1629,250 @@ html[data-platform="darwin"] .sidebar__brand {
 .stats__dim { color: var(--dsw-alias-label-caption); }
 .stats__sep { color: var(--dsw-alias-border-l4); }
 .stats__spacer { flex: 1; }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * 设置面板（技能 / 命令 / MCP）
+ *
+ * 一个居中模态：左边是列表（点一项），右边是文本编辑器（改完保存）。
+ * 刻意用「文本框」而不是表单字段 —— 这些东西本来就是 Markdown / JSON，
+ * 表单只会挡住 frontmatter 和注释。
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+.setmodal {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+}
+
+.setmodal__scrim {
+  position: absolute;
+  inset: 0;
+  background: rgb(0 0 0 / 0.45);
+}
+
+.setmodal__box {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(1040px, 100%);
+  height: min(680px, 100%);
+  background: var(--dsw-alias-bg-layer-1);
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: 14px;
+  box-shadow: 0 24px 64px rgb(0 0 0 / 0.5);
+  overflow: hidden;
+}
+
+.setmodal__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l1);
+}
+
+.setmodal__spacer { flex: 1; }
+
+.settabs { display: flex; gap: 2px; }
+
+.settab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.settab:hover { background: var(--dsw-specific-sidebar-nav-item-hover); }
+
+.settab--active {
+  background: var(--ym-nav-current-fill);
+  color: var(--dsw-alias-label-primary);
+  font-weight: 500;
+}
+
+.settab__count {
+  color: var(--dsw-alias-label-caption);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.setmodal__body {
+  display: grid;
+  grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
+  min-height: 0;
+  flex: 1;
+}
+
+.setlist {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px;
+  border-right: 0.5px solid var(--dsw-alias-border-l1);
+}
+
+.setpane { min-height: 0; display: flex; }
+
+.setrow {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.setrow:hover { background: var(--dsw-specific-sidebar-nav-item-hover); }
+
+.setrow--active {
+  background: var(--ym-nav-current-fill);
+  color: var(--dsw-alias-label-primary);
+}
+
+.setrow--static { cursor: default; }
+
+.setrow__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.setrow__title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.setrow__sub {
+  color: var(--dsw-alias-label-caption);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.setrow__warn { color: var(--dsw-alias-state-warn-primary); cursor: help; }
+
+.settag {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 6px;
+  font-size: 10.5px;
+  line-height: 15px;
+}
+
+/* 三种调用方式用同一套底色梯度：全局最亮（长期占目录），命令专用次之，不对外最暗 */
+.settag--global { background: var(--ym-accent-soft); color: var(--ym-accent-text); }
+.settag--command { background: rgb(255 255 255 / 0.07); color: var(--dsw-alias-label-tertiary); }
+.settag--user-only { background: rgb(255 255 255 / 0.04); color: var(--dsw-alias-label-caption); }
+
+.setedit {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.setedit__bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l1);
+}
+
+.setedit__path {
+  flex: 1;
+  min-width: 0;
+  color: var(--dsw-alias-label-caption);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
+.setedit__status { flex: none; color: var(--dsw-alias-label-tertiary); font-size: 11px; }
+
+.setedit__area {
+  flex: 1;
+  min-height: 0;
+  padding: 10px 12px;
+  border: none;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--ds-font-family-mono);
+  font-size: 12px;
+  line-height: 18px;
+  resize: none;
+  outline: none;
+}
+
+.setbtn {
+  flex: none;
+  padding: 4px 10px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.setbtn:hover:not(:disabled) {
+  background: var(--dsw-specific-sidebar-nav-item-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.setbtn:disabled { opacity: 0.5; cursor: default; }
+.setbtn--sm { padding: 2px 8px; font-size: 11px; }
+
+.setempty { padding: 14px; color: var(--dsw-alias-label-caption); font-size: 12px; }
+.sethint { padding: 4px 10px; color: var(--dsw-alias-label-caption); font-size: 11px; }
+.setwarn { padding: 4px 10px; color: var(--dsw-alias-state-warn-primary); font-size: 11px; }
+
+.setmcpcfg {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 0.5px solid var(--dsw-alias-border-l1);
+}
+
+.setmodal__foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 0.5px solid var(--dsw-alias-border-l1);
+}
+
+.setmodal__foot .sethint { flex: 1; padding: 0; }

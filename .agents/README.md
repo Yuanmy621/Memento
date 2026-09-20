@@ -5,8 +5,8 @@
 
 ```
 .agents/
-  README.md          本文件：目录约定与技能格式
-  skills/            技能存放地（本仓库的主体）
+  README.md          本文件：目录约定、技能格式、技能与命令怎么分
+  skills/            **全局长期技能**：进模型的会话目录，模型可自行按需加载
     <技能名>/
       SKILL.md       必需：YAML frontmatter(name/description) + 正文
       references/    可选：长参考资料，按需读取（可带路由表）
@@ -14,14 +14,53 @@
       scripts/       可选：技能自带的脚本
       LICENSE        可选：vendored 第三方技能必须带上游许可证
     <技能名>.md      也支持「单文件技能」，直接放在 skills/ 顶层
+  commands/          **命令**：用户敲 `/名字` 触发，指令只在那一个回合注入
+    <名字>.md        frontmatter(description/args/include) + 指令正文
+    <名字>/          可选：该命令自带的资产（模板、脚本、参考文件）
 ```
+
+## 技能 vs 命令：两类东西，别混
+
+判据只有一条：**谁触发它**。触发方式决定了上下文成本，也决定了该放哪。
+
+| | 全局长期技能 | 命令 |
+| --- | --- | --- |
+| 放哪 | `skills/<名字>/SKILL.md` | `commands/<名字>.md` |
+| 谁触发 | **模型**（看到目录描述后自己决定加载） | **用户**（敲 `/名字`） |
+| 上下文成本 | 目录常驻：`description` 一直在会话里 | **零**：只有敲了才把正文注入那一回合 |
+| 适合什么 | 能力包：怎么挖洞、怎么改这个仓库、某个平台怎么用 | 一次性流程：写报告、发版、整理素材、固定格式的排查 |
+| 写法 | 正文写「什么时候用 + 怎么做」 | 正文写「这一回合要 agent 做什么」，可 `include` 内联别的文件 |
+
+**两种之间可以转换**，而且不用搬家 —— 技能 frontmatter 里那两行就是开关：
+
+```yaml
+disable-model-invocation: true   # 不进模型目录 → 变成「命令专用技能」（长期成本归零）
+user-invocable: true             # 仍然允许人工入口（默认就是 true）
+```
+
+> 这是内核 `SkillInvocationPolicy` 的原生能力，不是本仓库自己造的约定。
+> 反向转换：删掉 `disable-model-invocation` 那行，它就回到「全局长期」。
+
+桌面端的**设置界面**（左下角「设置」）把这件事可视化了：技能列表上会标
+`全局` / `命令专用`，点开就能改 frontmatter 保存。
 
 现有技能：
 
-| 技能 | 来源 | 说明 |
-| --- | --- | --- |
-| `yuanmy-desktop-ui` | 自研 | 改桌面端界面的固定套路 |
-| `src-hunter` | **vendored**（[MyuriKanao/src-hunter-skill](https://github.com/MyuriKanao/src-hunter-skill)，MIT） | SRC / 众测漏洞挖掘工作流：5 阶段 + 19 个 playbook + 指纹库 |
+| 技能 | 来源 | 调用方式 | 说明 |
+| --- | --- | --- | --- |
+| `yuanmy-desktop-ui` | 自研 | 全局 | 改桌面端界面的固定套路 |
+| `yuanmy-mcp` | 自研 | 全局 | 往 YuanMy 上接 MCP 服务器的固定套路 |
+| `report` | **vendored**（[v-yun/vuln-report-skill](https://github.com/v-yun/vuln-report-skill)，MIT） | **命令专用**（`/report`） | 已确认漏洞 → 可提交的 DOCX 报告：分层验证门 + 固定版式 + Step 式 PoC + 截图铁律 |
+| `src-hunter` | **vendored**（[MyuriKanao/src-hunter-skill](https://github.com/MyuriKanao/src-hunter-skill)，MIT） | 全局 | SRC / 众测漏洞挖掘工作流：5 阶段 + 19 个 playbook + 指纹库 |
+
+现有命令：
+
+| 命令 | 说明 |
+| --- | --- |
+| `/report` | 内联 `report` 技能正文（约 27KB）+ 执行顺序与配套资产清单，仅本回合生效 |
+
+`report` 是「命令专用技能」的范例：正文大、只在成稿时用，所以不让它常驻目录；
+`commands/report.md` 是它的入口（写法见下）。
 
 ### vendored 第三方技能的规矩
 
@@ -89,7 +128,45 @@ description: 在这个仓库里改完代码怎么验证 —— 从便宜的静�
 技能按 **`<cwd>`** 定位，所以 `--cwd`（或桌面端「更换工作目录」）会连带切换技能集。
 目录变化会被监听，新增 / 改名 / 删除技能在下一次请求就能用，不需要重启。
 
+## 命令怎么写
+
+`commands/<名字>.md`，frontmatter 只有三个可选字段：
+
+```markdown
+---
+description: 一句话说明（`/help`、`/commands`、设置界面里显示）
+args: '[厂商] [标题]'          # 纯提示，不参与解析
+include:                       # 可选：把哪些文件内联进这一回合
+  - ../skills/report/SKILL.md
+---
+用户触发了 /report。请按下面内联的方法论执行……
+```
+
+- **`include` 的路径相对命令文件所在目录**，上例指到 `skills/report/SKILL.md`；
+  内联时会**剥掉 frontmatter**（那是给 provider 看的，给模型白占 token）。
+- 命令自带的资产（模板、脚本、参考图）放进同名子目录 `commands/<名字>/`，
+  扫命令时不会把子目录里的东西当成命令。
+- 展开后的消息结构固定为三段：**命令正文 → 内联文件 → 本次输入**。
+  顺序有意为之：规则在前，素材居中，用户这次的具体要求放最后（离生成最近）。
+- 名字冲突时**项目目录优先**（`.agents/commands` > `.dsh/commands` > `$YuanMy_COMMAND_DIRS`）。
+
+在哪敲：
+
+| 入口 | 用法 |
+| --- | --- |
+| CLI REPL | `/help` 看全部、`/commands` 只看用户命令、`/名字 参数` 执行 |
+| 桌面端 | 输入框里直接打 `/名字 参数` 回车（host 侧展开，界面照原样显示你输入的内容） |
+| 设置界面 | 左下角「设置」→ 命令标签：看列表、改正文、看它内联了哪些文件 |
+
+⚠️ 命令表在**内核启动时读一次**（CLI 每次进 REPL、桌面端每次启动/重启内核）。
+改完命令文件要重开 REPL，或在设置界面点「重启内核」。
+
 ## 验证技能确实被发现了
+
+**最快的办法：桌面端左下角「设置」** —— 技能列表直接标出每个技能的调用方式
+（`全局` / `命令专用`），frontmatter 写坏的那种会带 ⚠ 并说明原因。
+比下面翻会话日志快得多。
+
 
 ```bash
 node app/cli/main.ts --list-tools | grep '^skill'     # 工具存在

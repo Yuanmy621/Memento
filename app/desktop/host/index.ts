@@ -19,12 +19,26 @@
  * @module YuanMy/desktop/host
  */
 
+import { readFile, readdir, stat } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { installApiKey, fingerprint } from '../../cli/credentials.ts'
 import { parseOptions, SUPPORTED_MODELS, UsageError, type Options } from '../../cli/options.ts'
 import { readSessionHistory } from './history.ts'
+import { expandCommand, listCommands, matchCommand } from '../../cli/commands.ts'
+import { skillRoots } from '../../cli/kernel.ts'
+import { readMcpConfig } from '../../cli/mcp-config.ts'
+import type { SkillSummary } from '@deepseek-ai/dsh-skill'
 import { listProjectSessions, listWorkspaceSessions } from './sessions.ts'
-import { PROTOCOL_VERSION, type HostEvent, type HostReadyInfo, type HostRequest, type ModelInfo } from './protocol.ts'
+import {
+  PROTOCOL_VERSION,
+  type CommandEntry,
+  type HostEvent,
+  type HostReadyInfo,
+  type HostRequest,
+  type McpEntry,
+  type ModelInfo,
+  type SkillEntry,
+} from './protocol.ts'
 // 类型专用导入：只在编译期存在，不会在内核就位前求值任何 DSH 运行时模块。
 import type { DesktopBridge } from './bridge.ts'
 import type { Kernel } from '../../cli/kernel.ts'
@@ -105,11 +119,12 @@ async function main(): Promise<void> {
   const credential = installApiKey()
 
   // ── 3. 再延迟载入内核（此时环境已就绪）─────────────────────────────────
-  const [{ bootKernel, listTools }, { DesktopBridge }, { createUserMessage }] = await Promise.all([
+  const [kernelModule, { DesktopBridge }, { createUserMessage }] = await Promise.all([
     import('../../cli/kernel.ts'),
     import('./bridge.ts'),
     import('@deepseek-ai/dsh-llm'),
   ])
+  const { bootKernel, listTools, availableMcpSpecs } = kernelModule
 
   // 所有工具的相对路径都以 --cwd 为基准。
   process.chdir(options.cwd)
@@ -146,6 +161,13 @@ async function main(): Promise<void> {
       process.exit(0)
     }
   }
+
+  /**
+   * 用户命令（`.agents/commands/*.md`）。
+   *
+   * 启动时读一次并缓存：改命令文件后重开应用生效 —— 命令表很小，但没必要每回合扫盘。
+   */
+  let commands = await listCommands(options.cwd)
 
   /** 落盘会话的根目录（`<stateDir>/sessions`）。 */
   const sessionsRoot = join(options.stateDir, 'sessions')
@@ -267,6 +289,158 @@ async function main(): Promise<void> {
     }
   }
 
+  /** 读文件字节数；读不到返回 0（界面上显示 0 比崩掉强）。 */
+  async function fileSize(path: string): Promise<number> {
+    try {
+      return (await stat(path)).size
+    } catch {
+      return 0
+    }
+  }
+
+  /**
+   * 要扫的**技能目录**（设置界面用来看「盘上有什么」）。
+   *
+   * 直接复用 CLI 的技能目录规则（项目 `.agents/skills` + `.dsh/skills` +
+   * `$YuanMy_SKILL_DIRS`），别在界面侧另写一份 —— 否则两边会漂。
+   * @returns 绝对路径列表。
+   */
+  function skillScanDirs(cwd: string): string[] {
+    return [...skillRoots(cwd), ...(process.env.YuanMy_SKILL_DIRS ?? '')
+      .split(':').map(part => part.trim()).filter(part => part !== '')]
+  }
+
+  /**
+   * 收集设置界面的数据并发一帧 `settings`。
+   *
+   * 三样东西来源不同，但界面要一起看：
+   *   - **skill**：问内核的注册表（`ctx.skills`）。注意 `list()` 返回的是
+   *     「调用方式中立」的全集 —— 命令专用（`disable-model-invocation`）的 skill
+   *     也在里面，靠 `invocation` 政策区分，这正是界面要显示的东西；
+   *   - **命令**：复用 CLI 的命令层（`.agents/commands/*.md`），顺便刷新缓存；
+   *   - **MCP**：内置定义 + 项目目录定义 + `<cwd>/.YuanMy/mcp.json` 的开关。
+   *
+   * 单个 skill 读失败（文件被删等）只跳过它，不让整张表消失。
+   */
+  async function sendSettings(): Promise<void> {
+    const skills: SkillEntry[] = []
+    try {
+      const summaries: readonly SkillSummary[] = await kernel.ctx.skills.list()
+      for (const summary of summaries) {
+        let path = ''
+        let bytes = 0
+        try {
+          const full = await kernel.ctx.skills.get(summary.name)
+          path = full?.path ?? ''
+          // 统一按「文件字节数」展示：兜底那条（下面扫盘加的）也是这么量的，
+          // 两条路径的数字要能互相比较，否则界面上一个 3928 一个 4196 看着像两个人写的。
+          bytes = path === '' ? (full?.content.length ?? 0) : await fileSize(path)
+        } catch {
+          // 读不到正文不影响列表：名字与政策已经够界面用了
+        }
+        const invocation: SkillEntry['invocation'] = summary.invocation.modelInvocable
+          ? 'global'
+          : summary.invocation.userInvocable ? 'command' : 'user-only'
+        skills.push({
+          name: summary.name,
+          description: summary.description,
+          invocation,
+          modelInvocable: summary.invocation.modelInvocable,
+          userInvocable: summary.invocation.userInvocable,
+          source: String(summary.source),
+          path,
+          bytes,
+        })
+      }
+    } catch (error) {
+      send({
+        type: 'notice',
+        level: 'warn',
+        message: `读技能表失败：${error instanceof Error ? error.message : String(error)}`,
+      })
+    }
+
+    // 盘上有、内核却没加载的 skill：多半是 frontmatter 坏了（provider 只 warn 一句就忽略）。
+    // 从界面上看这是「文件在、技能不生效」，最需要被指出来。
+    const loaded = new Set(skills.map(skill => skill.name))
+    for (const dir of skillScanDirs(options.cwd)) {
+      let entries
+      try {
+        entries = await readdir(dir, { withFileTypes: true })
+      } catch {
+        continue
+      }
+      for (const entry of entries) {
+        if (!entry.isDirectory() || loaded.has(entry.name)) continue
+        const file = join(dir, entry.name, 'SKILL.md')
+        const bytes = await fileSize(file)
+        try {
+          await readFile(file, 'utf8')
+        } catch {
+          continue // 没有 SKILL.md 的目录不是技能
+        }
+        skills.push({
+          name: entry.name,
+          description: '',
+          invocation: 'global',
+          modelInvocable: false,
+          userInvocable: false,
+          source: 'disk',
+          path: file,
+          bytes,
+          warning: '内核没有加载这个技能：frontmatter 不合法或缺少 name / description（改完保存即可重试）。',
+        })
+      }
+    }
+
+    // 顺手刷新命令表：打开设置界面往往就是「刚改完命令想看看」。
+    commands = await listCommands(options.cwd)
+    const commandEntries: CommandEntry[] = await Promise.all(commands.map(async def => ({
+      name: def.name,
+      description: def.description,
+      argsHint: def.argsHint,
+      scope: def.scope,
+      path: def.path,
+      includes: [...def.includes],
+      bytes: await fileSize(def.path),
+    })))
+
+    const config = readMcpConfig(options.cwd)
+    const specs = availableMcpSpecs(options.cwd)
+    const fromEnv = new Set(
+      (process.env.YuanMy_MCP ?? '').split(':').map(part => part.trim()).filter(part => part !== ''),
+    )
+    const mcp: McpEntry[] = []
+    const names = [...new Set([...Object.keys(specs), ...config.entries.map(entry => entry.name)])]
+    for (const name of names) {
+      const entry = config.entries.find(item => item.name === name)
+      const spec = specs[name]
+      const enabled = entry !== undefined ? entry.enabled : fromEnv.has(name)
+      const reason: McpEntry['reason'] = entry !== undefined ? (entry.enabled ? 'config' : 'off') : fromEnv.has(name) ? 'env' : 'off'
+      const transport = entry?.transport ?? spec?.transport ?? 'stdio'
+      mcp.push({
+        name,
+        enabled,
+        reason,
+        transport,
+        command: entry?.command ?? spec?.command ?? '',
+        args: [...(entry?.args ?? spec?.args ?? [])],
+        url: entry?.url ?? spec?.url ?? '',
+        forwardEnv: [...(entry?.forwardEnv ?? spec?.forwardEnv ?? [])],
+        source: entry !== undefined && spec === undefined ? 'config' : (spec?.origin ?? 'config'),
+      })
+    }
+
+    send({
+      type: 'settings',
+      skills,
+      commands: commandEntries,
+      mcp,
+      mcpConfigPath: config.path,
+      ...(config.error === undefined ? {} : { mcpConfigError: config.error }),
+    })
+  }
+
   /**
    * 跑完一个回合。
    * `whenIdle()` 不会因为模型 / 工具失败而 reject（内核在驱动边界吞掉了异常），
@@ -275,8 +449,19 @@ async function main(): Promise<void> {
   async function runTurn(turnId: string, text: string): Promise<void> {
     const startedAt = Date.now()
     bridge.startTurn(turnId)
+    // `/命令`：把命令正文（以及它内联的文件）作为**这一回合**的用户消息发出去。
+    // 命令表为空时（没写过命令）这里完全不介入，行为与以前一致。
+    let outgoing = text
+    const hit = matchCommand(text, commands)
+    if (hit !== undefined) {
+      const expanded = await expandCommand(hit.def, hit.args)
+      outgoing = expanded.text
+      for (const path of expanded.missing) {
+        send({ type: 'notice', level: 'warn', message: `命令 /${hit.def.name} 引用的文件读不到：${path}` })
+      }
+    }
     kernel.agent.followup(createUserMessage({
-      content: [{ type: 'text', text }],
+      content: [{ type: 'text', text: outgoing }],
       // `source` 是 DSH 的必填来源标记：`kind: 'user'` 表示真人输入。
       source: { kind: 'user' },
     }))
@@ -316,6 +501,9 @@ async function main(): Promise<void> {
       }
       case 'cancel':
         kernel.agent.cancel({ kind: 'user' })
+        break
+      case 'settings:list':
+        void sendSettings()
         break
       case 'list-sessions':
         void sendWorkspace()

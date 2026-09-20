@@ -38,6 +38,12 @@ export const IPC = Object.freeze({
   openPath: 'YuanMy:open-path',
   /** 渲染进程 → 主进程：读某个项目的会话明细（侧栏里点开折叠的项目）。 */
   listProjectSessions: 'YuanMy:list-project-sessions',
+  /** 渲染进程 → 主进程：要一次设置数据（skill / 命令 / MCP，结果以 `settings` 事件回来）。 */
+  settingsList: 'YuanMy:settings-list',
+  /** 渲染进程 → 主进程：读一个配置文件（设置界面的编辑器用；只允许白名单目录）。 */
+  settingsRead: 'YuanMy:settings-read',
+  /** 渲染进程 → 主进程：写一个配置文件（同上）。 */
+  settingsWrite: 'YuanMy:settings-write',
   /** 渲染进程 → 主进程：Electron / Node / 应用版本信息。 */
   appInfo: 'YuanMy:app-info',
 })

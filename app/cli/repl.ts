@@ -9,22 +9,34 @@ import { stdin, stdout } from 'node:process'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { LlmCallConfig } from '@deepseek-ai/dsh-llm'
 import type { Kernel } from './kernel.ts'
+import { expandCommand, listCommands, matchCommand, type CommandDef } from './commands.ts'
 import { listTools } from './kernel.ts'
 import type { Options } from './options.ts'
 import { attachRenderer, bold, cyan, gray, red, yellow, type Renderer } from './ui.ts'
 
-/** `/help` 文本。 */
-function commandHelp(): string {
-  return [
-    `${bold('命令')}`,
+/**
+ * `/help` 文本。
+ * @param commands - `.agents/commands` 里发现的用户命令（列表为空时只显示内置命令）。
+ */
+function commandHelp(commands: readonly CommandDef[]): string {
+  const lines = [
+    `${bold('内置命令')}`,
     `  ${cyan('/help')}            显示本帮助`,
+    `  ${cyan('/commands')}        列出项目里的用户命令（.agents/commands）`,
     `  ${cyan('/tools')}           列出已注册的工具`,
     `  ${cyan('/model')} [id]      查看或切换模型（下一次请求生效）`,
     `  ${cyan('/session')}         显示当前会话 id`,
     `  ${cyan('/exit')}            退出（等同 Ctrl-D）`,
-    '',
-    `${gray('快捷键：回合进行中按 Ctrl-C 中断当前回合；空闲时按 Ctrl-C 退出。')}`,
-  ].join('\n')
+  ]
+  if (commands.length > 0) {
+    lines.push('', `${bold('用户命令')}${gray('（定义在 .agents/commands/，只在触发的那一回合注入指令）')}`)
+    for (const def of commands) {
+      lines.push(`  ${cyan(`/${def.name}`.padEnd(14))} ${gray(def.description)}`)
+      if (def.argsHint !== '') lines.push(`  ${' '.repeat(14)} ${gray(`参数: ${def.argsHint}`)}`)
+    }
+  }
+  lines.push('', `${gray('快捷键：回合进行中按 Ctrl-C 中断当前回合；空闲时按 Ctrl-C 退出。')}`)
+  return lines.join('\n')
 }
 
 /** 把用户输入变成一个 DSH 用户消息。 */
@@ -142,6 +154,12 @@ export async function runRepl(kernel: Kernel, options: Options): Promise<number>
   }
 
   try {
+    // 命令表只在进入循环前读一次：改命令文件后重开 REPL 生效（避免每回合都扫盘）。
+    const commands = await listCommands(options.cwd)
+    if (commands.length > 0) {
+      stdout.write(gray(`  已加载 ${String(commands.length)} 个用户命令：${commands.map(def => `/${def.name}`).join('、')}\n`))
+    }
+
     for (;;) {
       if (interactive) {
         rl.setPrompt(cyan('› '))
@@ -155,7 +173,14 @@ export async function runRepl(kernel: Kernel, options: Options): Promise<number>
       if (text.startsWith('/')) {
         const [command, ...rest] = text.split(/\s+/)
         if (command === '/exit' || command === '/quit') break
-        if (command === '/help') { stdout.write(commandHelp() + '\n'); continue }
+        if (command === '/help') { stdout.write(commandHelp(commands) + '\n'); continue }
+        if (command === '/commands') {
+          stdout.write(commands.length === 0
+            ? gray('  还没有命令。在 .agents/commands/<名字>.md 里写一个即可。\n')
+            : commands.map(def => `  ${cyan(`/${def.name}`.padEnd(14))} ${gray(def.description)}`
+              + (def.argsHint === '' ? '' : `\n${' '.repeat(16)}${gray(`参数: ${def.argsHint}`)}`)).join('\n') + '\n')
+          continue
+        }
         if (command === '/tools') {
           const tools = listTools(ctx)
           stdout.write(tools.map(tool => `  ${cyan(tool.name.padEnd(12))} ${gray(tool.description)}`).join('\n') + '\n')
@@ -172,6 +197,21 @@ export async function runRepl(kernel: Kernel, options: Options): Promise<number>
           } else {
             route.model = next
             stdout.write(`  已切换到 ${bold(next)}；下一次请求生效。\n`)
+          }
+          continue
+        }
+        // 内置命令没命中：看是不是 .agents/commands 里的用户命令
+        const hit = matchCommand(text, commands)
+        if (hit !== undefined) {
+          const expanded = await expandCommand(hit.def, hit.args)
+          for (const path of expanded.missing) {
+            stdout.write(red(`  ⚠ 命令引用的文件读不到：${path}\n`))
+          }
+          busy = true
+          try {
+            await runTurn(kernel, renderer, expanded.text)
+          } finally {
+            busy = false
           }
           continue
         }

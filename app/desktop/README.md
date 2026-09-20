@@ -337,6 +337,35 @@ main.js                                    host（sessions.ts）
 本项目**暂时没挂它**（它还需要 `dsh-invariants` 那套 companion 插件），
 但读取端已经优先认这个事件 —— 以后挂上，或用 DSH 自己的 CLI 建过会话，标题会自动变好。
 
+### 设置界面（技能 / 命令 / MCP）
+
+左下角「设置」打开一个面板，三个标签看三类配置，都是**磁盘上的文本文件**：
+
+| 标签 | 文件 | 界面做的事 |
+| --- | --- | --- |
+| 技能 | `.agents/skills/<名字>/SKILL.md` | 列表标出 `全局` / `命令专用`，点开编辑正文（含 frontmatter 里的调用政策） |
+| 命令 | `.agents/commands/<名字>.md` | 列表 + 编辑；显示它 `include` 了哪些文件 |
+| MCP | `<cwd>/.YuanMy/mcp.json` | 每个服务器一个启用/停用开关 + 直接编辑 JSON；改完点「重启内核」生效 |
+
+几个刻意的取舍：
+
+- **用文本框而不是表单**：这些东西本来就是 Markdown / JSON，表单会挡住 frontmatter
+  和注释；而且技能的调用政策就是 frontmatter 里两行，表单反而更绕。
+- **数据由 host 收集**（`settings:list` → `settings` 帧）：只有它知道内核里**真正加载了
+  哪些 skill**。界面因此能做一件表单做不到的事 —— 把「盘上有、内核没加载」的
+  `SKILL.md` 用 ⚠ 标出来（frontmatter 写坏时 provider 只 warn 一句就忽略，
+  表现是「文件在、技能不生效」；真踩过：上游 `report` skill 的描述里有 `EN: `，
+  YAML 判定成嵌套映射直接抛错）。
+- **文件读写放在主进程**（`YuanMy:settings-read` / `settings-write`），并且只允许
+  `.agents` / `.dsh` / `.YuanMy` / `~/.YuanMy`（外加 `$YuanMy_SKILL_DIRS`、
+  `$YuanMy_COMMAND_DIRS`）之内的路径 —— 渲染进程能要求写文件，所以这里是**安全边界**，
+  不能相信传来的路径（`resolve()` 之后比前缀，`../` 逃逸因此无效）。
+- **开关 MCP 只改那一条的 `enabled`**，不用界面上的字段重写整个文件：界面拿到的是
+  **合并后**的启动参数（含从内置定义继承的），原样写回会把继承值固化进配置、
+  还会丢掉不认识的字段。
+- **`settings` 帧不进 `ready`**：它要读盘、要问内核，没必要让每次启动都付这个成本；
+  打开面板时再拉（`settings:list`）。改完文件会自动重拉一次，所以「大小 / 告警」跟着变。
+
 ### 恢复会话：历史回放由 **host** 提供
 
 点侧栏里的一个会话 = 用 `--resume <会话 id>` 重启内核。内核恢复的是 **agent 的

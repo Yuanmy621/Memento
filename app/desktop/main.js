@@ -21,7 +21,8 @@ import { app, BrowserWindow, Menu, dialog, ipcMain, shell } from 'electron'
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, isAbsolute, join } from 'node:path'
+import { readFile, writeFile } from 'node:fs/promises'
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { IPC } from './ipc.js'
 
@@ -552,6 +553,47 @@ const host = new AgentHost(
 )
 
 /** 注册全部 IPC handler。channel 名与 `preload.js` 必须一致。 */
+/**
+ * 设置界面允许读写的根目录。
+ *
+ * 只包含「配置与技能/命令」这几处，不含工作目录本身 —— 免得「编辑技能」变成
+ * 「任意文件写入」。路径一律先 `resolve()` 再判断前缀，`../` 逃逸因此无效。
+ * @returns 绝对路径数组。
+ */
+function settingsRoots() {
+  const cwd = launchConfig.cwd
+  const roots = [
+    join(cwd, '.agents'),
+    join(cwd, '.dsh'),
+    join(cwd, '.YuanMy'),
+    join(app.getPath('home'), '.YuanMy'),
+  ]
+  for (const name of ['YuanMy_SKILL_DIRS', 'YuanMy_COMMAND_DIRS']) {
+    const extra = process.env[name]
+    if (typeof extra !== 'string' || extra.trim() === '') continue
+    for (const part of extra.split(':')) {
+      const dir = part.trim()
+      if (dir !== '') roots.push(dir)
+    }
+  }
+  return roots
+}
+
+/**
+ * 判断一个路径是否允许被设置界面读写。
+ * @param {unknown} path - 渲染进程传来的路径。
+ * @returns {{ path: string } | { error: string }} 通过时给出绝对路径。
+ */
+function allowedSettingsPath(path) {
+  if (typeof path !== 'string' || path.trim() === '') return { error: '路径为空' }
+  const target = resolve(path)
+  for (const root of settingsRoots()) {
+    const base = resolve(root)
+    if (target === base || target.startsWith(`${base}${sep}`)) return { path: target }
+  }
+  return { error: `不允许读写这个路径（只允许配置与技能/命令目录）：${target}` }
+}
+
 function registerIpc() {
   ipcMain.handle(IPC.state, (event) => {
     assertSender(event)
@@ -626,6 +668,42 @@ function registerIpc() {
     const target = isAbsolute(path) ? path : join(launchConfig.cwd, path)
     // shell.openPath 成功返回空串，失败返回错误描述 —— 原样交回渲染进程显示。
     return shell.openPath(target)
+  })
+
+  // ── 设置界面：读 / 写配置文件 ─────────────────────────────────────────────
+  //
+  // ⚠️ 这是**安全边界**：渲染进程可以要求写文件，所以这里必须自己判断「允许写哪」，
+  // 不能相信传进来的路径。允许的范围只包含配置与技能/命令目录 ——
+  // 也就是「设置界面合法能改的东西」，别的路径一律拒绝。
+  ipcMain.handle(IPC.settingsRead, async (event, path) => {
+    assertSender(event)
+    const allowed = allowedSettingsPath(path)
+    if (allowed.error !== undefined) return { ok: false, error: allowed.error }
+    try {
+      const content = await readFile(allowed.path, 'utf8')
+      return { ok: true, content }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  ipcMain.handle(IPC.settingsWrite, async (event, path, content) => {
+    assertSender(event)
+    const allowed = allowedSettingsPath(path)
+    if (allowed.error !== undefined) return { ok: false, error: allowed.error }
+    if (typeof content !== 'string') return { ok: false, error: '内容必须是字符串' }
+    try {
+      await writeFile(allowed.path, content, 'utf8')
+      return { ok: true }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+
+  ipcMain.handle(IPC.settingsList, (event) => {
+    assertSender(event)
+    // 数据由 host 收集（它才知道内核里真正加载了哪些 skill），以 `settings` 事件回来。
+    if (!host.send({ type: 'settings:list' })) throw new Error('agent host 不可用')
   })
 
   ipcMain.handle(IPC.listSessions, (event) => {

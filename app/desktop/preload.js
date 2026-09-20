@@ -42,6 +42,9 @@ const CHANNEL = Object.freeze({
   openPath: 'YuanMy:open-path',
   listProjectSessions: 'YuanMy:list-project-sessions',
   appInfo: 'YuanMy:app-info',
+  settingsList: 'YuanMy:settings-list',
+  settingsRead: 'YuanMy:settings-read',
+  settingsWrite: 'YuanMy:settings-write',
 })
 
 /** 渲染进程可见的 API。 */
@@ -85,6 +88,12 @@ const api = {
    * @param {string} path - 项目根目录。
    */
   listProjectSessions: (path) => ipcRenderer.invoke(CHANNEL.listProjectSessions, path),
+  /** 要一次设置数据（skill / 命令 / MCP）；结果以 `settings` 事件异步回来。 */
+  settingsList: () => ipcRenderer.invoke(CHANNEL.settingsList),
+  /** 读一个配置文件；返回 `{ ok, content?, error? }`。 */
+  settingsRead: (path) => ipcRenderer.invoke(CHANNEL.settingsRead, path),
+  /** 写一个配置文件；返回 `{ ok, error? }`。 */
+  settingsWrite: (path, content) => ipcRenderer.invoke(CHANNEL.settingsWrite, path, content),
   /**
    * 切换模型（下一次请求生效）。
    * @param {string} model - 模型 id。

@@ -19,12 +19,13 @@
  * @module YuanMy/desktop/renderer/app
  */
 
-import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { traceSteps, useAgent, type AppInfo } from './use-agent.ts'
 import { Sidebar } from './components/sidebar.tsx'
 import { Composer } from './components/composer.tsx'
 import { MessageItem } from './components/message.tsx'
 import { TraceView } from './components/trace.tsx'
+import { SettingsPanel } from './components/settings-panel.tsx'
 import { IconChat, IconTrace } from './icons.tsx'
 
 /** 主区顶部的两个面板。 */
@@ -34,9 +35,12 @@ export function App(): ReactElement {
   const {
     state, send, cancel, setModel, newSession, pickDirectory, getAppInfo,
     resumeSession, openProject, refreshSessions, loadProjectSessions, openPath,
+    loadSettings, readFile, writeFile, restartKernel,
   } = useAgent()
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null)
   const [tab, setTab] = useState<Tab>('chat')
+  /** 设置面板是否打开。 */
+  const [showSettings, setShowSettings] = useState(false)
   const messagesRef = useRef<HTMLDivElement>(null)
   /** 是否贴在底部：用户滚上去看历史时不要把视图拽回来。 */
   const pinnedRef = useRef(true)
@@ -69,6 +73,12 @@ export function App(): ReactElement {
   /** 轨迹：把会话摊平成「agent 做过的每一步」（纯函数，见 use-agent.ts）。 */
   const steps = useMemo(() => traceSteps(state.items), [state.items])
 
+  /** 打开设置面板：每次都重新拉一遍数据（改完文件切回来看到的就是盘上的现状）。 */
+  const openSettings = useCallback((): void => {
+    setShowSettings(true)
+    void loadSettings()
+  }, [loadSettings])
+
   return (
     <div className="app-shell">
       <Sidebar
@@ -80,6 +90,7 @@ export function App(): ReactElement {
         onOpenProject={(path) => { void openProject(path) }}
         onRefreshSessions={() => { void refreshSessions() }}
         onLoadProjectSessions={(path) => { void loadProjectSessions(path) }}
+        onOpenSettings={openSettings}
       />
 
       <main className="main-column">
@@ -151,6 +162,17 @@ export function App(): ReactElement {
           onPickDirectory={() => { void pickDirectory() }}
         />
       </main>
-    </div>
+      {showSettings && (
+        <SettingsPanel
+          data={state.settings}
+          busy={state.settingsBusy}
+          onClose={() => { setShowSettings(false) }}
+          onReload={() => { void loadSettings() }}
+          onReadFile={readFile}
+          onWriteFile={writeFile}
+          onRestart={() => { void restartKernel() }}
+        />
+      )}
+      </div>
   )
 }

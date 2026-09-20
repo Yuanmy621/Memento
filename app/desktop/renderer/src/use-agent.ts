@@ -21,21 +21,24 @@ import { useCallback, useEffect, useReducer, useRef, type Dispatch } from 'react
 import type {
   AssistantItem,
   Block,
+  CommandEntry,
   HostEvent,
   HostReadyInfo,
   Item,
   LlmUsage,
+  McpEntry,
   ModelInfo,
   ProjectSummary,
   SessionSummary,
+  SkillEntry,
   ToolBlock,
   TurnMeta,
 } from '../../host/protocol.ts'
 
 /** 重新导出协议里的类型，让组件只依赖本模块这一处「界面类型面」。 */
 export type {
-  AssistantItem, Block, HostReadyInfo, Item, LlmUsage, ModelInfo, ProjectSummary,
-  SessionSummary, TextBlock, ToolBlock, TurnMeta, TurnOutcome, UserItem,
+  AssistantItem, Block, CommandEntry, HostReadyInfo, Item, LlmUsage, McpEntry, ModelInfo,
+  ProjectSummary, SessionSummary, SkillEntry, TextBlock, ToolBlock, TurnMeta, TurnOutcome, UserItem,
 } from '../../host/protocol.ts'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -65,6 +68,29 @@ export interface ShellState {
     readonly projects: readonly ProjectSummary[]
     readonly sessions: readonly SessionSummary[]
   }
+}
+
+/**
+ * 设置界面要的一整份数据（host 的 `settings` 帧）。
+ *
+ * 三样东西一起给：技能、命令、MCP —— 它们都住在「配置目录」里，
+ * 用户调一个的时候往往也想看另一个。
+ */
+export interface SettingsData {
+  readonly skills: readonly SkillEntry[]
+  readonly commands: readonly CommandEntry[]
+  readonly mcp: readonly McpEntry[]
+  /** MCP 配置文件路径（`<cwd>/.YuanMy/mcp.json`）。 */
+  readonly mcpConfigPath: string
+  /** 配置文件存在但解析失败时的原因。 */
+  readonly mcpConfigError?: string
+}
+
+/** `YuanMy:settings-read` / `settings-write` 的返回。 */
+export interface FileResult {
+  readonly ok: boolean
+  readonly content?: string
+  readonly error?: string
 }
 
 /** `YuanMy:app-info` 的返回。 */
@@ -109,6 +135,11 @@ export interface AgentApi {
   openPath(path: string): Promise<string>
   /** 读某个项目的会话明细（结果以 `project-sessions` 事件回来）。 */
   listProjectSessions(path: string): Promise<void>
+  /** 要一次设置数据（结果以 `settings` 事件回来）。 */
+  settingsList(): Promise<void>
+  /** 读写设置界面里的文件（主进程只允许配置与技能/命令目录）。 */
+  settingsRead(path: string): Promise<FileResult>
+  settingsWrite(path: string, content: string): Promise<FileResult>
 }
 
 declare global {
@@ -288,6 +319,10 @@ export interface AgentState {
   readonly lastTurnMs: number | null
   /** 本会话已完成的回合数。 */
   readonly turns: number
+  /** 设置界面的数据；没打开过设置面板时为 null。 */
+  readonly settings: SettingsData | null
+  /** 正在等 host 回 `settings` 帧。 */
+  readonly settingsBusy: boolean
 }
 
 /** 归约动作：来自 host 的事件，或界面自己的动作。 */
@@ -298,6 +333,7 @@ export type Action =
   | { readonly type: 'user-error'; readonly message: string }
   | { readonly type: 'project-sessions-loading'; readonly path: string }
   | { readonly type: 'project-sessions-error'; readonly path: string; readonly message: string }
+  | { readonly type: 'settings-loading' }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 纯函数工具
@@ -318,6 +354,8 @@ export const initialState: AgentState = {
   models: [],
   lastTurnMs: null,
   turns: 0,
+  settings: null,
+  settingsBusy: false,
 }
 
 /** 生成条目 id（渲染列表的 key）。 */
@@ -408,6 +446,23 @@ export function reducer(state: AgentState, action: Action): AgentState {
 
     case 'workspace':
       return { ...state, projects: action.projects, sessions: action.sessions }
+
+    /** 设置数据到了（打开设置面板、或点了刷新）。 */
+    case 'settings':
+      return {
+        ...state,
+        settingsBusy: false,
+        settings: {
+          skills: action.skills,
+          commands: action.commands,
+          mcp: action.mcp,
+          mcpConfigPath: action.mcpConfigPath,
+          ...(action.mcpConfigError === undefined ? {} : { mcpConfigError: action.mcpConfigError }),
+        },
+      }
+
+    case 'settings-loading':
+      return { ...state, settingsBusy: true }
 
     /**
      * 历史回放：恢复会话时 host 读日志送来的完整记录。
@@ -609,6 +664,19 @@ export interface AgentController {
   readonly loadProjectSessions: (path: string) => Promise<void>
   /** 用系统默认程序打开一个文件（文件卡片的「打开」按钮）。 */
   readonly openPath: (path: string) => Promise<void>
+  /**
+   * 用当前配置重启内核。
+   *
+   * 用途：改完 MCP 配置（`<cwd>/.YuanMy/mcp.json`）后让它生效 ——
+   * MCP 服务器是启动时挂的，不重启不会变。
+   */
+  readonly restartKernel: () => Promise<ShellState> | undefined
+  /** 拉一次设置数据（打开设置面板时调用）。 */
+  readonly loadSettings: () => Promise<void>
+  /** 读一个配置文件。 */
+  readonly readFile: (path: string) => Promise<FileResult>
+  /** 写一个配置文件。 */
+  readonly writeFile: (path: string, content: string) => Promise<FileResult>
   readonly pickDirectory: () => Promise<string | null>
   readonly getAppInfo: () => Promise<AppInfo> | undefined
 }
@@ -731,6 +799,42 @@ export function useAgent(): AgentController {
       dispatch({ type: 'user-error', message: `打开失败：${result}` })
     }
   }, [api])
+  /**
+   * 拉一次设置数据。
+   *
+   * 刻意**不**缓存到 state 以外的地方：每次打开设置面板都重新拉，
+   * 这样「改完文件切回来」看到的一定是盘上的现状。
+   */
+  const restartKernel = useCallback((): Promise<ShellState> | undefined => {
+    const cwd = state.info?.cwd
+    dispatch({ type: 'restarting', cwd: cwd ?? '' })
+    return api?.restart(cwd === undefined ? {} : { cwd })
+  }, [api, state.info?.cwd])
+
+  const loadSettings = useCallback(async (): Promise<void> => {
+    if (api === undefined) return
+    dispatch({ type: 'settings-loading' })
+    try {
+      await api.settingsList()
+    } catch (error) {
+      dispatch({ type: 'settings-loading' })
+      dispatch({ type: 'user-error', message: `读设置失败：${String((error as Error | undefined)?.message ?? error)}` })
+    }
+  }, [api])
+
+  const readFile = useCallback(async (path: string): Promise<FileResult> => {
+    if (api === undefined) return { ok: false, error: 'window.YuanMy 不可用' }
+    return api.settingsRead(path)
+  }, [api])
+
+  const writeFile = useCallback(async (path: string, content: string): Promise<FileResult> => {
+    if (api === undefined) return { ok: false, error: 'window.YuanMy 不可用' }
+    const result = await api.settingsWrite(path, content)
+    // 写成功后顺手刷新设置数据：列表里的「大小/告警」要跟着变
+    if (result.ok) void loadSettings()
+    return result
+  }, [api, loadSettings])
+
   const getAppInfo = useCallback(() => api?.getAppInfo(), [api])
 
   return {
@@ -746,5 +850,9 @@ export function useAgent(): AgentController {
     openPath,
     pickDirectory,
     getAppInfo,
+    restartKernel,
+    loadSettings,
+    readFile,
+    writeFile,
   }
 }

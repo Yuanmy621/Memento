@@ -66,12 +66,14 @@ export interface SidebarProps {
   readonly onOpenProject: (path: string) => void
   readonly onRefreshSessions: () => void
   readonly onLoadProjectSessions: (path: string) => void
+  /** 打开设置面板（技能 / 命令 / MCP）。 */
+  readonly onOpenSettings: () => void
 }
 
 export function Sidebar(props: SidebarProps): ReactElement {
   const {
     state, appInfo, now, onNewSession,
-    onOpenSession, onOpenProject, onRefreshSessions, onLoadProjectSessions,
+    onOpenSession, onOpenProject, onRefreshSessions, onLoadProjectSessions, onOpenSettings,
   } = props
   const [showTools, setShowTools] = useState(false)
   const [query, setQuery] = useState('')
@@ -274,6 +276,14 @@ export function Sidebar(props: SidebarProps): ReactElement {
         </button>
         <button type="button" className="link no-drag" title="重新扫描磁盘上的会话" onClick={onRefreshSessions}>
           刷新
+        </button>
+        <button
+          type="button"
+          className="link no-drag"
+          title="设置：查看 / 编辑技能、命令与 MCP"
+          onClick={onOpenSettings}
+        >
+          设置
         </button>
         <span className="sidebar__spacer" />
         <span className="mono" title={appInfo?.version}>

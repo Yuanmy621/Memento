@@ -119,8 +119,9 @@ npm run opencli:install    # 把 app/opencli 下的适配器同步给全局的 o
 
 ```
 .agents/                 仓库级 agent 配置（给 agent 看的，不是产品代码）
-  README.md              目录约定与技能格式
-  skills/<名字>/SKILL.md  技能：可复用的任务指令，模型按需加载
+  README.md              目录约定、技能格式、技能与命令怎么分
+  skills/<名字>/SKILL.md  全局长期技能：进模型会话目录，模型按需加载
+  commands/<名字>.md      命令：用户 `/名字` 触发，指令只在那一个回合注入
 .claude/skills -> .agents/skills   符号链接（Claude Code 等工具复用同一批技能）
 
 app/
@@ -329,6 +330,8 @@ ctx.tools.register(defineTool({
 | 列会话（项目 → 会话树） | 会话以 JSONL 落在 `<cwd>/.YuanMy/sessions/<项目>/<会话 id>/session.v3.jsonl`，第一行是头 | `app/desktop/host/sessions.ts` |
 | 跨项目列表 | 内核 stateDir 每项目一份库 → 桌面端记一份「最近打开过的项目」（`<userData>/projects.json`），经 `YuanMy_PROJECT_ROOTS` 交给 host 多扫几个根 | `app/desktop/main.js` + `host/sessions.ts` |
 | 把某个网站包成 agent 能用的命令 | 写 opencli 适配器放 `app/opencli/clis/<site>/`，`npm run opencli:install` 同步到 `~/.opencli/clis/`（要真实目录、只认 .js） | `app/opencli/` |
+| 加一个命令（`/名字`） | 在 `.agents/commands/<名字>.md` 写 frontmatter + 指令；`include` 可内联技能正文，仅触发那一回合生效 | `.agents/commands/` |
+| 把技能改成命令专用 | 在 `SKILL.md` 的 frontmatter 加 `disable-model-invocation: true`（内核原生政策，不进模型目录） | `.agents/skills/<名字>/SKILL.md` |
 | 接一个 MCP 服务器 | `YuanMy_MCP=<名字> npm start`（默认不挂）；内置的在 `app/cli/kernel.ts` 的 `mcpSpecs()`，也可以丢一个 `<cwd>/.YuanMy/mcp/<名字>.ts` | `app/mcp/` |
 | 回放一个会话的历史 | 恢复会话 = `--resume <id>` 重启内核；界面侧由 host 读日志发 `history` 帧（实时路径与回放路径共用 `protocol.ts` 的词表与 `toOutcome`） | `app/desktop/host/history.ts` |
 | 拿 token 计量 | `session/event` 的 `assistant/message` 带 `usage`（计数互斥：未命中/命中/写入分开记） | `bridge.ts` 的 `usage` 帧 |
