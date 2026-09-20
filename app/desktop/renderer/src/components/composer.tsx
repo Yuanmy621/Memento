@@ -166,7 +166,11 @@ export function Composer(props: ComposerProps): ReactElement {
   const ready = state.phase === 'ready'
   const hint = state.phase !== 'ready'
     ? (state.phase === 'error' ? 'agent 不可用' : '内核启动中…')
-    : state.busy ? '正在生成…（Enter 可中途调整目标）' : '就绪'
+    : state.switching
+      // 切换会话/项目时内核在重启：输入框**保持可打字**（草稿不会丢），
+      // 只是这一小会儿按回车不提交 —— 新内核还没就绪，发过去只会失败。
+      ? '正在切换…（输入会保留）'
+      : state.busy ? '正在生成…（Enter 可中途调整目标）' : '就绪'
 
   /**
    * 数据源与回调走 ref 交给插件。
@@ -269,6 +273,9 @@ export function Composer(props: ComposerProps): ReactElement {
    */
   const submit = (): void => {
     if (!ready) return
+    // 切换内核期间不提交：留着草稿，等新会话就绪后用户再按一次即可。
+    // （不做「排队自动发」是因为历史帧可能晚于 ready 到达，先发的消息会被历史覆盖掉。）
+    if (state.switching) return
     const text = docToText(editor.state.doc.toJSON()).trim()
     if (text === '') return
     if (state.busy) onSteer(text)
@@ -385,8 +392,8 @@ export function Composer(props: ComposerProps): ReactElement {
             <button
               type="button"
               className="btn btn--primary btn--send"
-              disabled={!ready || plain.trim() === ''}
-              title={state.busy ? '中途调整目标（Enter）' : '发送（Enter）'}
+              disabled={!ready || state.switching || plain.trim() === ''}
+              title={state.switching ? '正在切换会话…' : (state.busy ? '中途调整目标（Enter）' : '发送（Enter）')}
               onClick={submit}
             >
               <IconSend size={14} />

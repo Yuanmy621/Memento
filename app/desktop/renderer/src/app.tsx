@@ -134,7 +134,12 @@ export function App(): ReactElement {
               pinnedRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80
             }}
           >
-            <div className="messages__inner">
+            {/*
+              切换会话时换 key：内容整段替换的那一刻做一次很轻的淡入 + 3px 上浮，
+              让「换了一批消息」看起来是一次过渡而不是一次闪变。
+              代价是内层 DOM 重建 —— 滚动位置由上面那个 effect 按「贴底」规则重算。
+            */}
+            <div className="messages__inner" key={state.info?.sessionId ?? 'cold'}>
               {state.items.length === 0 && (
                 <div className="msg__note">
                   {state.phase === 'ready' ? '描述一个任务开始对话。' : '正在启动内核…'}

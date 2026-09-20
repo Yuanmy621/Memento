@@ -40,12 +40,23 @@ import {
   type HostRequest,
   type McpEntry,
   type ModelInfo,
+  type SessionUsage,
   type SkillEntry,
 } from './protocol.ts'
 // 类型专用导入：只在编译期存在，不会在内核就位前求值任何 DSH 运行时模块。
 import type { DesktopBridge } from './bridge.ts'
 import type { Kernel } from '../../cli/kernel.ts'
 import type { LlmCallConfig } from '@deepseek-ai/dsh-llm'
+
+/** 空的历史统计：新建会话 / 读不到日志时用它发一帧空历史。 */
+const EMPTY_USAGE: SessionUsage = {
+  inputTokens: 0,
+  outputTokens: 0,
+  cacheReadTokens: 0,
+  cacheWriteTokens: 0,
+  reasoningTokens: 0,
+  calls: 0,
+}
 
 /** `#` 文件索引的上限与缓存时长（见 `fileIndex()`）。 */
 const FILE_INDEX_MAX = 4000
@@ -266,21 +277,33 @@ async function main(): Promise<void> {
    * `Item[]` 补上，界面整段替换 `items` 即可 —— 与官方客户端「host 提供已完成回合」
    * 的分工一致。
    *
-   * 读不到日志（新建会话、日志被清理）时**什么都不发**：界面保持空白就是正确结果。
-   * @param sessionId - 要回放的会话 id。
+   * 读不到日志（新建会话、日志被清理）时**照发一帧空历史** —— 见下面那段注释。
+   * @param sessionId - 要回放的会话 id；新会话（没有 resume）传 `undefined`。
    */
-  async function sendHistory(sessionId: string): Promise<void> {
+  async function sendHistory(sessionId: string | undefined): Promise<void> {
     try {
-      const history = await readSessionHistory({ root: sessionsRoot, sessionId })
-      if (history === undefined) return
+      const history = sessionId === undefined
+        ? undefined
+        : await readSessionHistory({ root: sessionsRoot, sessionId })
+      /**
+       * ⚠️ **不管有没有日志都要发这一帧。**
+       *
+       * 界面把 `history` 当作「内容现在是这些」的**唯一**信号：它到了才整段替换
+       * `items`。早先这里是「读不到就什么都不发」，于是**新建会话**（没有日志）永远
+       * 没有这一帧，界面只能靠 `restarting` 那一下把内容清空 ——
+       * 而 `restarting` 是在**发出请求时**就到的，于是切换会话会先白一下、
+       * 占位文案闪一下、统计和模型下拉归零，再等内容回填。
+       *
+       * 发空历史之后，切换就是「旧内容留在屏幕上 → 新内容一次性替换」。
+       */
       send({
         type: 'history',
-        items: history.items,
-        usage: history.usage,
-        turns: history.turns,
-        truncatedTurns: history.truncatedTurns,
+        items: history?.items ?? [],
+        usage: history?.usage ?? EMPTY_USAGE,
+        turns: history?.turns ?? 0,
+        truncatedTurns: history?.truncatedTurns ?? 0,
       })
-      if (history.truncatedTurns > 0) {
+      if (history !== undefined && history.truncatedTurns > 0) {
         send({
           type: 'notice',
           level: 'info',
@@ -688,8 +711,10 @@ async function main(): Promise<void> {
   }
   // 就绪后立刻把项目 / 会话清单推给侧栏。
   await sendWorkspace()
-  // 恢复会话时再把历史记录补上（顺序在 workspace 之后：侧栏先出来，历史随后填充）。
-  if (options.resume !== undefined) await sendHistory(options.resume)
+  // 历史记录最后补上（顺序在 workspace 之后：侧栏先出来，历史随后填充）。
+  // 新会话（没有 resume）也会得到一帧**空历史** —— 界面靠它把内容清空，
+  // 所以这一步不能省（见 `sendHistory` 的注释）。
+  await sendHistory(options.resume)
 }
 
 try {

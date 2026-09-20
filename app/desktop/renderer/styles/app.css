@@ -267,14 +267,61 @@ html[data-vibrancy="native"] body {
   background: var(--dsw-alias-bg-base);
 }
 
+/*
+ * 侧栏：底色 + 发丝描边在**外层**，滚动在**内层**（`.sidebar__scroll`）。
+ *
+ * ⚠️ 这两个必须分开：背景粒子层（`.sidebar__fx`）是绝对定位的 canvas，
+ * 如果 `<aside>` 自己还是滚动容器，它就跟着内容一起滚 —— 看上去会是「粒子粘在
+ * 会话列表上」。滚外层、粒子留内层，粒子才像「窗口背景」。
+ */
 .sidebar {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  overflow-y: auto;
+  overflow: hidden;
   /* 官方侧栏底色 + 0.5px 发丝描边（比 1px 更细，是这套 UI 的手感来源之一） */
   background: var(--dsw-specific-sidebar-fill);
   border-right: 0.5px solid var(--dsw-alias-border-l3);
+}
+
+/* 真正滚动的那一层（品牌 / 搜索 / 项目树 / 底栏都在里面）。 */
+.sidebar__scroll {
+  position: relative;
+  /* z-index 1 + 透明背景：盖在粒子层上面，但让它透出来。 */
+  z-index: 1;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/*
+ * 背景粒子层：绝对定位、不接鼠标事件、读屏软件也不念（`aria-hidden`）。
+ * 尺寸由 ResizeObserver 盯着，CSS 这边只要铺满侧栏。
+ */
+.sidebar__fx {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/*
+ * 柱面与碎屑的颜色。**从官方令牌派生**，不写死 rgb —— 主题（含磨砂玻璃开关）一改它就跟着走。
+ * `color-mix(… , transparent)` 得到的是「带 alpha 的同色」，再乘上 JS 里的 `globalAlpha`
+ * （表面 0.055、碎屑 0.2，再乘柱面明暗与纵向强度）才是最终浓度 ——
+ * 侧栏上全是文字，它必须只是背景。
+ */
+:root {
+  /* 柱面表面（还在曲面上的那些小方块） */
+  --ym-surface: color-mix(in srgb, var(--dsw-alias-label-primary) 55%, transparent);
+  /* 被切下来、正在向右滚的碎屑：略偏强调色，和「表面」区分开 */
+  --ym-shard: color-mix(in srgb, var(--ym-accent-text) 80%, transparent);
 }
 
 /* 有原生磨砂玻璃时侧栏让出背景，只留一层极淡的同色染色保证对比度。
@@ -621,16 +668,25 @@ html[data-platform="darwin"] .sidebar__brand {
 
 .session {
   display: flex;
-  align-items: baseline;
-  gap: 8px;
+  align-items: center;
+  gap: 6px;
   width: 100%;
-  padding: 4px 8px;
+  /*
+   * 单行、紧凑（24px）：形状跟官方侧栏的 nav item 一档。
+   *
+   * 早先是**两行**（标题 + 时间上下叠），一行 42px —— 比上面 28px 的项目行还厚，
+   * 一屏放不下几条，看着像一排卡片而不是树。层级改由「缩进 + 竖线 + 字号」表达：
+   * 项目 13px/500、会话 12px/400，行高反而更小。时间挪到右端（见 .session__meta）。
+   */
+  min-height: 24px;
+  padding: 3px 6px;
   border: none;
-  border-radius: 8px;
+  border-radius: 6px;
   background: transparent;
   color: var(--dsw-alias-label-secondary);
   font: inherit;
   font-size: 12px;
+  line-height: 16px;
   text-align: left;
   cursor: pointer;
   /* ::before 的定位基准（当前会话的位置指示药丸）。 */
@@ -638,6 +694,16 @@ html[data-platform="darwin"] .sidebar__brand {
   transition:
     background-color var(--ds-transition-duration-fast) var(--ds-ease-in-out),
     color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+/*
+ * 正在打开的那一条：从「点下去」到「新内核就绪」之间大约 300ms。
+ * 这一点点回应是必要的 —— 否则点完没有任何变化，用户会以为没点上、再点一次。
+ * 用和 hover 同档的底色 + 稍微压暗，比塞一个 spinner 更轻（行只有 24px 高）。
+ */
+.session--opening {
+  background: var(--dsw-specific-sidebar-nav-item-hover);
+  opacity: 0.7;
 }
 
 .session:hover {
@@ -662,7 +728,7 @@ html[data-platform="darwin"] .sidebar__brand {
   cursor: default;
 }
 
-/* 位置指示：2px × 14px 的圆角药丸，垂直居中、离行左边缘 3px。
+/* 位置指示：2px × 12px 的圆角药丸，垂直居中、离行左边缘 3px（行高 24px 时的比例）。
    内缩 + 圆角是它和「硬竖条」的关键区别 —— 短、圆、不贴边，看起来是刻意的标记。 */
 .session--current::before {
   content: '';
@@ -670,8 +736,8 @@ html[data-platform="darwin"] .sidebar__brand {
   left: 3px;
   top: 50%;
   width: 2px;
-  height: 14px;
-  margin-top: -7px;
+  height: 12px;
+  margin-top: -6px;
   border-radius: 999px;
   background: var(--ym-accent);
   opacity: 0.75;
@@ -691,9 +757,15 @@ html[data-platform="darwin"] .sidebar__brand {
 }
 
 .session__meta {
+  /* 时间贴右端、最多占 45%（搜索结果里它前面还带项目名） */
   flex: none;
+  max-width: 45%;
   color: var(--dsw-alias-label-caption);
-  font-size: 11px;
+  font-size: 10.5px;
+  line-height: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .session-empty {
@@ -846,6 +918,20 @@ html[data-platform="darwin"] .sidebar__brand {
   gap: var(--dsh-chat-flow-gap);
   max-width: var(--dsh-chat-content-width);
   margin: 0 auto;
+  /* 换会话时内层会换 key（内容整段替换），于是这条动画会跑一次：
+     很轻的淡入 + 3px 上浮，把「闪一下」变成「过渡一下」。 */
+  animation: ym-swap-in 160ms var(--ds-ease-in-out);
+}
+
+@keyframes ym-swap-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* 系统里开了「减弱动态效果」就别做这个位移（和侧栏背景粒子同一条原则：
+   装饰性的动效一律让路）。 */
+@media (prefers-reduced-motion: reduce) {
+  .messages__inner { animation: none; }
 }
 
 /* 用户气泡：官方 r22 + specific-bubble + 10/16 内边距 */
@@ -1294,33 +1380,27 @@ html[data-platform="darwin"] .sidebar__brand {
 
 /* ── 会话条目：图标 + 两行（标题 / 时间）──────────────────────────── */
 
-.session {
-  align-items: center;
-  gap: 7px;
-  padding: 5px 8px;
-}
-
+/* 图标、标题、时间挤在同一行：标题占满剩余宽度，时间贴右端。
+   这样不同长度的标题看起来是同一列，而不是一堆高低不一的块。 */
 .session__icon {
   display: inline-flex;
   flex: none;
   color: var(--dsw-alias-label-caption);
+  /* 比正文略淡一点：它是「这是个会话」的提示，不是要读的内容 */
+  opacity: 0.85;
 }
 
 .session--current .session__icon {
   color: var(--ym-accent-text);
+  opacity: 1;
 }
 
 .session__body {
   display: flex;
-  flex-direction: column;
-  gap: 0;
+  align-items: center;
+  gap: 8px;
   flex: 1;
   min-width: 0;
-}
-
-.session__meta {
-  font-size: 10.5px;
-  line-height: 14px;
 }
 
 /* ── 标签栏（对话 / 轨迹）─────────────────────────────────────────── */

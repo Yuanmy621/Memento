@@ -50,6 +50,8 @@ export type {
 /** 主进程自己产生的事件（不在 host 协议里，见 `ipc.js` 的 SHELL_EVENT_TYPES）。 */
 export type ShellEvent =
   | { readonly type: 'restarting'; readonly cwd: string }
+  /** 切换超时兜底：`history` 帧迟迟不来时放开 `switching`（见 provider 里的定时器）。 */
+  | { readonly type: 'switch-timeout' }
   | { readonly type: 'host-error'; readonly message: string }
 
 /** 界面能收到的一切事件。 */
@@ -308,6 +310,14 @@ export interface AgentState {
   readonly info: HostReadyInfo | null
   readonly items: readonly Item[]
   readonly busy: boolean
+  /**
+   * 正在换会话 / 换项目 / 重启内核（内核已经在重启了，但界面**仍然显示旧内容**）。
+   *
+   * 为什么要有它，而不是直接把 `phase` 打回 `booting`：切换时旧内容不该消失 ——
+   * 内容只在 `history` 帧到达时整段替换（见那个 case）。这个标记只用来
+   * 显示「正在切换」并在切换期间挡掉提交（新内核还没就绪，发过去会失败）。
+   */
+  readonly switching: boolean
   /** 所有出现过的项目（当前项目排在最前）。 */
   readonly projects: readonly ProjectSummary[]
   /** **当前项目**的会话，按最近活动倒序。 */
@@ -361,6 +371,7 @@ export const initialState: AgentState = {
   info: null,
   items: [],
   busy: false,
+  switching: false,
   projects: [],
   sessions: [],
   projectSessions: {},
@@ -451,12 +462,32 @@ export function reducer(state: AgentState, action: Action): AgentState {
         models: action.info.models ?? [],
       }
 
+    /**
+     * 换会话 / 换项目 / 重启内核。
+     *
+     * 两条路，判据是「界面上有没有内容」：
+     *
+     * | 情形 | 做什么 |
+     * | --- | --- |
+     * | **冷启动**（还没有内核） | 老路：清空 + `booting`，界面上本来就是空的 |
+     * | **已经有内容**（切会话/切项目/重启内核） | **什么都不清**，只打 `switching` 标记；内容等 `history` 帧整段替换 |
+     *
+     * 第二条是「切换丝滑」的关键。早先这里无条件清空，于是点一下侧栏会连着抖四下：
+     * 消息区白掉并闪出「正在启动内核…」、token 统计与轮次归零、模型下拉变空、
+     * 已展开项目的会话列表显示「读取中…」。这些数据在切换前后其实都还有效
+     * （模型来自内核配置、内容马上就会被历史覆盖），没有理由先抹掉再填回来。
+     */
     case 'restarting':
+      if (state.phase === 'ready' && state.info !== null) {
+        // 回合状态要清：内核正在被杀，那一轮不可能再继续（内容由历史帧接管）。
+        return { ...state, switching: true, busy: false }
+      }
       // 新内核 = 新会话：对话、token 累计、已展开项目的会话缓存都要归零；
       // 项目清单等新一帧 `workspace` 覆盖。
       return {
         ...state,
         phase: 'booting',
+        switching: false,
         error: null,
         info: null,
         items: [],
@@ -468,6 +499,10 @@ export function reducer(state: AgentState, action: Action): AgentState {
         lastTurnMs: null,
         turns: 0,
       }
+
+    /** 切换超时兜底：宁可放开标记（顶多显示旧内容），也别把界面永远锁在「正在切换」。 */
+    case 'switch-timeout':
+      return state.switching ? { ...state, switching: false } : state
 
     case 'workspace':
       return { ...state, projects: action.projects, sessions: action.sessions }
@@ -512,9 +547,17 @@ export function reducer(state: AgentState, action: Action): AgentState {
      * `usage` 同样按「历史总和」重置（`last` 置空：历史里没有「最近一次调用」的
      * 明细，硬凑一个反而误导）。
      */
+    /**
+     * 历史回放（host 在每次就绪后**一定会**发一帧，新建会话发的是空历史）。
+     *
+     * 这一帧也是「切换结束」的信号：`switching` 在这里解除，而不是在 `ready` 那里 ——
+     * `ready` 先到、历史后到，若在 `ready` 就放开，用户此时按下回车可能把消息发进
+     * 一个「内容马上要被历史覆盖」的界面，那条消息会被覆盖掉。
+     */
     case 'history':
       return {
         ...state,
+        switching: false,
         items: action.items,
         usage: { ...emptyUsage, ...action.usage, last: null },
         turns: action.turns,
@@ -743,6 +786,17 @@ export function useAgent(): AgentController {
   /** 事件回调放在 ref 里，避免订阅在每次渲染时重建。 */
   const dispatchRef = useRef<Dispatch<Action>>(dispatch)
   dispatchRef.current = dispatch
+
+  /**
+   * 切换会话的兜底：`switching` 正常由 `history` 帧解除，
+   * 但万一那一帧永远不来（host 崩了 / 读日志卡住），不能把界面锁死在「正在切换」上。
+   * 3 秒后自己放开 —— 顶多是显示着旧内容，比锁死好。
+   */
+  useEffect(() => {
+    if (!state.switching) return undefined
+    const timer = setTimeout(() => { dispatch({ type: 'switch-timeout' }) }, 3000)
+    return () => { clearTimeout(timer) }
+  }, [state.switching])
 
   useEffect(() => {
     const api = globalThis.window?.YuanMy

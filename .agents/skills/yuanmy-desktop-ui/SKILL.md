@@ -172,7 +172,81 @@ if (view.composing || ime.isImeKeyNative(event)) return false
 `triggers.ts`（触发符规则）、`rich-text-tokens.ts`（染色）。最值钱的一条是**跨模块**的：
 「chip 落库的文本，恰好被记录端认成同一种 token」—— 它保证输入框和会话记录不会各说各话。
 
-## 设置界面：技能 / 命令 / MCP 的查看编辑
+## 切会话必须丝滑：内容等 `history` 帧再换
+
+侧栏点会话 = 重启内核（约 0.5 秒）。**这段时间界面不能抖**，四条硬约束：
+
+1. **`restarting` 不要无条件清空**（`use-agent.ts`）：已经有内容时只打 `switching` 标记，
+   `items` / `usage` / `turns` / `models` / `info` / `projectSessions` **全部保留**，
+   等 `history` 帧到了再整段替换。清空会连着抖四下：消息区白掉闪出「正在启动内核…」、
+   统计归零、模型下拉变空、已展开项目显示「读取中…」。
+2. **host 每次就绪都要发 `history`**（`host/index.ts` 的 `sendHistory`），新会话发**空历史**。
+   界面只认这一种「内容现在是 X」的信号 —— 不发的话新会话永远等不到，只能退回清空那条路。
+3. **`switching` 由 `history` 解除，不由 `ready`**：`ready` 先到、历史后到，
+   在 `ready` 就放开会让用户在「内容马上要被覆盖」时发的消息丢掉（另有 3 秒超时兜底）。
+4. **连点两个会话要靠代际守卫**：`main.js` 的 `AgentHost.generation`（message/error/close
+   三处都要判，只判 close 不够）+ `restartGeneration`（被取代的那次不写状态、不报错）。
+   没有它就会出现「点 A 又点 B，结果停在 A」。
+
+配套的观感两件：点下去的那一行加 `.session--opening`（否则 0.5 秒内毫无变化，
+用户会重复点）；内容替换时 `.messages__inner` 按 `sessionId` 换 key + 160ms 的
+`ym-swap-in` 淡入（`prefers-reduced-motion` 下关掉）。
+
+**怎么验**：从 Node 侧每 100ms 采一次 `Performance.getMetrics` 的 `TaskDuration`，
+同时读界面状态。合格线是「切换期间渲染进程基本空闲（每 100ms ≤ 3ms），
+只有替换那一帧有十几毫秒」，且全程**不出现**「正在启动内核…」。
+⚠️ 别在页面里用 `setTimeout` 自测卡顿：那样量到的是 CDP 往返的假象（曾经误判成主线程卡了 1 秒）。
+
+## 会话条目的规格：单行 24px，必须比项目行小
+
+`.session` 是**单行**（图标 + 标题 + 右端时间）：`min-height: 24px`、`padding: 3px 6px`、
+`border-radius: 6px`、12px/16px；项目行是 32px（`padding: 5px 6px` + 13px/500）。
+层级靠「缩进 + 竖线 + 字号 + 行高」，**不要**把会话做成两行的卡片（早先 42px，
+比项目行还厚，一屏放不下几条）。改完在真窗口里量一下：
+`document.querySelectorAll('.session')[0].getBoundingClientRect().height` 应该是 24。
+
+## 侧栏背景的柱面网格：纯模拟与 DOM 分开
+
+侧栏背后是一层「整段柱面被切成 13px 小方块、随机的块向右滚出去消散」的背景
+（`components/sidebar-cylinder.ts` 纯模拟 + `components/sidebar-backdrop.tsx` canvas）。
+改它时记住：
+
+1. **纯逻辑必须留在 `.ts` 里**（不 import DOM），随机源靠**注入**（组件传 `Math.random`，
+   真值表传固定种子）—— 柱面投影、纵向强度、周期与消散曲线都能在 Node 里直接验。
+   合并进 `.tsx` 就再也验不了了。
+2. **三条几何硬约束**（真值表盯着，改几何时别破坏）：
+   - 鼓面位移**按角度**算，不按屏幕像素（边缘处一格的屏幕间距比弧长少 4.7px，按像素会跳）；
+   - 稠密列要**两侧各多铺 2 列**（`DENSE_PAD`），否则左边缘会有一条会呼吸的空缝；
+   - 鼓面**按整圈取模**，不按一格（按一格会让材料映射错开一列，画面跳变）。
+   自检口径：相邻格子之间只有缝没有洞（最大缝 ≤ gap + 0.6px）、整行盖满（缺口 < 2px）。
+3. **三条暂停规则不能删**：`prefers-reduced-motion` 命中就不启动并清空画布；窗口隐藏时停
+   （Chromium 本来也会暂停 rAF，画布会冻在最后一帧）；`dt` 夹 48ms。
+   停下来的路径上还挂了一个 1.5s 的复查定时器（`scheduleResumeCheck`）——因为
+   `matchMedia` 的 `change` 事件在某些环境下不一定派发，只靠它会「设置改回去了画面还是死的」。
+4. **每帧不读布局**：尺寸只在 `ResizeObserver` 里读一次并缓存。加上 30fps + DPR 1.25，
+   开销从 ~20% 降到 ~7%（`TaskDuration` 口径，覆盖率约 23% 的整面网格）。
+5. **粒子层不能放进滚动容器**：`.sidebar` 只负责底色/描边/`position: relative`，
+   滚动在 `.sidebar__scroll`（z-index 1），canvas 是 `.sidebar` 的绝对定位子节点（z-index 0）。
+6. 颜色走 `--ym-surface` / `--ym-shard`（`app.css`，从官方令牌 `color-mix` 派生）；
+   canvas 的 `fillStyle` 支持 `color-mix()`，但**写错的颜色不报错、只会静默保留上一个值** ——
+   改完要真读一次像素。
+
+**验这种「看不清的视觉效果」的办法**（agent 看不了截图时尤其有用）：在页面里把 canvas
+降采样成 ASCII 图打印出来 —— 一眼就能看出「有没有网格、切没切开、在不在滚、上面是不是更强」：
+
+```js
+const fx = document.querySelector('.sidebar__fx'), ctx = fx.getContext('2d')
+const img = ctx.getImageData(0, 0, fx.width, fx.height)   // 按 2×6 设备像素取平均 → 一个字符
+```
+
+配套的两个数值口径：`alpha > 2` 的像素占比（覆盖率）与最大 alpha（亮度），
+以及**上/中/下三段各自的有像素数**（用来验证「上强下弱」，实测 52125 : 24867 : 0）。
+
+⚠️ 量之前先确认 `document.visibilityState === 'visible'`：**开着 `YuanMy_DEV=1` 时
+DevTools 是独立窗口，会把应用窗口遮住 → Chromium 暂停 rAF → 效果冻住**，
+这时量出来是「0 像素、0% CPU」，很容易误判成效果坏了。
+
+## 设置界面：技能 / 命令 / MCP 的查看编辑## 设置界面：技能 / 命令 / MCP 的查看编辑
 
 `components/settings-panel.tsx` 是一个居中模态：左边列表（`.setrow`），右边文本框
 （`.setedit__area`）。加东西时记住这几条：

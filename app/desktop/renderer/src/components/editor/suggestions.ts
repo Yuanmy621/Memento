@@ -256,6 +256,7 @@ export function createSuggestExtensions(options: {
           editor: this.editor,
           pluginKey,
           char: trigger,
+          // debounce: 300,
           allowSpaces: false,
           // 位置判据自己来（见 triggers.ts）：默认的 allowedPrefixes 只看文本节点内部，
           // 分不清「段落开头」和「chip 后面」。

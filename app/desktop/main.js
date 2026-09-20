@@ -148,6 +148,12 @@ function rememberProject(path) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+ * 「重启/切换」的序号：只有最后一次切换的结果会被采纳（见 `restartWith`）。
+ * 连着点两个会话时，前一次的子进程会被后一次 kill，它的 resolve/reject 都不算数。
+ */
+let restartGeneration = 0
+
+/**
  * 找到用来跑 host 的运行时（可执行文件 + 它需要的环境变量）。
  *
  * 三种情形，优先级从高到低：
@@ -233,6 +239,16 @@ class AgentHost {
     this.failureReported = false
     /** @type {NodeJS.Timeout | null} */
     this.readyTimer = null
+    /**
+     * 子进程的「代际」。
+     *
+     * 每次 start / stop 都 +1；回调里捕获自己那一代，**不是当前代就什么都不做**。
+     * 为什么需要：连着点两个会话时，第一次的内核可能还在启动（或刚被 kill），
+     * 它晚到的 `history` / `workspace` 帧会盖到第二次切换的界面上 ——
+     * 表现是「点 A 又点 B，结果先看到 A 的会话闪一下，或者停在 A」。
+     * 上一版只靠 `this.child !== child` 判断，那只覆盖了 close，覆盖不了 message。
+     */
+    this.generation = 0
   }
 
   /**
@@ -242,6 +258,7 @@ class AgentHost {
    */
   async start(config) {
     await this.stop()
+    const generation = ++this.generation
     this.stopping = false
     this.failureReported = false
     this.info = null
@@ -272,6 +289,8 @@ class AgentHost {
     })
 
     child.on('message', (message) => {
+      // 已经不是当前这一代子进程了（用户又切了一次）：它的帧一律丢弃。
+      if (generation !== this.generation) return
       // 子进程输出不可信：只做最小形状校验，非法消息直接丢弃。
       if (typeof message !== 'object' || message === null || typeof message.type !== 'string') return
       if (message.type === 'ready') {
@@ -284,6 +303,7 @@ class AgentHost {
     })
 
     child.once('error', (error) => {
+      if (generation !== this.generation) return
       // spawn 失败（例如 PATH 里没有 node）：把错误交给等待者，并松开引用，
       // 否则下一次 start() 的 stop() 会去等一个永远不存在的 close。
       this.settleReady(error)
@@ -292,8 +312,9 @@ class AgentHost {
 
     child.once('close', (code) => {
       // 用「代际」判断这次退出是不是我们主动引起的：重启时旧的 close 回调
-      // 可能晚于新子进程的创建，靠 this.child !== child 把它认出来。
-      const expected = this.stopping || this.child !== child
+      // 可能晚于新子进程的创建，靠代际把它认出来（比 `this.child !== child` 更准：
+      // 新子进程还没创建时，child 也已经是 null 了）。
+      const expected = this.stopping || generation !== this.generation
       if (this.child === child) {
         this.child = null
         this.info = null
@@ -339,6 +360,8 @@ class AgentHost {
 
   /** 请求 host 优雅退出；超时逐级升级为信号，最终放弃等待（不能让窗口关不掉）。 */
   async stop() {
+    // 无论有没有子进程，都推进代际：这样「已经停掉的那一代」晚到的帧会被丢掉。
+    this.generation += 1
     const child = this.child
     if (child === null) return
     this.stopping = true
@@ -412,12 +435,25 @@ async function restartWith(config) {
   config = next
   state = { phase: 'booting' }
   sendToRenderer({ type: 'restarting', cwd: config.cwd })
+  /**
+   * 这次切换的序号。
+   *
+   * 连着点两个会话时，第一次的 `host.start()` 会被第二次打断（它的子进程被 kill），
+   * 于是它要么 reject、要么更晚 resolve。**两种都不该影响界面**：
+   *   - 被取代的那次不算「启动失败」，不能弹错误；
+   *   - 也不能把它的 ready 写进 state（那会让界面认错会话）。
+   * 所以每次进来先领一个号，await 回来发现号变了就直接收工。
+   */
+  const generation = ++restartGeneration
   try {
     const info = await host.start(config)
+    if (generation !== restartGeneration) return state
     state = { phase: 'ready', info }
     // 起来了才算「打开过」：这样登记表里不会攒下一堆启动失败的路径。
     rememberProject(config.cwd)
   } catch (error) {
+    // 被后一次切换取代的那一次：它的失败是「我们自己 kill 的」，不报。
+    if (generation !== restartGeneration) return state
     reportHostFailure(error instanceof Error ? error : new Error(String(error)))
   }
   return state
