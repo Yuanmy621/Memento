@@ -481,7 +481,8 @@ function windowMaterial() {
   if (process.platform === 'win32') {
     return { backgroundMaterial: 'acrylic', backgroundColor: '#00000000' }
   }
-  return { backgroundColor: '#0d0d0d' }
+  // 没有材质的平台：刷和主界面一致的基础底色（淡紫黑，见 app.css 的 violet 色阶）。
+  return { backgroundColor: '#0e0c14' }
 }
 
 /** 材质是否真的启用了（渲染进程据此决定侧栏要不要让出背景）。 */
@@ -518,7 +519,7 @@ function createWindow() {
     title: 'YuanMy Agent',
     show: false,
     // 与界面同色，避免启动瞬间的白闪（启用材质时会被上面的透明色覆盖）。
-    backgroundColor: '#0d0d0d',
+    backgroundColor: '#0e0c14',
     ...windowMaterial(),
     ...titleBarOptions(),
     webPreferences: {

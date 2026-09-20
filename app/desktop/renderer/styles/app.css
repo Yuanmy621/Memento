@@ -61,6 +61,16 @@
   --dsw-static-neutral-bluish-300: rgb(196, 200, 212);
   --dsw-static-neutral-bluish-100: rgb(216, 220, 230);
   --dsw-static-neutral-bluish-50: rgb(240, 241, 245);
+  /*
+   * 「淡紫黑」：**主界面（侧栏之外那一整块）的基础底色**。
+   *
+   * 比 bluish-950 更深一档，并往紫偏一点点（蓝通道 +6、绿通道 -5，色相约 265°）——
+   * 和强调色（蓝紫 126,134,222）同族，但暗到不会参与视觉竞争。
+   * 侧栏**不用**它：侧栏是磨砂玻璃，底色由系统材质决定（见 `--ym-sidebar-tint`）。
+   */
+  --dsw-static-violet-1000: rgb(9, 8, 13);
+  --dsw-static-violet-950: rgb(14, 12, 20);
+  --dsw-static-violet-900: rgb(20, 17, 28);
   --dsw-static-neutral-800: rgb(41, 41, 41);
   --dsw-static-neutral-700: rgb(60, 60, 61);
   --dsw-static-neutral-600: rgb(84, 85, 87);
@@ -74,7 +84,8 @@
   --dsw-static-red-500: rgb(239, 68, 68);
 
   /* ── 语义别名（暗色主题取值）─────────────────────────────────────── */
-  --dsw-alias-bg-base: var(--dsw-static-neutral-bluish-950);
+  /* 基础底色 = 淡紫黑（主界面）。磨砂玻璃的侧栏不刷这一层，见 vibrancy 那几段。 */
+  --dsw-alias-bg-base: var(--dsw-static-violet-950);
   --dsw-alias-bg-layer-1: var(--dsw-static-neutral-bluish-875);
   --dsw-alias-bg-layer-2: var(--dsw-static-neutral-bluish-850);
   --dsw-alias-bg-layer-3: var(--dsw-static-neutral-bluish-800);
@@ -214,7 +225,8 @@ pre,
    与官方 base.css 的 `html[data-platform='darwin']` 同一手法。
    ⚠️ 这里**不用** CSS backdrop-filter：模糊由系统材质提供（见 main.js）。 */
 html[data-vibrancy="native"],
-html[data-vibrancy="native"] body {
+html[data-vibrancy="native"] body,
+html[data-vibrancy="native"] .app-shell {
   background: transparent;
 }
 
@@ -318,6 +330,12 @@ html[data-vibrancy="native"] body {
  * 侧栏上全是文字，它必须只是背景。
  */
 :root {
+  /*
+   * 侧栏磨砂玻璃的染色层：同族的淡紫黑、半透明。
+   * 47% 这个数是量出来的折中 —— 再高材质就看不见了（玻璃变塑料），
+   * 再低侧栏上的次级文字在浅色壁纸上会糊。
+   */
+  --ym-sidebar-tint: color-mix(in srgb, var(--dsw-static-violet-900) 47%, transparent);
   /* 柱面表面（还在曲面上的那些小方块） */
   --ym-surface: color-mix(in srgb, var(--dsw-alias-label-primary) 55%, transparent);
   /* 被切下来、正在向右滚的碎屑：略偏强调色，和「表面」区分开 */
@@ -326,8 +344,37 @@ html[data-vibrancy="native"] body {
 
 /* 有原生磨砂玻璃时侧栏让出背景，只留一层极淡的同色染色保证对比度。
    这一层是纯色叠加，不含模糊。 */
+/*
+ * ── 磨砂玻璃（macOS 的 sidebar 材质 / Windows 的 acrylic）─────────────────
+ *
+ * 两件事必须一起做，少一件都看不到玻璃：
+ *
+ * 1. **整条链路都要让出背景**。系统材质在「网页内容」的**下面**，网页只要有一层
+ *    不透明底色，材质就完全看不见。所以 `html` / `body` / **`.app-shell`** 全透明
+ *    （`.app-shell` 是最容易漏的那个：它原来刷的是不透明的基础底色，正好盖住侧栏
+ *    那一列 —— 于是「开了材质，但侧栏还是死的」）。主内容区由 `.main-column`
+ *    自己刷不透明的淡紫黑，所以只有侧栏露出材质。
+ * 2. **侧栏内部所有「实心块」也要跟着变半透明**：搜索框、hover、当前项……
+ *    它们在玻璃上会变成一块块不透明的补丁。这里用「在 `.sidebar` 作用域里重定义
+ *    令牌」的办法一次性改掉（自定义属性会继承，那些规则自己就跟着变了），
+ *    而不是去写十几条 `.session:hover` 之类的覆盖。
+ *
+ * 不用 `backdrop-filter`：窗口本身是透明的，CSS 的 backdrop 后面没有可模糊的内容，
+ * 模糊只能由系统材质提供。
+ */
 html[data-vibrancy="native"] .sidebar {
-  background: color-mix(in srgb, var(--dsw-specific-sidebar-fill) 55%, transparent);
+  /* 同族的淡紫黑染色层，只留一半左右的不透明度，让材质透出来 */
+  background: var(--ym-sidebar-tint);
+  --dsw-specific-sidebar-nav-item-hover: rgba(255, 255, 255, 0.055);
+  --dsw-specific-sidebar-nav-item-active: rgba(255, 255, 255, 0.09);
+  --ym-nav-current-fill: rgba(255, 255, 255, 0.10);
+  --ym-nav-current-fill-hover: rgba(255, 255, 255, 0.14);
+  --ym-nav-current-parent-fill: rgba(255, 255, 255, 0.045);
+}
+
+/* 搜索框用的是主区的基础底色（不透明）—— 玻璃上要单独换掉 */
+html[data-vibrancy="native"] .sidebar__search {
+  background: rgba(255, 255, 255, 0.07);
 }
 
 .main-column {

@@ -263,6 +263,24 @@ DevTools 是独立窗口，会把应用窗口遮住 → Chromium 暂停 rAF → 
   对应内核的 `SkillInvocationPolicy`；别把「命令专用」标成红色之类的「错误色」，
   它是正常状态。
 
+## 磨砂玻璃侧栏：材质被盖住是最常见的坑
+
+侧栏是系统材质（macOS `vibrancy: 'sidebar'`），主区刷 `--dsw-alias-bg-base`（淡紫黑 `rgb(14,12,20)`）。
+**材质在网页内容之下** —— 网页只要有一层铺满窗口的不透明底色，玻璃就完全看不出来
+（表现：开了 vibrancy，侧栏还是死的一块深灰）。所以 `html` / `body` / **`.app-shell`**
+三者都必须透明；主区不透明交给 `.main-column` 自己刷。
+
+- **`.app-shell` 最容易漏**：它默认刷的就是基础底色，正好盖住侧栏那一列。
+- 侧栏内部的实心块（搜索框、hover、当前项）也要在 `.sidebar` 作用域里换成白色半透明令牌，
+  否则玻璃上会出现一块块补丁。做法是**重定义令牌**（会继承），别写十几条覆盖规则。
+- 不用 `backdrop-filter`：窗口透明，backdrop 后面没有可模糊的内容。
+
+**怎么证明玻璃真的透了**（agent 看不了截图时）：`Emulation.setDefaultBackgroundColorOverride`
+设成 `{r:0,g:0,b:0,a:0}`（让「没画东西」的地方保持透明）→ `Page.captureScreenshot` →
+解 PNG 看 alpha：侧栏区域的 alpha 应该 < 255（本仓库实测 ~121），主区应该是 255。
+把 `.app-shell` 改回不透明再截一次，同一处会变成 255、**PNG 还会退化成 3 通道** —— 判据很硬。
+（`/tmp/png-alpha.mjs` 那种 40 行的 PNG 解码器就够：node:zlib 解 IDAT + 反 filter。）
+
 ## 视觉一律走官方令牌，别写死颜色
 
 配色 / 圆角 / 字号 / 动效对齐官方 DSH 桌面端，并且**沿用了它的令牌名**（`--dsw-*`）：
