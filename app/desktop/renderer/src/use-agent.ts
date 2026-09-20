@@ -35,6 +35,8 @@ import type {
   ToolBlock,
   TurnMeta,
 } from '../../host/protocol.ts'
+/** 预览面板的类型面同样只有一份：主进程 `readForPreview` 决定 kind，界面照着画。 */
+import type { PreviewPayload } from '../../ipc.ts'
 
 /** 重新导出协议里的类型，让组件只依赖本模块这一处「界面类型面」。 */
 export type {
@@ -47,7 +49,13 @@ export type {
 // 类型
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** 主进程自己产生的事件（不在 host 协议里，见 `ipc.js` 的 SHELL_EVENT_TYPES）。 */
+/**
+ * 界面能收到的「非 host 事件」。
+ *
+ * 比主进程那边的 `ShellEvent`（`app/desktop/ipc.ts`）**多一条**：`switch-timeout`
+ * 是界面自己的兜底动作（切换超时），不是主进程发来的。两边故意分开：
+ * 那边的契约是「主进程会发什么」，这里是「界面要处理什么」。
+ */
 export type ShellEvent =
   | { readonly type: 'restarting'; readonly cwd: string }
   /** 切换超时兜底：`history` 帧迟迟不来时放开 `switching`（见 provider 里的定时器）。 */
@@ -137,6 +145,8 @@ export interface AgentApi {
   refreshSessions(): Promise<void>
   /** 用系统默认程序打开一个文件；返回错误信息（成功时空串）。 */
   openPath(path: string): Promise<string>
+  /** 读文件给右侧预览面板（主进程按扩展名判断类型并有体积上限）。 */
+  previewRead(path: string): Promise<PreviewPayload>
   /** 读某个项目的会话明细（结果以 `project-sessions` 事件回来）。 */
   listProjectSessions(path: string): Promise<void>
   /** 中途调整目标：插给正在跑的回合（不排队、不新开回合）。 */
@@ -301,6 +311,112 @@ export function traceSteps(items: readonly Item[]): TraceStep[] {
     }
   }
   return steps
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 右侧刻度滑杆 / 预览面板要的派生数据
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 滑杆上的一个刻度：对应会话里的一条条目。 */
+export interface RailMark {
+  /** 条目 id（与消息行上的 `data-item-id` 一致，点击时用它找 DOM）。 */
+  readonly id: string
+  /** 角色类别，决定刻度颜色。 */
+  readonly kind: 'user' | 'assistant' | 'note' | 'steer'
+  /** 角标文字（「你」/「助手」…）。 */
+  readonly role: string
+  /** 截断后的摘要，hover 时展示。 */
+  readonly summary: string
+  /** 这一条里有多少次工具调用（>0 时角标里带上）。 */
+  readonly tools: number
+  /** 是否还没跑完（角标显示「运行中」）。 */
+  readonly running: boolean
+}
+
+/** 摘要截断长度：hooks 提示框最多显示这么多字（CSS 还会再按行数收敛一次）。 */
+const RAIL_SUMMARY_MAX = 140
+
+/**
+ * 把会话条目压成滑杆刻度用的一行摘要。
+ *
+ * 只取「最像人话」的那一段：用户消息取原文，助手取第一段正文（没有正文时退回推理），
+ * 两者都没有就说「工具调用」。换行、连续空格一律压成单空格，免得提示框里高低不齐。
+ */
+function summarize(text: string): string {
+  const flat = text.replace(/\s+/g, ' ').trim()
+  return flat.length > RAIL_SUMMARY_MAX ? `${flat.slice(0, RAIL_SUMMARY_MAX)}…` : flat
+}
+
+/**
+ * 由会话条目算出滑杆刻度 —— 纯函数，给定同样的条目永远得到同样的刻度。
+ *
+ * 一条条目一个刻度（助手消息整条算一个），顺序与消息流一致；`top` 那种几何信息
+ * **不在这里算**：位置得问真实 DOM（见 `message-rail.tsx`），这里只管「有哪些刻度」。
+ * @param items - 会话条目。
+ * @returns 刻度列表（与 `items` 一一对应）。
+ */
+export function railMarks(items: readonly Item[]): RailMark[] {
+  return items.map((item): RailMark => {
+    if (item.kind === 'user') {
+      return { id: item.id, kind: 'user', role: '你', summary: summarize(item.text), tools: 0, running: false }
+    }
+    if (item.kind === 'note') {
+      return { id: item.id, kind: 'note', role: '提示', summary: summarize(item.text), tools: 0, running: false }
+    }
+    if (item.kind === 'steer') {
+      return { id: item.id, kind: 'steer', role: '目标调整', summary: summarize(item.text), tools: 0, running: false }
+    }
+    const texts = item.blocks.filter((block) => block.type === 'text').map((block) => block.text)
+    const tools = item.blocks.filter((block) => block.type === 'tool').length
+    const body = texts.length > 0 ? texts.join(' ') : item.reasoning
+    return {
+      id: item.id,
+      kind: 'assistant',
+      role: '助手',
+      summary: summarize(body === '' ? `${String(tools)} 次工具调用` : body),
+      tools,
+      running: item.meta === null,
+    }
+  })
+}
+
+/** 会话里出现过的一个文件（预览面板的「最近文件」列表）。 */
+export interface RecentFile {
+  /** 路径（可能是相对的，预览时由主进程按工作目录解析）。 */
+  readonly path: string
+  /** 最后一次操作（读取 / 写入 / 修改）。 */
+  readonly action: string
+  /** 最后一次出现的条目 id，用作 React key。 */
+  readonly id: string
+}
+
+/**
+ * 从会话条目里倒着捞「碰过的文件」。
+ *
+ * 为什么倒着捞：SRC 场景下最关心的永远是**刚刚**生成的那份报告/脚本，
+ * 所以列表按最近使用排序，同一个文件只留最新一次（路径去重）。
+ * 认文件靠 `fileActionOf()`，认不出就不进列表。
+ * @param items - 会话条目。
+ * @param limit - 最多留几个（默认 40）。
+ * @returns 最近文件（最近的在前）。
+ */
+export function recentFiles(items: readonly Item[], limit = 40): RecentFile[] {
+  const seen = new Set<string>()
+  const files: RecentFile[] = []
+  for (let i = items.length - 1; i >= 0; i -= 1) {
+    const item = items[i]
+    if (item === undefined || item.kind !== 'assistant') continue
+    for (let j = item.blocks.length - 1; j >= 0; j -= 1) {
+      const block = item.blocks[j]
+      if (block === undefined || block.type !== 'tool') continue
+      const file = fileActionOf(block.name, block.args)
+      if (file === undefined || seen.has(file.path)) continue
+      seen.add(file.path)
+      files.push({ path: file.path, action: file.action, id: `${item.id}-${block.callId === '' ? String(j) : block.callId}` })
+      if (files.length >= limit) return files
+    }
+  }
+  return files
 }
 
 /** 界面状态。 */
@@ -749,6 +865,12 @@ export interface AgentController {
   /** 用系统默认程序打开一个文件（文件卡片的「打开」按钮）。 */
   readonly openPath: (path: string) => Promise<void>
   /**
+   * 右侧预览面板读文件：按扩展名判断渲染类型，把内容（图片是 data URL）带回来。
+   *
+   * 和 `openPath` 的区别：那个是「交给系统程序」，这个是「读回来自己画」。
+   */
+  readonly previewRead: (path: string) => Promise<PreviewPayload>
+  /**
    * 用当前配置重启内核。
    *
    * 用途：改完 MCP 配置（`<cwd>/.YuanMy/mcp.json`）后让它生效 ——
@@ -844,6 +966,12 @@ export function useAgent(): AgentController {
     } catch (error) {
       dispatch({ type: 'user-error', message: `发送失败：${String((error as Error | undefined)?.message ?? error)}` })
     }
+  }, [api])
+
+  /** 右侧预览面板读文件（`openPath` 的「读回内容」版本）。 */
+  const previewRead = useCallback(async (path: string): Promise<PreviewPayload> => {
+    if (api === undefined) return { ok: false, path, kind: 'binary', error: 'window.YuanMy 不可用' }
+    return await api.previewRead(path)
   }, [api])
 
   const cancel = useCallback(() => api?.cancel(), [api])
@@ -972,6 +1100,7 @@ export function useAgent(): AgentController {
     refreshSessions,
     loadProjectSessions,
     openPath,
+    previewRead,
     pickDirectory,
     getAppInfo,
     steer,

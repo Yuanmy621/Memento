@@ -42,14 +42,6 @@ export const CHIP_KINDS = ['command', 'tool', 'skill', 'file'] as const
 /** chip 的类型。 */
 export type ChipKind = (typeof CHIP_KINDS)[number]
 
-/** 界面上的中文名（菜单分组、设置界面里都用它）。 */
-export const CHIP_TITLE: Readonly<Record<ChipKind, string>> = {
-  command: '命令',
-  tool: 'MCP 工具',
-  skill: '技能',
-  file: '文件',
-}
-
 /** 插进编辑器的一个 chip。 */
 export interface ChipAttrs {
   /** 类型：决定样式类名与语义。 */

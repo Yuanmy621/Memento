@@ -1,9 +1,12 @@
 /**
- * 文件卡片：工具调用碰到文件时，渲染成「图标 + 文件名 + 路径 + 打开」。
+ * 文件卡片：工具调用碰到文件时，渲染成「图标 + 文件名 + 路径 + 预览 / 打开」。
  *
- * 比一行纯文本好在两点：文件一眼能认出来（图标 + 基名），并且能**真的打开它** ——
- * 「打开」走主进程的 `shell.openPath`（见 `main.js`），用系统默认程序打开；
- * 相对路径按 agent 的工作目录解析。
+ * 比一行纯文本好在两点：文件一眼能认出来（图标 + 基名），并且能**真的看到它**——
+ *   - 点卡片主体 → 在右侧预览面板里看内容（`IPC.previewRead`，报告/脚本/截图都在这里看）；
+ *   - 点「打开」 → 走主进程的 `shell.openPath`，交给系统默认程序。
+ * 两条路刻意都留着：预览是「快速看一眼」，打开是「我要改它」。
+ *
+ * 相对路径按 agent 的工作目录解析（在主进程里做，见 `main.ts` 的 `readForPreview`）。
  *
  * @module YuanMy/desktop/renderer/components/file-card
  */
@@ -28,19 +31,29 @@ export interface FileCardProps {
   readonly path: string
   /** 操作名（读取 / 写入 / 修改）。 */
   readonly action: string
-  /** 打开文件。 */
+  /** 用系统默认程序打开。 */
   readonly onOpen: (path: string) => void
+  /** 在右侧预览面板里看内容。 */
+  readonly onPreview: (path: string) => void
 }
 
-export const FileCard = memo(function FileCard({ path, action, onOpen }: FileCardProps): ReactElement {
+export const FileCard = memo(function FileCard({ path, action, onOpen, onPreview }: FileCardProps): ReactElement {
   const dir = dirname(path)
   return (
     <div className="filecard" title={`${action} ${path}`}>
-      <span className="filecard__icon"><IconFile size={16} /></span>
-      <span className="filecard__text">
-        <span className="filecard__name">{basename(path)}</span>
-        <span className="filecard__path">{action}{dir === '' ? '' : ` · ${dir}`}</span>
-      </span>
+      {/* 主体是按钮：整块可点，点了就进预览 */}
+      <button
+        type="button"
+        className="filecard__main no-drag"
+        title={`预览 ${path}`}
+        onClick={() => { onPreview(path) }}
+      >
+        <span className="filecard__icon"><IconFile size={16} /></span>
+        <span className="filecard__text">
+          <span className="filecard__name">{basename(path)}</span>
+          <span className="filecard__path">{action}{dir === '' ? '' : ` · ${dir}`}</span>
+        </span>
+      </button>
       <button
         type="button"
         className="filecard__open no-drag"

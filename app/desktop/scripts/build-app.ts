@@ -30,14 +30,14 @@
  *
  * 用法：
  * ```bash
- * node app/desktop/scripts/build-app.js            # 增量（依赖没变就跳过重装）
- * node app/desktop/scripts/build-app.js --refresh  # 强制重装依赖
+ * node app/desktop/scripts/build-app.ts            # 增量（依赖没变就跳过重装）
+ * node app/desktop/scripts/build-app.ts --refresh  # 强制重装依赖
  * ```
  *
  * @module YuanMy/desktop/scripts/build-app
  */
 
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -48,7 +48,7 @@ const appDir = join(repoRoot, 'build/app')
 const refresh = process.argv.includes('--refresh')
 
 /** 打日志（带阶段名，便于在 Forge 的输出里分辨）。 */
-function log(message) {
+function log(message: string): void {
   process.stdout.write(`[app:build] ${message}\n`)
 }
 
@@ -57,7 +57,7 @@ function log(message) {
  * @param {string} from - 源（相对仓库根或绝对路径）。
  * @param {string} to - 目标（相对 build/app 或绝对路径）。
  */
-function copy(from, to) {
+function copy(from: string, to: string): void {
   const source = resolve(repoRoot, from)
   const target = resolve(appDir, to)
   if (!existsSync(source)) throw new Error(`要复制的东西不存在：${from}`)
@@ -66,7 +66,7 @@ function copy(from, to) {
 }
 
 /** 目录体积（MB，一位小数）。 */
-function sizeOf(path) {
+function sizeOf(path: string): string {
   const result = spawnSync('du', ['-sk', path], { encoding: 'utf8' })
   if (result.status !== 0) return '?'
   return `${(Number(result.stdout.split(/\s+/)[0]) / 1024).toFixed(1)} MB`
@@ -74,16 +74,21 @@ function sizeOf(path) {
 
 // ── 0. 渲染进程必须先构建 ────────────────────────────────────────────────────
 const bundle = join(desktopDir, 'renderer/dist/renderer.js')
-if (!existsSync(bundle)) {
-  throw new Error('渲染进程还没构建：先跑 `npm run build:renderer`（`npm run app:build` 里已经带了）')
+const bridge = join(desktopDir, 'preload.cjs')
+if (!existsSync(bundle) || !existsSync(bridge)) {
+  throw new Error('客户端还没构建：先跑 `npm run build:renderer`（`npm run app:build` 里已经带了）')
 }
 
 // ── 1. 清空上次的产物（保留 node_modules 以支持增量）────────────────────────
-rmSync(join(appDir, 'desktop'), { recursive: true, force: true })
-rmSync(join(appDir, 'cli'), { recursive: true, force: true })
-rmSync(join(appDir, 'mcp'), { recursive: true, force: true })
-rmSync(join(appDir, 'forge.config.js'), { force: true })
+//
+// 逐个删太容易漏：只要漏掉一个，上一轮的文件就会**一起进 asar**
+// （真发生过：改名 forge.config.js → .ts 之后，产物里两个都在）。
+// 所以这里按「白名单」清：留下 node_modules 与依赖安装产物，其余全清。
 mkdirSync(appDir, { recursive: true })
+for (const entry of readdirSync(appDir)) {
+  if (entry === 'node_modules' || entry === 'package.json' || entry === 'pnpm-lock.yaml' || entry === 'pnpm-workspace.yaml') continue
+  rmSync(join(appDir, entry), { recursive: true, force: true })
+}
 
 // ── 2. 生产依赖：在 staging 里用扁平布局重新物化一份 ─────────────────────────
 //
@@ -108,7 +113,7 @@ if (refresh || !lockUnchanged || !haveModules) {
   // 这个文件同时声明了 allowBuilds（node-pty/koffi 的原生安装脚本要跑）与 peer 对齐规则，
   // 缺了它 pnpm 会拒绝执行构建脚本。
   const workspace = readFileSync(join(repoRoot, 'pnpm-workspace.yaml'), 'utf8')
-  writeFileSync(workspaceManifest, `# 由 app/desktop/scripts/build-app.js 生成：\n# ① 只装生产依赖；② 用扁平布局，好让 Forge 的 prune 正确工作。\nnodeLinker: hoisted\n\n${workspace}`)
+  writeFileSync(workspaceManifest, `# 由 app/desktop/scripts/build-app.ts 生成：\n# ① 只装生产依赖；② 用扁平布局，好让 Forge 的 prune 正确工作。\nnodeLinker: hoisted\n\n${workspace}`)
   const install = spawnSync('pnpm', ['install', '--prod', '--frozen-lockfile'], {
     cwd: appDir,
     stdio: 'inherit',
@@ -124,6 +129,7 @@ if (refresh || !lockUnchanged || !haveModules) {
 // ⚠️ 三点必须保留，每一条都有具体的失败现象：
 //   - `"type": "module"`：主进程与 host 都是 ESM，丢了它 Electron/Node 会按 CJS 解析，
 //     启动就报 `Cannot use import statement outside a module`；
+//     （`preload.cjs` 不受影响：`.cjs` 天生是 CommonJS）
 //   - `dependencies`：Forge 的 prune 按它算「哪些包算生产依赖」，写成空对象 =
 //     把刚装好的 node_modules 全删掉；
 //   - `config.forge` 与 `devDependencies.electron`（**精确版本**）：
@@ -138,15 +144,24 @@ if (refresh || !lockUnchanged || !haveModules) {
 //     所以这里显式写上 `config.forge` 指到复制过来的配置文件。
 //     `devDependencies.electron` 是另一条要求：`getElectronVersion()` 读它决定打包哪版
 //     Electron（写精确版本号就不需要真的装 electron）。
-const repoPkg = JSON.parse(readFileSync(repoManifest, 'utf8'))
-const electronSpec = repoPkg.devDependencies?.electron
+interface RepoManifest {
+  readonly version: string
+  readonly description?: string
+  readonly license?: string
+  readonly dependencies?: Record<string, string>
+  readonly devDependencies?: Record<string, string>
+}
+const repoPkg: RepoManifest = JSON.parse(readFileSync(repoManifest, 'utf8')) as RepoManifest
+const electronSpec = repoPkg.devDependencies?.['electron']
 if (typeof electronSpec !== 'string') throw new Error('仓库 package.json 里没有 devDependencies.electron')
 /** 精确版本：仓库里写的是 `44.4.1` 这种就直接用，写了范围就读实际安装的版本。 */
-function exactElectronVersion(spec) {
+function exactElectronVersion(spec: string): string {
   if (/^\d+\.\d+\.\d+/.test(spec)) return spec
   const installed = join(repoRoot, 'node_modules/electron/package.json')
   if (!existsSync(installed)) throw new Error(`electron 写的是范围 "${spec}"，但没装，无法确定精确版本`)
-  return JSON.parse(readFileSync(installed, 'utf8')).version
+  const pkg: { version?: unknown } = JSON.parse(readFileSync(installed, 'utf8')) as { version?: unknown }
+  if (typeof pkg.version !== 'string') throw new Error('node_modules/electron/package.json 里没有 version')
+  return pkg.version
 }
 const electronVersion = exactElectronVersion(electronSpec)
 writeFileSync(stagedManifest, `${JSON.stringify({
@@ -157,18 +172,20 @@ writeFileSync(stagedManifest, `${JSON.stringify({
   license: repoPkg.license,
   author: 'YuanMy',
   type: 'module',
-  main: 'desktop/main.js',
-  config: { forge: './forge.config.js' },
+  main: 'desktop/main.ts',
+  config: { forge: './forge.config.ts' },
   dependencies: repoPkg.dependencies,
   devDependencies: { electron: electronVersion },
 }, null, 2)}\n`)
 
 // ── 4. 运行时文件 ────────────────────────────────────────────────────────────
 log('复制运行时文件…')
-// 主进程三个文件（preload 必须是自包含 CJS，被 ipc.js 一起带过去）
-copy('app/desktop/main.js', 'desktop/main.js')
-copy('app/desktop/preload.js', 'desktop/preload.js')
-copy('app/desktop/ipc.js', 'desktop/ipc.js')
+// 主进程：main.ts + ipc.ts 由 Electron 自己擦类型直接跑；
+// preload 则要**构建产物**（preload.cjs）—— 沙箱 preload 不认 .ts，见 preload.ts 注释。
+copy('app/desktop/main.ts', 'desktop/main.ts')
+copy('app/desktop/ipc.ts', 'desktop/ipc.ts')
+copy('app/desktop/preload.ts', 'desktop/preload.ts')
+copy('app/desktop/preload.cjs', 'desktop/preload.cjs')
 // 内核宿主子进程（.ts 由 Electron 自带的 Node 做类型擦除直接跑，与开发时一致）
 copy('app/desktop/host', 'desktop/host')
 // 界面：index.html + 构建产物（styles/ 与 src/ 是构建输入，运行时不需要）
@@ -178,8 +195,8 @@ copy('app/desktop/renderer/dist', 'desktop/renderer/dist')
 copy('app/cli', 'cli')
 // 内置 MCP 服务器：app/cli/kernel.ts 按 `../mcp/butian/server.ts` 相对解析并拉起
 copy('app/mcp', 'mcp')
-// Forge 配置
-copy('app/desktop/forge.config.js', 'forge.config.js')
+// Forge 配置（Forge 用 jiti 加载 .ts，见 forge.config.ts 的注释）
+copy('app/desktop/forge.config.ts', 'forge.config.ts')
 
 // ── 4b. electron 的「占位包」 ────────────────────────────────────────────────
 //
@@ -217,20 +234,22 @@ if (!existsSync(electronPackage)) {
 // 「两颗星 + 斜杠 + 星号」这种 glob 字面量会提前结束注释。
 // `node --check` 会带行号报出来，成本几乎为零。
 {
-  const configPath = join(appDir, 'forge.config.js')
+  const configPath = join(appDir, 'forge.config.ts')
+  // ⚠️ `node --check` 对 `.ts` 也有效（Node 24 默认开类型擦除），别改成 tsc ——
+  // 这里要的是「能不能被解析」，不是类型对不对（类型由 `npm run typecheck` 管）。
   const check = spawnSync(process.execPath, ['--check', configPath], { encoding: 'utf8' })
   if (check.status !== 0) {
-    throw new Error(`forge.config.js 语法错误：\n${check.stderr.trim()}`)
+    throw new Error(`forge.config.ts 语法错误：\n${check.stderr.trim()}`)
   }
 }
 
 // ── 5. 自检：几个「缺了就会静默降级」的点 ────────────────────────────────────
 const mustHave = [
   'package.json',
-  'forge.config.js',
-  'desktop/main.js',
-  'desktop/preload.js',
-  'desktop/ipc.js',
+  'forge.config.ts',
+  'desktop/main.ts',
+  'desktop/ipc.ts',
+  'desktop/preload.cjs',
   'desktop/host/index.ts',
   'desktop/renderer/index.html',
   'desktop/renderer/dist/renderer.js',
@@ -241,7 +260,7 @@ const mustHave = [
   'node_modules/node-pty',
   'node_modules/electron/package.json',
 ]
-const missing = mustHave.filter(relative => !existsSync(join(appDir, relative)))
+const missing = mustHave.filter((relative: string) => !existsSync(join(appDir, relative)))
 if (missing.length > 0) throw new Error(`staging 缺文件：${missing.join('、')}`)
 
 // node_modules 必须是**真实目录**（不是符号链接）—— 这正是换布局的全部意义。

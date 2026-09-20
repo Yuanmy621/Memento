@@ -108,10 +108,10 @@ npm run desktop:host       # 只起内核宿主，输出 NDJSON，可 `| jq` 单
 npm run opencli:install    # 把 app/opencli 下的适配器同步给全局的 opencli
 ```
 
-> ⚠️ 改 `main.js` 时注意：**Electron 的 ESM 主进程入口不能用顶层 `await app.whenReady()`**。
+> ⚠️ 改 `main.ts` 时注意：**Electron 的 ESM 主进程入口不能用顶层 `await app.whenReady()`**。
 > 入口模块是异步加载的，顶层 await `ready` 会与 Electron 的启动流程互相等待 ——
 > 现象是进程活着、日志停在模块加载完成，但**永远不出现窗口**。
-> 用 `app.whenReady().then(onReady)` 注册回调（`main.js` 启动段末尾有详细注释）。
+> 用 `app.whenReady().then(onReady)` 注册回调（`main.ts` 启动段末尾有详细注释）。
 
 ---
 
@@ -136,9 +136,10 @@ app/
     ui.ts                终端流式渲染、工具调用可视化、颜色
 
   desktop/               桌面形态：Electron 壳 + 独立的 agent host 子进程
-    main.js             Electron 主进程：窗口、菜单、生命周期、IPC 收口、窗口材质
-    preload.js          安全桥（CommonJS）：渲染进程只能看到 window.YuanMy
-    ipc.js              IPC 频道名与状态形状
+    main.ts             Electron 主进程：窗口、菜单、生命周期、IPC 收口、窗口材质
+    preload.ts          安全桥**源码**；构建成 preload.cjs（沙箱 preload 只认 CJS）
+    ipc.ts              IPC 频道名与状态形状
+    forge.config.ts     Electron Forge 配置（打包成 .app / zip / dmg）
     host/               TS：跑在内核侧的全部逻辑
       index.ts           agent host：把内核跑在独立 Node 进程里
       bridge.ts          内核事件 → UI 帧（复用 CLI 的工具摘要格式化）
@@ -150,8 +151,9 @@ app/
       dist/              构建产物（不入库）
       tsconfig.json      DOM + JSX 的独立类型检查
     scripts/
-      build-renderer.js  渲染进程打包（esbuild + PostCSS/Tailwind）
-    README.md            桌面端设计说明
+      build-renderer.ts  渲染进程打包（esbuild + PostCSS/Tailwind）+ preload.cjs
+      build-app.ts       打包用的 staging：生产依赖（hoisted）+ 运行时文件
+    README.md            桌面端设计说明：代码地图、技术栈与官方文档、自研 vs 成熟组件
 
   opencli/               把站点包成 shell 命令（适配器源在这里，装在 ~/.opencli/clis/）
     clis/butian/*.js     补天个人中心：center / vulns / missions / sign
@@ -324,11 +326,11 @@ ctx.tools.register(defineTool({
 | 换文件系统 / Shell | 挂另一个 provider（如 `dsh-fs-sandbox`） | `kernel.ts` 第 3 组 |
 | 观察流式输出 | `agent/assistant-stream` 事件（`chunk.type === 'text-delta'`） | `app/cli/ui.ts`（终端）、`app/desktop/host/bridge.ts`（GUI） |
 | 读权威历史 | `session/event`（`tool/call` / `tool/result` / `turn/end`） | 同上 |
-| 给桌面端加一个界面动作 | preload 加一个方法 → main 加一个 `ipcMain.handle` → renderer 调用 | `app/desktop/preload.js` / `main.js` / `renderer/src/` |
+| 给桌面端加一个界面动作 | preload 加一个方法 → main 加一个 `ipcMain.handle` → renderer 调用 | `app/desktop/preload.cjs` / `main.ts` / `renderer/src/` |
 | 给桌面端加一种 UI 帧 | 在 `host/protocol.ts` 加一个 `HostEvent` 分支，bridge 发出、renderer 消费 | `app/desktop/host/bridge.ts` |
 | 读会话历史 / 列会话 | 会话以 JSONL 落在 `<cwd>/.YuanMy/sessions/<项目>/<会话 id>/session.v3.jsonl`，第一行是头 | `app/desktop/host/sessions.ts` |
 | 列会话（项目 → 会话树） | 会话以 JSONL 落在 `<cwd>/.YuanMy/sessions/<项目>/<会话 id>/session.v3.jsonl`，第一行是头 | `app/desktop/host/sessions.ts` |
-| 跨项目列表 | 内核 stateDir 每项目一份库 → 桌面端记一份「最近打开过的项目」（`<userData>/projects.json`），经 `YuanMy_PROJECT_ROOTS` 交给 host 多扫几个根 | `app/desktop/main.js` + `host/sessions.ts` |
+| 跨项目列表 | 内核 stateDir 每项目一份库 → 桌面端记一份「最近打开过的项目」（`<userData>/projects.json`），经 `YuanMy_PROJECT_ROOTS` 交给 host 多扫几个根 | `app/desktop/main.ts` + `host/sessions.ts` |
 | 把某个网站包成 agent 能用的命令 | 写 opencli 适配器放 `app/opencli/clis/<site>/`，`npm run opencli:install` 同步到 `~/.opencli/clis/`（要真实目录、只认 .js） | `app/opencli/` |
 | 加一个命令（`/名字`） | 在 `.agents/commands/<名字>.md` 写 frontmatter + 指令；`include` 可内联技能正文，仅触发那一回合生效 | `.agents/commands/` |
 | 把技能改成命令专用 | 在 `SKILL.md` 的 frontmatter 加 `disable-model-invocation: true`（内核原生政策，不进模型目录） | `.agents/skills/<名字>/SKILL.md` |

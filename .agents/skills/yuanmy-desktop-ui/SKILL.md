@@ -5,6 +5,24 @@ description: 改 YuanMy 桌面端界面时的固定套路 —— 渲染进程为
 
 # 改 YuanMy 桌面端界面
 
+## 客户端全是 TypeScript，但 preload 必须构建
+
+`app/desktop/**` 下**没有手写的 `.js`**。谁擦类型：
+
+| 文件 | 谁执行 | 要不要构建 |
+| --- | --- | --- |
+| `main.ts` / `ipc.ts` / `host/*.ts` / `scripts/*.ts` | Electron 自带的 Node 24 / 系统 node | 不要（默认开类型擦除，直接跑 `.ts`） |
+| `preload.ts` | Electron 的**沙箱** preload 加载器 | **要**：打成自包含的 `preload.cjs`（由 `build-renderer.ts` 顺带做） |
+| `renderer/src/*.tsx` | 浏览器 | 要（esbuild + Tailwind） |
+
+⚠️ **别把 `webPreferences.preload` 指到 `preload.ts`**：沙箱 preload 走 Electron 自己的
+CJS 加载器，不认识 TS —— 它**静默失败**，界面只会说「preload 脚本没有加载」。
+实测：同一个文件指 `.ts` 时 `window.probe === null`，指构建出来的 `.cjs` 时正常。
+产物必须 CJS 的另一个原因：Electron 加载 preload 时忽略 `"type": "module"`。
+
+唯一保留 `.js` 的是 `app/opencli/**`（opencli 只发现 `.js`，见该目录 README），
+归属单独放在 `tsconfig.js.json`。
+
 ## 先记住：渲染进程需要构建
 
 界面源码是 **TSX**（`app/desktop/renderer/src/`），由 esbuild + Tailwind 打成
@@ -17,19 +35,19 @@ npm run desktop:watch      # 改界面时开着它
 
 忘了构建的表现是「改了源码但界面没变」——先跑一次 `npm run build:renderer` 再判断。
 
-主进程（`main.js`）与 host（`host/*.ts`）**不需要**构建。
+主进程（`main.ts`）与 host（`host/*.ts`）**不需要**构建。
 
 ## 加一个界面动作：四步，缺一不可
 
 以「切换主题」这种动作为例：
 
-1. `app/desktop/ipc.js` —— 往 `IPC` 表加频道名；
-2. `app/desktop/main.js` —— 加 `ipcMain.handle(IPC.xxx, (event) => { assertSender(event); … })`；
-3. `app/desktop/preload.js` —— 在 `CHANNEL` 与 `api` 里**各加一条**
+1. `app/desktop/ipc.ts` —— 往 `IPC` 表加频道名；
+2. `app/desktop/main.ts` —— 加 `ipcMain.handle(IPC.xxx, (event) => { assertSender(event); … })`；
+3. `app/desktop/preload.cjs` —— 在 `CHANNEL` 与 `api` 里**各加一条**
    （沙箱化 preload 不能 require 本地文件，频道字面量只能重复一份）；
 4. `renderer/src/` —— 通过 `window.YuanMy.xxx()` 调用。
 
-这三处的频道名/方法名必须逐字一致：`ipc.js` ↔ `preload.js` ↔ 渲染进程的调用。
+这三处的频道名/方法名必须逐字一致：`ipc.ts` ↔ `preload.cjs` ↔ 渲染进程的调用。
 改漏了不会报错，只会**静默失效**（界面点了没反应），所以要逐个核对。
 
 **加一种内核事件到界面**是另一条链路：
@@ -68,9 +86,43 @@ Tailwind **只为已定义的 token 生成工具类**，缺了会被静默丢掉
 3. **统计数字各有来源**：token 来自 `usage` 帧（互斥计数，见下），耗时来自
    `turn-end.durationMs`（host 量的墙钟），轮次是归约器计数。别在前端估算。
 
-文件卡片由 `fileActionOf()` 从工具名 + 参数认出；「打开」走主进程 `shell.openPath`。
-轨迹视图走 `traceSteps()` 纯函数把 `state.items` 摊平 —— 这两个都是纯函数，
-改动后自己走一遍：打开一个带工具调用的回合，确认文件卡片与轨迹两步都对得上。
+文件卡片由 `fileActionOf()` 从工具名 + 参数认出：**点卡片主体 = 右侧预览面板看内容**
+（`IPC.previewRead`），点「打开」= 主进程 `shell.openPath`。轨迹视图走 `traceSteps()`
+纯函数把 `state.items` 摊平，按角色分色（`--trace-tone` / `--trace-fill` 两个变量下发）。
+这几处都是纯函数，改动后自己走一遍：打开一个带工具调用的回合，确认文件卡片、
+预览面板、轨迹三步都对得上。
+
+### 右侧两个新构件：会话刻度尺 + 预览面板
+
+| 构件 | 文件 | 一句话 |
+| --- | --- | --- |
+| 会话刻度尺 | `components/message-rail.tsx` + `message-rail-model.ts`（纯逻辑） | 一竖排**等距**短横线（14×2px），当前那条是**白色长横条**（30×3px）；滚轮/点击/拖动都能选，滚消息时尺子自动跟着滑 |
+| 预览面板 | `components/preview-panel.tsx` | 右侧可隐藏的一列：markdown→Streamdown、代码→Streamdown+Shiki、图片→data URL、文本→`<pre>`；没选文件时列「最近文件」 |
+
+改这两个时最该记住的四条（都是实测踩出来的）：
+
+1. **刻度必须等距**，别按内容长度成比例（第一版按比例画，一条巨长的工具输出占掉
+   半把尺子，「第几条」根本数不清）。内容高度只用来算「当前读到第几条」。
+   而「当前是哪一条」= **屏幕上最后那条可见的条目**（判定线在视口**底边**往上 8px）：
+   用顶边的话，滚到会话末尾时高亮会停在屏幕中间某条。这条规则也决定了跳转落点
+   （`jumpTop()`：矮条目让底边贴判定线），否则「点第 10 条、高亮跑到第 13 条」。
+2. **选中项更新要同步**（不欠 rAF 的债）：窗口被遮挡时 rAF 会被暂停，
+   那时「尺子不动」会被当成坏了。只有**重新测量**（几百个 `getBoundingClientRect`）
+   才交给 rAF 合并。
+3. **别用 `setPointerCapture` 处理尺子上的点击**：捕获会让随后的 `click` 派发到轨道
+   而不是刻度上，表现成「点了刻度却滚到鼠标位置居中处」。捕获只在拖动时用，
+   且监听挂 `window`。
+4. **图片预览只能走 data URL**：CSP 是 `img-src 'self' data:`，`file://` 不在白名单；
+   代码高亮要**自己包一层围栏**再交给 Streamdown，围栏长度取「正文里最长反引号串 + 1」。
+5. **悬停提示必须渐隐**（否则信息一直挂在界面上碍眼）：React 一卸载节点过渡就没了，
+   所以拆成两份状态 —— `tipVisible` 先置 false 让 CSS 淡出，`TIP_FADE`(160ms) 之后再
+   `setHover(null)` 卸载；出现用 `animation`（挂载时一定会跑）、消失用 `transition`。
+   leave 挂在**刻度**上（不是整条尺子），划到相邻刻度时 enter 撤掉定时器即可不闪。
+   ⚠️ 关键帧与 `--out` 里的 `transform` 都要带上 `translateY(-50%)`（那是居中定位），
+   漏掉的话提示框会一边淡出一边往下跳半格。
+
+预览面板的「最近文件」来自 `recentFiles()`（倒着捞会话里出现过的文件、路径去重）；
+换会话/项目会清掉当前选中项（否则面板里挂着上一个项目的文件）。
 
 ## 输入框：Tiptap 富文本 + 触发符 chip + 「中途调整目标」
 
@@ -184,7 +236,7 @@ if (view.composing || ime.isImeKeyNative(event)) return false
    界面只认这一种「内容现在是 X」的信号 —— 不发的话新会话永远等不到，只能退回清空那条路。
 3. **`switching` 由 `history` 解除，不由 `ready`**：`ready` 先到、历史后到，
    在 `ready` 就放开会让用户在「内容马上要被覆盖」时发的消息丢掉（另有 3 秒超时兜底）。
-4. **连点两个会话要靠代际守卫**：`main.js` 的 `AgentHost.generation`（message/error/close
+4. **连点两个会话要靠代际守卫**：`main.ts` 的 `AgentHost.generation`（message/error/close
    三处都要判，只判 close 不够）+ `restartGeneration`（被取代的那次不写状态、不报错）。
    没有它就会出现「点 A 又点 B，结果停在 A」。
 
@@ -384,7 +436,7 @@ document.querySelector('.session__title').getBoundingClientRect().left
 只扫当前项目那一个根，侧栏的树里就永远只有**一个**项目（换项目后上一个直接消失）。
 现在靠一份线索补齐，**数据位置不动**：
 
-- `main.js` 维护 `<userData>/projects.json`（`YuanMy_PROJECTS_FILE` 可覆盖），
+- `main.ts` 维护 `<userData>/projects.json`（`YuanMy_PROJECTS_FILE` 可覆盖），
   host 成功启动后登记当前项目；
 - 启动 host 时用环境变量 `YuanMy_PROJECT_ROOTS`（冒号分隔）把清单交过去；
 - `sessions.ts` 的 `rootsOf()` 把「当前项目的库 + 每个项目的 `<path>/.YuanMy/sessions`」
@@ -445,13 +497,21 @@ npm run desktop            # 真开窗口，把改的地方操作一遍
 输入框这块可以只靠 CDP 验到底（窗口被遮住也能跑，`Input` 域照样投递真按键）：
 
 ```bash
-YuanMy_DEV=1 ./node_modules/.bin/electron app/desktop/main.js --remote-debugging-port=9225
+YuanMy_DEV=1 ./node_modules/.bin/electron app/desktop/main.ts --remote-debugging-port=9225
 # 然后：Input.dispatchKeyEvent 打字 / Page.captureScreenshot / Runtime.evaluate 量 getComputedStyle
 ```
 
 要点与坑：
 
 - 目标页要挑 `type === 'page' && url.startsWith('file://')`（另一个 target 是 DevTools 自己）；
+- ⚠️ **窗口被遮挡时 `document.visibilityState === 'hidden'`，这时浏览器不发 scroll 事件、
+  不跑 CSS 过渡、不做平滑滚动**（都是渲染时机驱动的），`transition` 的 `getComputedStyle`
+  会停在起点值。想要可信的交互/样式结论，先 `Page.bringToFront` 或把窗口点到最前；
+  拿不到可见窗口时改用三招：**合成事件**（`new WheelEvent('wheel', {deltaY})` 直接跑我们的
+  监听器）、**给 `Element.prototype.scrollTo` 装探针**看「点了第 N 条到底请求滚到哪」、
+  **读 CSSOM 的规则值**代替被冻结的 computed 值；
+- `Input.dispatchMouseEvent` 的 `type: 'mouseWheel'` 在当前 Electron 上**不回包**
+  （Promise 永远不 resolve），别用它测滚轮 —— 用上面的合成事件；
 - 先 `Runtime.evaluate` 里 `element.focus()` 再投键 —— `Input.dispatchMouseEvent` 在
   `document.visibilityState === 'hidden'`（窗口被遮）时点不中；
 - 量「chip 到底长什么样」用 `getComputedStyle` 的**实际值**（背景/字色/字重/字族），

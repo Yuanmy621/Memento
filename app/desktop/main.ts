@@ -18,18 +18,26 @@
  */
 
 import { app, BrowserWindow, Menu, dialog, ipcMain, shell } from 'electron'
-import { spawn } from 'node:child_process'
+import type { BrowserWindowConstructorOptions, MenuItemConstructorOptions } from 'electron'
+import { spawn, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { readFile, writeFile } from 'node:fs/promises'
+import { readFile, stat, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { IPC } from './ipc.js'
+import { IPC, type BridgeEvent, type LaunchConfig, type PreviewKind, type PreviewPayload, type ShellState } from './ipc.ts'
+import { isHostEvent, type HostReadyInfo, type HostRequest } from './host/protocol.ts'
+import type { WorkspaceListing } from './host/sessions.ts'
 
 /** host 子进程入口（TS 文件，由系统 node 的类型擦除能力直接运行）。 */
 const HOST_ENTRY = fileURLToPath(new URL('./host/index.ts', import.meta.url))
-/** 安全桥（沙箱化 preload 必须是自包含的 CommonJS）。 */
-const PRELOAD_ENTRY = fileURLToPath(new URL('./preload.js', import.meta.url))
+/**
+ * 安全桥的**构建产物**（`preload.ts` → esbuild → `preload.cjs`）。
+ *
+ * 沙箱化 preload 走 Electron 自己的 CJS 加载器，不认识 TypeScript，
+ * 所以不能直接指 `.ts`（会静默失败，见 `preload.ts` 的模块注释）。
+ */
+const PRELOAD_ENTRY = fileURLToPath(new URL('./preload.cjs', import.meta.url))
 /** 界面入口。 */
 const INDEX_HTML = fileURLToPath(new URL('./renderer/index.html', import.meta.url))
 /** 内核装配超时：超过这个时间还没 ready 就认为 host 起不来。 */
@@ -39,16 +47,16 @@ const HOST_STOP_TIMEOUT_MS = 5_000
 /** 进程启动时刻：用于在冒烟/开发模式下报告「从启动到窗口可见」的耗时。 */
 const STARTED_AT = Date.now()
 /** 唯一的主窗口；macOS 上关闭后可以再创建，所以是可变的。 */
-let win = null
+let win: BrowserWindow | null = null
 /** 渲染进程最后一次看到的 shell 状态，新窗口打开时用它立即出画面。 */
-let state = { phase: 'booting' }
+let state: ShellState = { phase: 'booting' }
 /**
  * 最近一帧「项目 / 会话清单」。
  *
  * 渲染进程要解析 10MB 的 bundle，订阅事件往往晚于 host 推送的首帧 —— 只靠推会丢。
  * 所以这里缓存一份，随 `YuanMy:state` 一起返回（「推 + 拉」两条腿，与 ready 同理）。
  */
-let workspaceSnapshot = null
+let workspaceSnapshot: WorkspaceListing | null = null
 /**
  * 默认打开哪个项目。
  *
@@ -71,7 +79,7 @@ function defaultProjectDir() {
 }
 
 /** 当前 host 启动配置：重启 / 换工作目录时以它为基线。 */
-let launchConfig = {
+let launchConfig: LaunchConfig = {
   cwd: defaultProjectDir(),
 }
 
@@ -90,6 +98,12 @@ let launchConfig = {
 // 所以这里读写失败一律不抛 —— 一个线索文件不该拦住启动。
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** 登记表里的一条：项目路径 + 最后打开时间。 */
+interface RecentEntry {
+  readonly path: string
+  readonly lastOpenedAt: number
+}
+
 /** 登记文件。`YuanMy_PROJECTS_FILE` 可覆盖（冒烟用它把状态关进临时工作区）。 */
 const PROJECTS_FILE = process.env.YuanMy_PROJECTS_FILE ?? join(app.getPath('userData'), 'projects.json')
 /** 最多记多少个项目（超出丢最久没打开的）。 */
@@ -99,20 +113,25 @@ const MAX_RECENT_PROJECTS = 20
  * 读登记表的原始条目（最近的在前）。
  *
  * 兼容「只有路径字符串」的简写 —— 手写这个文件调试时会那么写。
- * @returns {{ path: string, lastOpenedAt: number }[]} 条目；文件不存在或损坏时是空数组。
+ * @returns 条目（最近的在前）；文件不存在或损坏时是空数组。
  */
-function readRecentEntries() {
+function readRecentEntries(): RecentEntry[] {
   try {
-    const parsed = JSON.parse(readFileSync(PROJECTS_FILE, 'utf8'))
-    const entries = Array.isArray(parsed?.projects) ? parsed.projects : []
-    return entries
-      .map((entry) => (typeof entry === 'string' ? { path: entry, lastOpenedAt: 0 } : entry))
-      .filter((entry) => typeof entry?.path === 'string' && entry.path !== '')
-      .map((entry) => ({
-        path: entry.path,
-        lastOpenedAt: typeof entry.lastOpenedAt === 'number' ? entry.lastOpenedAt : 0,
-      }))
-      .sort((a, b) => b.lastOpenedAt - a.lastOpenedAt)
+    const parsed: unknown = JSON.parse(readFileSync(PROJECTS_FILE, 'utf8'))
+    const raw = (parsed as { projects?: unknown }).projects
+    const entries: unknown[] = Array.isArray(raw) ? raw : []
+    const out: RecentEntry[] = []
+    for (const entry of entries) {
+      if (typeof entry === 'string') {
+        if (entry !== '') out.push({ path: entry, lastOpenedAt: 0 })
+        continue
+      }
+      if (typeof entry !== 'object' || entry === null) continue
+      const { path, lastOpenedAt } = entry as { path?: unknown; lastOpenedAt?: unknown }
+      if (typeof path !== 'string' || path === '') continue
+      out.push({ path, lastOpenedAt: typeof lastOpenedAt === 'number' ? lastOpenedAt : 0 })
+    }
+    return out.sort((a, b) => b.lastOpenedAt - a.lastOpenedAt)
   } catch {
     return []
   }
@@ -122,7 +141,7 @@ function readRecentEntries() {
  * 最近打开过的项目路径（最近的在前）。
  * @returns 路径数组；读不到时是空数组（侧栏因此只列当前项目，功能降级但能用）。
  */
-function readRecentProjects() {
+function readRecentProjects(): string[] {
   return readRecentEntries().map((entry) => entry.path)
 }
 
@@ -130,9 +149,9 @@ function readRecentProjects() {
  * 记下一个项目（去重后移到最前），并裁到上限。
  *
  * 写失败只提示：登记丢了顶多是侧栏少列一个项目，不该影响正在跑的内核。
- * @param {string} path - 项目根目录。
+ * @param path - 项目根目录。
  */
-function rememberProject(path) {
+function rememberProject(path: string): void {
   try {
     const next = [{ path, lastOpenedAt: Date.now() }, ...readRecentEntries().filter((entry) => entry.path !== path)]
       .slice(0, MAX_RECENT_PROJECTS)
@@ -190,10 +209,10 @@ function resolveHostRuntime() {
  *
  * host 直接复用 CLI 的 `parseOptions`，所以这里用的就是 CLI 那套开关，
  * 桌面端与终端的行为不会两套。
- * @param {import('./ipc.js').LaunchConfig} config - 启动配置。
+ * @param {import('./ipc.ts').LaunchConfig} config - 启动配置。
  * @returns {string[]} 传给 node 的完整参数数组。
  */
-function buildHostArgs(config) {
+function buildHostArgs(config: LaunchConfig): string[] {
   const args = [
     // Node 原生类型擦除：直接运行 .ts，无需构建步骤（与 CLI 一致的取舍）。
     // Electron 44 自带的 Node 24 同样支持，所以打包形态下这一条不用改。
@@ -211,6 +230,31 @@ function buildHostArgs(config) {
   return args
 }
 
+/** host 子进程发来的帧：只认我们真正会读的三样东西，其余原样转给渲染进程。 */
+type HostFrame =
+  | { readonly kind: 'ready'; readonly info: HostReadyInfo; readonly raw: unknown }
+  | { readonly kind: 'fatal'; readonly message: string; readonly raw: unknown }
+  | { readonly kind: 'other'; readonly raw: unknown }
+
+/**
+ * 最小形状校验（子进程的输出按不可信处理）。
+ *
+ * 单独一个函数、而不是散在回调里：`ready` / `fatal` 要读里面的字段，读之前必须先
+ * 证明它是什么形状。判据只有一条 —— `type` 得是字符串。
+ * @param raw - 子进程发来的任意值。
+ * @returns 归一化后的帧；形状不认识时返回 `null`（调用方直接丢弃）。
+ */
+function asHostFrame(raw: unknown): HostFrame | null {
+  if (typeof raw !== 'object' || raw === null) return null
+  const { type, info, message } = raw as { type?: unknown; info?: unknown; message?: unknown }
+  if (typeof type !== 'string') return null
+  if (type === 'ready' && typeof info === 'object' && info !== null) {
+    return { kind: 'ready', info: info as HostReadyInfo, raw }
+  }
+  if (type === 'fatal') return { kind: 'fatal', message: typeof message === 'string' ? message : '未知错误', raw }
+  return { kind: 'other', raw }
+}
+
 /**
  * agent host 的生命周期封装：拉起、转发、优雅关闭。
  *
@@ -218,45 +262,53 @@ function buildHostArgs(config) {
  * 结构化、天然帧边界，且父进程消失时子进程会收到 `disconnect` 自行收敛。
  */
 class AgentHost {
+  /** host 推来的每个事件。 */
+  private readonly onEvent: (event: unknown) => void
+  /** 子进程退出（不是我们主动关的时候才回调）。 */
+  private readonly onExit: (detail: { readonly code: number | null; readonly error?: Error }) => void
+  /** 当前子进程。 */
+  private child: ChildProcess | null = null
+  /** 就绪信息（`ready` 帧里的那份）。 */
+  private info: HostReadyInfo | null = null
+  /** 是我们主动关的，还是它自己崩的。 */
+  private stopping = false
+  /** 等待 `ready` 的结算函数（同时只有一个）。 */
+  private resolveReady: ((info: HostReadyInfo) => void) | null = null
+  /** 等待 `ready` 的失败结算函数。 */
+  private rejectReady: ((error: Error) => void) | null = null
+  /** 是否已经为这一代子进程报过一次错（避免 fatal 之后再报一次退出）。 */
+  private failureReported = false
+  /** ready 超时定时器。 */
+  private readyTimer: NodeJS.Timeout | null = null
   /**
-   * @param {(event: unknown) => void} onEvent - host 推来的每个事件。
-   * @param {(detail: { code: number | null; error?: Error }) => void} onExit - 子进程退出。
+   * 子进程的「代际」。
+   *
+   * 每次 start / stop 都 +1；回调里捕获自己那一代，**不是当前代就什么都不做**。
+   * 为什么需要：连着点两个会话时，第一次的内核可能还在启动（或刚被 kill），
+   * 它晚到的 `history` / `workspace` 帧会盖到第二次切换的界面上 ——
+   * 表现是「点 A 又点 B，结果先看到 A 的会话闪一下，或者停在 A」。
+   * 上一版只靠 `this.child !== child` 判断，那只覆盖了 close，覆盖不了 message。
    */
-  constructor(onEvent, onExit) {
+  private generation = 0
+
+  /**
+   * @param onEvent - host 推来的每个事件。
+   * @param onExit - 子进程退出。
+   */
+  constructor(
+    onEvent: (event: unknown) => void,
+    onExit: (detail: { readonly code: number | null; readonly error?: Error }) => void,
+  ) {
     this.onEvent = onEvent
     this.onExit = onExit
-    /** @type {import('node:child_process').ChildProcess | null} */
-    this.child = null
-    /** @type {import('./host/protocol.ts').HostReadyInfo | null} */
-    this.info = null
-    /** 是我们主动关的，还是它自己崩的。 */
-    this.stopping = false
-    /** @type {((info: unknown) => void) | null} */
-    this.resolveReady = null
-    /** @type {((error: Error) => void) | null} */
-    this.rejectReady = null
-    /** 是否已经为这一代子进程报过一次错（避免 fatal 之后再报一次退出）。 */
-    this.failureReported = false
-    /** @type {NodeJS.Timeout | null} */
-    this.readyTimer = null
-    /**
-     * 子进程的「代际」。
-     *
-     * 每次 start / stop 都 +1；回调里捕获自己那一代，**不是当前代就什么都不做**。
-     * 为什么需要：连着点两个会话时，第一次的内核可能还在启动（或刚被 kill），
-     * 它晚到的 `history` / `workspace` 帧会盖到第二次切换的界面上 ——
-     * 表现是「点 A 又点 B，结果先看到 A 的会话闪一下，或者停在 A」。
-     * 上一版只靠 `this.child !== child` 判断，那只覆盖了 close，覆盖不了 message。
-     */
-    this.generation = 0
   }
 
   /**
    * 启动 host 并等待 `ready`。
-   * @param {import('./ipc.js').LaunchConfig} config - 启动配置。
-   * @returns {Promise<import('./host/protocol.ts').HostReadyInfo>} 就绪信息。
+   * @param config - 启动配置。
+   * @returns 就绪信息。
    */
-  async start(config) {
+  async start(config: LaunchConfig): Promise<HostReadyInfo> {
     await this.stop()
     const generation = ++this.generation
     this.stopping = false
@@ -280,7 +332,7 @@ class AgentHost {
     child.stderr?.setEncoding('utf8')
     child.stderr?.on('data', (chunk) => { process.stderr.write(`[host] ${chunk}`) })
 
-    const ready = new Promise((resolve, reject) => {
+    const ready = new Promise<HostReadyInfo>((resolve, reject) => {
       this.resolveReady = resolve
       this.rejectReady = reject
       this.readyTimer = setTimeout(() => {
@@ -288,21 +340,22 @@ class AgentHost {
       }, HOST_READY_TIMEOUT_MS)
     })
 
-    child.on('message', (message) => {
+    child.on('message', (raw: unknown) => {
       // 已经不是当前这一代子进程了（用户又切了一次）：它的帧一律丢弃。
       if (generation !== this.generation) return
       // 子进程输出不可信：只做最小形状校验，非法消息直接丢弃。
-      if (typeof message !== 'object' || message === null || typeof message.type !== 'string') return
-      if (message.type === 'ready') {
-        this.info = message.info
+      const frame = asHostFrame(raw)
+      if (frame === null) return
+      if (frame.kind === 'ready') {
+        this.info = frame.info
         this.settleReady(null)
-      } else if (message.type === 'fatal') {
-        this.settleReady(new Error(message.message))
+      } else if (frame.kind === 'fatal') {
+        this.settleReady(new Error(frame.message))
       }
-      this.onEvent(message)
+      this.onEvent(frame.raw)
     })
 
-    child.once('error', (error) => {
+    child.once('error', (error: Error) => {
       if (generation !== this.generation) return
       // spawn 失败（例如 PATH 里没有 node）：把错误交给等待者，并松开引用，
       // 否则下一次 start() 的 stop() 会去等一个永远不存在的 close。
@@ -310,7 +363,7 @@ class AgentHost {
       if (this.child === child) this.child = null
     })
 
-    child.once('close', (code) => {
+    child.once('close', (code: number | null) => {
       // 用「代际」判断这次退出是不是我们主动引起的：重启时旧的 close 回调
       // 可能晚于新子进程的创建，靠代际把它认出来（比 `this.child !== child` 更准：
       // 新子进程还没创建时，child 也已经是 null 了）。
@@ -332,10 +385,10 @@ class AgentHost {
 
   /**
    * 结束 ready 的等待（成功 / 失败都走这里，保证只结算一次）。
-   * @param {Error | null} error - `null` 表示成功。
-   * @returns {boolean} 是否真的结算了（`false` 说明此前已经有结果）。
+   * @param error - `null` 表示成功。
+   * @returns 是否真的结算了（`false` 说明此前已经有结果）。
    */
-  settleReady(error) {
+  settleReady(error: Error | null): boolean {
     if (this.readyTimer !== null) {
       clearTimeout(this.readyTimer)
       this.readyTimer = null
@@ -346,20 +399,32 @@ class AgentHost {
     this.resolveReady = null
     this.rejectReady = null
     if (resolve === null && reject === null) return false
-    if (error === null) resolve?.(this.info)
-    else reject?.(error)
+    if (error !== null) {
+      reject?.(error)
+      return true
+    }
+    // 成功路径上 info 一定已经写好了（`ready` 分支先赋值再结算）。
+    // 万一没有，也必须给等待者一个结果 —— 否则 ready 的定时器已经被清掉，
+    // 调用方会一直挂着。
+    if (this.info === null) reject?.(new Error('agent host 报了就绪但没有带 info'))
+    else resolve?.(this.info)
     return true
   }
 
   /** 给 host 发一条请求；没有子进程时静默丢弃（界面会从状态里看到不可用）。 */
-  send(request) {
+  send(request: HostRequest): boolean {
     if (this.child === null || !this.child.connected) return false
     this.child.send(request)
     return true
   }
 
   /** 请求 host 优雅退出；超时逐级升级为信号，最终放弃等待（不能让窗口关不掉）。 */
-  async stop() {
+  /** 就绪信息（`info` 频道要读它的 nodeVersion）。 */
+  get readyInfo(): HostReadyInfo | null {
+    return this.info
+  }
+
+  async stop(): Promise<void> {
     // 无论有没有子进程，都推进代际：这样「已经停掉的那一代」晚到的帧会被丢掉。
     this.generation += 1
     const child = this.child
@@ -386,7 +451,7 @@ class AgentHost {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** 向界面推一个事件；窗口不在就丢弃。 */
-function sendToRenderer(event) {
+function sendToRenderer(event: BridgeEvent): void {
   if (win === null || win.isDestroyed()) return
   win.webContents.send(IPC.hostEvent, event)
 }
@@ -395,24 +460,24 @@ function sendToRenderer(event) {
  * 校验 IPC 发送方：只接受我们自己的主窗口主框架。
  * @param {import('electron').IpcMainInvokeEvent} event - IPC 事件。
  */
-function assertSender(event) {
+function assertSender(event: Electron.IpcMainInvokeEvent): void {
   if (win === null || event.sender !== win.webContents) {
     throw new Error('YuanMy: 拒绝来自非本窗口的 IPC 调用')
   }
 }
 
 /** host 退出 / 启动失败时统一把状态推给界面。 */
-function reportHostFailure(error) {
+function reportHostFailure(error: Error): void {
   state = { phase: 'error', error: error.message }
   sendToRenderer({ type: 'host-error', message: error.message })
 }
 
 /**
  * 用给定配置重启 agent host。
- * @param {import('./ipc.js').LaunchConfig} config - 启动配置。
- * @returns {Promise<import('./ipc.js').ShellState>} 新的 shell 状态。
+ * @param {import('./ipc.ts').LaunchConfig} config - 启动配置。
+ * @returns {Promise<import('./ipc.ts').ShellState>} 新的 shell 状态。
  */
-async function restartWith(config) {
+async function restartWith(config: LaunchConfig): Promise<ShellState> {
   // 新内核的清单要重新扫，先作废旧快照。
   workspaceSnapshot = null
   // 会话只属于它的项目：换工作目录时，**上一个**会话的 resume / sessionId 必须丢掉，
@@ -474,7 +539,7 @@ async function restartWith(config) {
  * 启用材质时窗口底色必须是**全透明**，否则材质会被盖住；主内容区由
  * `.main-column` 自己刷不透明背景，所以只有侧栏露出材质。
  */
-function windowMaterial() {
+function windowMaterial(): BrowserWindowConstructorOptions {
   if (process.platform === 'darwin') {
     return { vibrancy: 'sidebar', visualEffectState: 'active', backgroundColor: '#00000000' }
   }
@@ -496,32 +561,28 @@ const NATIVE_MATERIAL = process.platform === 'darwin' || process.platform === 'w
  * Windows：`hidden` + `titleBarOverlay` 保留最小化/最大化/关闭三个原生按钮。
  * Linux：保留原生标题栏 —— 否则窗口没有关闭按钮，用起来反而更糟。
  */
-function titleBarOptions() {
+function titleBarOptions(): BrowserWindowConstructorOptions {
   if (process.platform === 'darwin') {
     return { titleBarStyle: 'hidden', trafficLightPosition: { x: 16, y: 15 } }
   }
   if (process.platform === 'win32') {
     return {
       titleBarStyle: 'hidden',
-      titleBarOverlay: { color: '#0d0d0d', symbolColor: '#ececec', height: 46 },
+      titleBarOverlay: { color: '#0e0c14', symbolColor: '#ececec', height: 46 },
     }
   }
   return { titleBarStyle: 'default' }
 }
 
 /** 创建主窗口。 */
-function createWindow() {
-  win = new BrowserWindow({
+function createWindow(): void {
+  const base: BrowserWindowConstructorOptions = {
     width: 1180,
     height: 800,
     minWidth: 860,
     minHeight: 560,
     title: 'YuanMy Agent',
     show: false,
-    // 与界面同色，避免启动瞬间的白闪（启用材质时会被上面的透明色覆盖）。
-    backgroundColor: '#0e0c14',
-    ...windowMaterial(),
-    ...titleBarOptions(),
     webPreferences: {
       preload: PRELOAD_ENTRY,
       // 三条一起构成默认的安全基线：渲染进程拿不到 Node，也拿不到主进程对象。
@@ -530,7 +591,11 @@ function createWindow() {
       sandbox: true,
       spellcheck: false,
     },
-  })
+  }
+  // 材质与标题栏逐平台不同，两个都返回 BrowserWindowConstructorOptions，
+  // 展开在这里而不是塞进上面的字面量里 —— 联合类型的展开没法被 TS 收窄（会报不可赋值）。
+  const options: BrowserWindowConstructorOptions = { ...base, ...windowMaterial(), ...titleBarOptions() }
+  win = new BrowserWindow(options)
 
   // 把渲染进程的 console 转发到主进程输出：界面出问题时（React 抛错、CSP 拦截、
   // Promise 未处理）这里是唯一的线索。开发模式下才开，避免正常使用刷屏。
@@ -601,7 +666,7 @@ function buildMenu() {
     { role: 'viewMenu', label: '视图' },
     { role: 'windowMenu', label: '窗口' },
   ]
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template as MenuItemConstructorOptions[]))
 }
 
 /** 打开原生目录选择框，选定后用它重启 host。 */
@@ -619,16 +684,117 @@ async function openWorkspace() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 右侧预览面板：读文件
+//
+// 与 `openPath` 同一套路径语义（相对路径按工作目录解析），差别是**把内容读回来**。
+// 三条边界：
+//   1. 只读，不写（写文件仍然只能走设置界面那条带白名单的路）；
+//   2. **有体积上限**：文本 1MB、图片 8MB —— 预览面板是给人看一眼的，不是编辑器，
+//      把 40MB 的日志塞进渲染进程只会卡住界面（超限时如实告知并提示用系统程序打开）；
+//   3. 类型由**扩展名**判断，认不出来的一律当 binary（只说体积，不给内容）。
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 文本类预览的体积上限（字节）。 */
+const PREVIEW_TEXT_MAX = 1_000_000
+/** 图片类预览的体积上限（字节，base64 之前）。 */
+const PREVIEW_IMAGE_MAX = 8_000_000
+
+/** 扩展名 → 渲染类型。 */
+const IMAGE_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'avif', 'ico', 'svg'])
+const MARKDOWN_EXT = new Set(['md', 'markdown', 'mdx'])
+const TEXT_EXT = new Set(['txt', 'log', 'jsonl', 'ndjson', 'csv', 'tsv', 'diff', 'patch'])
+/** 代码类：值是给高亮用的语言名（Streamdown 内部是 Shiki，认这些名字）。 */
+const CODE_EXT: Readonly<Record<string, string>> = {
+  ts: 'typescript', tsx: 'tsx', mts: 'typescript', cts: 'typescript',
+  js: 'javascript', jsx: 'jsx', mjs: 'javascript', cjs: 'javascript',
+  json: 'json', jsonc: 'json', yml: 'yaml', yaml: 'yaml', toml: 'toml', ini: 'ini',
+  py: 'python', rb: 'ruby', go: 'go', rs: 'rust', java: 'java', kt: 'kotlin',
+  c: 'c', h: 'c', cc: 'cpp', cpp: 'cpp', hpp: 'cpp', cs: 'csharp', swift: 'swift',
+  php: 'php', sh: 'bash', bash: 'bash', zsh: 'bash', fish: 'fish', ps1: 'powershell',
+  sql: 'sql', html: 'html', htm: 'html', css: 'css', scss: 'scss', less: 'less',
+  xml: 'xml', vue: 'vue', svelte: 'svelte', lua: 'lua', pl: 'perl', dart: 'dart',
+  Makefile: 'makefile', makefile: 'makefile', dockerfile: 'dockerfile',
+}
+
+/** 图片扩展名 → MIME。 */
+const IMAGE_MIME: Readonly<Record<string, string>> = {
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
+  webp: 'image/webp', bmp: 'image/bmp', avif: 'image/avif', ico: 'image/x-icon',
+  svg: 'image/svg+xml',
+}
+
+/**
+ * 按扩展名判断该怎么渲染。
+ * @param target - 文件绝对路径。
+ * @returns 渲染类型与（代码类的）语言名。
+ */
+function previewTypeOf(target: string): { kind: PreviewKind; language: string } {
+  const name = target.slice(target.lastIndexOf('/') + 1)
+  const dot = name.lastIndexOf('.')
+  const ext = dot <= 0 ? name.toLowerCase() : name.slice(dot + 1).toLowerCase()
+  if (IMAGE_EXT.has(ext)) return { kind: 'image', language: '' }
+  if (MARKDOWN_EXT.has(ext)) return { kind: 'markdown', language: '' }
+  if (TEXT_EXT.has(ext)) return { kind: 'text', language: '' }
+  const language = CODE_EXT[ext] ?? CODE_EXT[name]
+  if (language !== undefined) return { kind: 'code', language }
+  return { kind: 'binary', language: '' }
+}
+
+/**
+ * 读一个文件给预览面板。
+ * @param raw - 渲染进程传来的路径（可能是相对的）。
+ * @returns 预览载荷（读不到时 `ok: false` + `error`）。
+ */
+async function readForPreview(raw: unknown): Promise<PreviewPayload> {
+  if (typeof raw !== 'string' || raw.trim() === '') {
+    return { ok: false, path: '', kind: 'binary', error: '路径为空' }
+  }
+  // 与 openPath 同一条规则：相对路径按 agent 的工作目录解析。
+  const target = isAbsolute(raw) ? raw : join(launchConfig.cwd, raw)
+  const { kind, language } = previewTypeOf(target)
+  let size: number
+  try {
+    size = (await stat(target)).size
+  } catch {
+    return { ok: false, path: target, kind, error: '文件不存在或读不到' }
+  }
+  const limit = kind === 'image' ? PREVIEW_IMAGE_MAX : PREVIEW_TEXT_MAX
+  if (size > limit) {
+    return {
+      ok: false,
+      path: target,
+      kind,
+      bytes: size,
+      error: `${(size / 1024 / 1024).toFixed(1)} MB，超过预览上限（${String(Math.round(limit / 1024 / 1024))} MB），请用系统程序打开`,
+    }
+  }
+  try {
+    const buffer = await readFile(target)
+    if (kind === 'image') {
+      const mime = IMAGE_MIME[target.slice(target.lastIndexOf('.') + 1).toLowerCase()] ?? 'image/png'
+      return { ok: true, path: target, kind, bytes: size, dataUrl: `data:${mime};base64,${buffer.toString('base64')}` }
+    }
+    if (kind === 'binary') return { ok: true, path: target, kind, bytes: size }
+    return { ok: true, path: target, kind, bytes: size, text: buffer.toString('utf8'), language }
+  } catch (error) {
+    return { ok: false, path: target, kind, error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // IPC 处理器
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** host 实例（下面所有 IPC handler 共用一个）。 */
 const host = new AgentHost(
   (event) => {
-    if (event.type === 'workspace') {
-      workspaceSnapshot = { projects: event.projects, sessions: event.sessions }
+    // 子进程输出按不可信处理：不认识的帧直接丢，别让它进渲染进程的归约器。
+    if (!isHostEvent(event)) return
+    const frame = event
+    if (frame.type === 'workspace') {
+      workspaceSnapshot = { projects: frame.projects, sessions: frame.sessions }
     }
-    sendToRenderer(event)
+    sendToRenderer(frame)
   },
   ({ code }) => { reportHostFailure(new Error(`agent host 异常退出 (code ${String(code)})，可在菜单里新建会话重试`)) },
 )
@@ -665,14 +831,14 @@ function settingsRoots() {
  * @param {unknown} path - 渲染进程传来的路径。
  * @returns {{ path: string } | { error: string }} 通过时给出绝对路径。
  */
-function allowedSettingsPath(path) {
-  if (typeof path !== 'string' || path.trim() === '') return { error: '路径为空' }
+function allowedSettingsPath(path: unknown): { ok: true; path: string } | { ok: false; error: string } {
+  if (typeof path !== 'string' || path.trim() === '') return { ok: false, error: '路径为空' }
   const target = resolve(path)
   for (const root of settingsRoots()) {
     const base = resolve(root)
-    if (target === base || target.startsWith(`${base}${sep}`)) return { path: target }
+    if (target === base || target.startsWith(`${base}${sep}`)) return { ok: true, path: target }
   }
-  return { error: `不允许读写这个路径（只允许配置与技能/命令目录）：${target}` }
+  return { ok: false, error: `不允许读写这个路径（只允许配置与技能/命令目录）：${target}` }
 }
 
 function registerIpc() {
@@ -692,7 +858,7 @@ function registerIpc() {
       node: process.versions.node,
       platform: process.platform,
       arch: process.arch,
-      hostNode: host.info?.nodeVersion,
+      hostNode: host.readyInfo?.nodeVersion,
       /** 窗口是否启用了原生磨砂玻璃（渲染进程据此决定侧栏背景策略）。 */
       nativeMaterial: NATIVE_MATERIAL,
     }
@@ -742,6 +908,11 @@ function registerIpc() {
     return restartWith({ ...launchConfig, sessionId: undefined, resume: undefined })
   })
 
+  ipcMain.handle(IPC.previewRead, async (event, path) => {
+    assertSender(event)
+    return await readForPreview(path)
+  })
+
   ipcMain.handle(IPC.openPath, async (event, path) => {
     assertSender(event)
     if (typeof path !== 'string' || path === '') throw new Error('路径为空')
@@ -759,7 +930,7 @@ function registerIpc() {
   ipcMain.handle(IPC.settingsRead, async (event, path) => {
     assertSender(event)
     const allowed = allowedSettingsPath(path)
-    if (allowed.error !== undefined) return { ok: false, error: allowed.error }
+    if (!allowed.ok) return { ok: false, error: allowed.error }
     try {
       const content = await readFile(allowed.path, 'utf8')
       return { ok: true, content }
@@ -771,7 +942,7 @@ function registerIpc() {
   ipcMain.handle(IPC.settingsWrite, async (event, path, content) => {
     assertSender(event)
     const allowed = allowedSettingsPath(path)
-    if (allowed.error !== undefined) return { ok: false, error: allowed.error }
+    if (!allowed.ok) return { ok: false, error: allowed.error }
     if (typeof content !== 'string') return { ok: false, error: '内容必须是字符串' }
     try {
       await writeFile(allowed.path, content, 'utf8')

@@ -6,33 +6,201 @@ Electron 外壳。**复用 `app/cli/` 的同一套 DSH 内核装配**，只把�
 npm run desktop          # 打开窗口
 ```
 
-> **文件扩展名约定**（都受根 `package.json` 的 `"type": "module"` 影响）：
+> **客户端全部是 TypeScript**（`app/desktop/**` 下没有手写的 `.js`），但有两条
+> 「谁负责擦类型」的分工：
 >
-> | 文件 | 模块系统 | 说明 |
+> | 文件 | 谁执行 | 说明 |
 > | --- | --- | --- |
-> | `main.js` / `ipc.js` / `host/*.ts` | ESM | `"type": "module"` 下 `.js` 就是 ESM，无需 `.mjs` |
-> | `preload.js` | **CommonJS** | 见下方说明，**不要改成 `import`** |
-> | `renderer/src/main.tsx` | TSX | 由 `<script src>` 加载，不走 Node 模块系统 |
+> | `main.ts` / `ipc.ts` / `host/*.ts` / `cli/*.ts` | Electron 自带的 Node 24 | **默认开类型擦除**，直接跑 `.ts`，不需要构建步骤 |
+> | `scripts/*.ts` | 系统 node（≥22.6，本机 24） | 同上；`npm run build:renderer` 直接跑 `.ts` |
+> | `preload.ts` | **先构建成 `preload.cjs`**，再由 Electron 加载 | 沙箱化 preload 走 Electron 自己的 CJS 加载器，**不认识 `.ts`** |
+> | `renderer/src/*.tsx` | 浏览器（打包成 IIFE） | 由 `<script src>` 加载，不走 Node 模块系统 |
 >
-> `preload.js` 是全项目唯一「`.js` 但属于 CommonJS」的文件：
-> **Electron 加载 preload 时会忽略 `"type": "module"`**，一律按 CommonJS 执行
+> ⚠️ **`preload` 是全项目唯一需要构建的一环，而且不能省**：把 Electron 的
+> `webPreferences.preload` 指到 `preload.ts` 会**静默失败**（`window.YuanMy` 不存在，
+> 界面只会说「preload 脚本没有加载」，看不出真因）。实测：同一个文件指 `.ts` 时
+> `window.probe === null`，指构建出来的 `.cjs` 时正常。
+> 另外 **Electron 加载 preload 时会忽略 `"type": "module"`**，一律按 CommonJS 执行
 > （官方文档 *ES Modules (ESM) in Electron*：「Preload scripts will ignore
-> `type: module` fields」），沙箱化 preload 也不支持 ESM `import`。
-> 所以这里的 `require('electron')` 是有效的（实测 `window.YuanMy` 能拿到 bridge）。
->
-> 代价要说清楚：**除了 Electron，所有工具都会以为它是 ESM**（Node、编辑器、linter、打包器）。
-> 想消除这个歧义，把文件名换回 `preload.cjs` 就行 —— 官方的 DSH 桌面端正是这么做的
-> （`lib/main.js` 走 ESM，`src/main.ts` 里引用的却是 `preload-app.cjs` /
-> `preload-mandatory.cjs`，其 `tsdown.config.ts` 的注释写着
-> "Sandboxed Electron preloads run as CommonJS even though the application package is ESM"）。
-> 两种命名本项目都验证可用，选 `.js` 是为了统一观感。
+> `type: module` fields」），沙箱化 preload 也不支持 ESM `import` ——
+> 所以产物必须是 CJS，由 `scripts/build-renderer.ts` 用 esbuild 打成自包含的
+> `preload.cjs`（`electron` 留作外部依赖）。官方 DSH 桌面端也是这个分工
+> （`lib/main.js` 走 ESM，preload 是构建出来的 `preload-app.cjs`）。
+
+---
+
+## 目录
+
+| 总览 | 架构 | 界面 | 打包 |
+| --- | --- | --- | --- |
+| [0. 客户端代码地图](#0-客户端代码地图)<br>[0.1 技术栈与官方文档](#01-技术栈与官方文档)<br>[0.2 自研 vs 成熟组件](#02-自研-vs-成熟组件能不能换) | [1. 三个进程，一条数据流](#1-三个进程一条数据流)<br>[2. 为什么内核跑在子进程里](#2-为什么内核跑在子进程里)<br>[3. IPC 契约](#3-ipc-契约加一个功能要改哪几处)<br>[4. 启动时序](#4-启动时序)<br>[5. 安全基线](#5-安全基线) | [6. 界面是怎么长出来的](#6-界面是怎么长出来的)<br>— 数据流 / 视觉 / 侧栏 / 会话条目<br>— 侧栏背景 / 设置界面 / 恢复会话<br>— 输入框 / 指令 token / 统计 / 布局<br>— 会话刻度尺 / 预览面板 / 轨迹视图 / 输入法 | [7. 打包：Electron Forge](#7-打包electron-forge)<br>[8. 已知限制与下一步](#8-已知限制与下一步) |
+
+---
+
+## 0. 客户端代码地图
+
+`app/desktop/` 下一个手写的 `.js` 都没有，全部是 `.ts` / `.tsx`：
+
+```
+app/desktop/
+  main.ts                  Electron 主进程：窗口/菜单/生命周期、IPC 收口、子进程生命周期、窗口材质
+  ipc.ts                   IPC 频道名 + ShellState / LaunchConfig / ShellEvent（只被主进程引用）
+  preload.ts               安全桥源码（唯一需要构建的一环 → preload.cjs，见开头说明）
+  host/                    内核宿主**子进程**（与主进程分进程，见第 2 节）
+    index.ts               装配内核、收 IPC 请求、推事件
+    bridge.ts              DSH 事件 → 界面词表（回合结论的唯一映射点）
+    history.ts             会话日志 → Item[]（恢复会话时的回放）
+    sessions.ts            工作区/项目/会话清单（跨项目靠 project roots）
+    protocol.ts            跨进程词表：HostEvent / HostRequest / HostReadyInfo / isHostEvent
+  renderer/
+    index.html             唯一页面（CSP + 两个相对路径的产物）
+    src/main.tsx           React 入口
+    src/app.tsx            外壳布局、标签栏、滚动策略
+    src/use-agent.ts       唯一的 reducer：事件 → 界面状态；所有动作（send/steer/restart/…）
+    src/composition.ts     输入法（IME）组字守卫
+    src/icons.tsx          lucide-react 的包装层（尺寸 16 / 线宽 1.75 / `Icon*` 命名收敛）
+    src/components/        界面组件（每个文件一个关注点）
+      sidebar.tsx          项目→会话的树、搜索、底栏状态
+      sidebar-cylinder.ts  侧栏柱面粒子：**纯模拟**（可注入随机源，能 Node 里推演）
+      sidebar-backdrop.tsx 侧栏粒子的 canvas 那半边（rAF/DPR/暂停/颜色）
+      composer.tsx         输入区 + 触发符菜单接线 + 键盘总闸
+      mention-menu.tsx     触发符候选（纯逻辑 + 列表 UI）
+      editor/              Tiptap：chip 节点、文档↔文本、触发符规则、suggestion 插件、扩展集
+      message.tsx          一条会话条目（用户/助手/提示/纠偏；带 data-item-id）
+      tool-card.tsx        工具调用卡片
+      file-card.tsx        文件卡片（主体=预览，右侧「打开」走 shell.openPath）
+      trace.tsx            轨迹视图：按角色分色的时间线（可折叠长步骤）
+      message-rail.tsx     右侧会话刻度尺（等距短横线 + 白色长横条 + 滚轮/点击/拖动）
+      message-rail-model.ts 上面那把尺子的**纯逻辑**（indexAt / rulerShift，可 Node 里跑）
+      preview-panel.tsx    右侧预览面板（报告 / 代码 / 图片 / 文本 / 最近文件）
+      markdown.tsx         Streamdown 封装（助手正文）
+      rich-text.tsx        纯文本染色组件（用户消息/工具参数/轨迹）
+      rich-text-tokens.ts  上面那个的**纯逻辑**（tokenizer）
+      settings-panel.tsx   技能/命令/MCP 的查看编辑模态
+  scripts/
+    build-renderer.ts      构建渲染进程（esbuild + PostCSS/Tailwind）+ 打 preload.cjs
+    build-app.ts           打包用的 staging（生产依赖 hoisted + 运行时文件）
+  forge.config.ts          Electron Forge 配置（asar.unpack / makers / fuses）
+```
+
+**不在 `app/desktop/` 但属于客户端的东西**：`app/cli/`（内核装配，桌面端与终端共用）、
+`app/mcp/butian/`（内置 MCP 服务器，由 host 子进程按相对路径拉起）。
+
+**这一轮清理掉的**（都确认过没人引用）：`components/top-bar.tsx`（整份文件 —— 标签栏早就
+内联进 `app.tsx` 了）、`icons.tsx` 的 `IconFolder`、`rich-text.tsx` 里没人 import 的再导出、
+`sidebar-cylinder.ts` 里只服务于临时脚本的两个统计函数、`protocol.ts` 的 `HostLaunchConfig`
+与 `isHostEvent`（后者写 TS 时又**真的需要**了，于是带着真实调用点回来了）、CSS 里 7 条
+`.tokenbar*`（旧版统计条）与 `.sidebar__label*` / `.project-tree` / `.project__path` / `.stack`
+（旧侧栏结构）以及没人用的 `--ds-transition-duration-slow`。
+
+> 唯一保留的 `.js` 是 `app/opencli/**`：opencli 只发现 `~/.opencli/clis/<site>/<命令>.js`，
+> **不认 `.ts`**（见 `app/opencli/README.md`），所以它们的归属单独放在 `tsconfig.js.json`。
+
+---
+
+## 0.1 技术栈与官方文档
+
+**只列真正在用的**（`package.json` 里挂着但没被 import 的不算）。改这些子系统之前，
+先看对应的官方文档 —— 本仓库的注释只写「为什么这么用」，不重复 API。
+
+### 壳与打包
+
+| 组件 | 用在哪 | 官方文档 |
+| --- | --- | --- |
+| Electron 44 | 整个壳（`main.ts` / `preload.ts`） | https://www.electronjs.org/docs/latest/ |
+| Electron Forge 7 | 打包（`forge.config.ts`、`npm run package/make`） | https://www.electronforge.io/ |
+| └ 导入已有项目 | 本仓库的接入方式 | https://www.electronforge.io/import-existing-project |
+| └ Makers（zip/dmg） | `out/make/**` | https://www.electronforge.io/config/makers |
+| └ Fuses 插件 | `RunAsNode` 必须为 true（内核子进程靠它） | https://www.electronforge.io/config/plugins/fuses |
+| @electron/fuses | 上面那个插件背后 | https://github.com/electron/fuses |
+| Electron Fuses 概念 | 「为什么 RunAsNode 不能关」 | https://www.electronjs.org/docs/latest/tutorial/fuses |
+
+### 界面
+
+| 组件 | 用在哪 | 官方文档 |
+| --- | --- | --- |
+| React 19 | 全部组件；reducer 在 `use-agent.ts` | https://react.dev/ |
+| └ `useReducer` | 事件 → 状态的那一个 reducer | https://react.dev/reference/react/useReducer |
+| Tailwind CSS v4 | **只给 Streamdown 用**（自己的组件写语义类） | https://tailwindcss.com/docs |
+| Streamdown | 助手正文的 Markdown 渲染（`markdown.tsx`） | https://streamdown.ai/ |
+| └ `@streamdown/code` / `cjk` | 代码高亮（Shiki）/ 中文排版 | https://shiki.style/ |
+
+### 输入框（编辑器）
+
+| 组件 | 用在哪 | 官方文档 |
+| --- | --- | --- |
+| Tiptap 3 | 输入框（`components/editor/*`） | https://tiptap.dev/docs |
+| └ Suggestion 工具 | `/` `@` `#` 的触发与匹配 | https://tiptap.dev/docs/editor/api/utilities/suggestion |
+| └ Placeholder | 空输入框的提示语 | https://tiptap.dev/docs/editor/extensions/functionality/placeholder |
+| └ 自定义节点 | chip（`editor/chip.ts`） | https://tiptap.dev/docs/editor/extensions/custom-extensions/create-new/node |
+| ProseMirror | Tiptap 之下的模型/视图；`someProp` 顺序、DOM 输出 | https://prosemirror.net/docs/ref/ |
+| └ 与 Tiptap 的关系 | 「什么时候要直接读 PM 文档」 | https://tiptap.dev/docs/editor/core-concepts/prosemirror |
+
+### 内核（host 子进程侧）
+
+| 组件 | 用在哪 | 官方文档 |
+| --- | --- | --- |
+| DeepSeek Harness（DSH） | 内核本身（40+ 个 `@deepseek-ai/dsh-*` 包） | https://www.npmjs.com/package/@deepseek-ai/dsh-agent |
+| Cordis | DSH 的插件/服务容器（`kernel.ts` 里 mount 的就是它） | https://github.com/shigma/cordis |
+| MCP TypeScript SDK | `app/mcp/butian/`、外挂 MCP 客户端 | https://github.com/modelcontextprotocol/typescript-sdk |
+| Zod | MCP 工具入参校验 | https://zod.dev/ |
+| node-pty | 终端型子进程（`dsh-subprocess-local` 带进来） | https://github.com/microsoft/node-pty |
+| koffi | Windows 上的原生调用（同一批依赖带进来） | https://koffi.dev/ |
+
+### 构建与依赖
+
+| 组件 | 用在哪 | 官方文档 |
+| --- | --- | --- |
+| esbuild | 渲染进程打包 + `preload.cjs` | https://esbuild.github.io/api/ |
+| PostCSS | 接 Tailwind v4 的 CSS 管线 | https://postcss.org/ |
+| TypeScript | 三个 tsconfig（见根 README） | https://www.typescriptlang.org/docs/ |
+| pnpm | 依赖管理（打包那节解释为什么要 hoisted） | https://pnpm.io/ |
+
+---
+
+## 0.2 自研 vs 成熟组件：能不能换
+
+「这段手写代码有没有现成的成熟组件可以替」——逐个过了一遍。结论分三档：
+**换**（明显划算）、**可换**（有得有失，看后续需求）、**不换**（换掉更糟）。
+
+### 换（建议做，风险小）
+
+| 自研 | 现成方案 | 为什么值得换 |
+| --- | --- | --- |
+| `settings-panel.tsx` 的模态 | [`@radix-ui/react-dialog`](https://www.radix-ui.com/primitives/docs/components/dialog) | 手写的模态只做了「点击遮罩关闭」。**焦点陷阱、`aria-modal`、Esc 语义、打开时锁定背景滚动、关闭后把焦点还回去**这些都要自己补 —— 现在一个都没有。Radix 是 headless 的（样式还是我们的 CSS），加一个依赖换一整套可访问性 |
+| `composer.tsx` 里的 `Dropdown` | [`@radix-ui/react-dropdown-menu`](https://www.radix-ui.com/primitives/docs/components/dropdown-menu) 或 [`@floating-ui/react`](https://floating-ui.com/docs/react) | 现在的下拉：点击遮罩关闭 + 位置写死（`absolute`）。**没有方向键导航、没有菜单语义、窄窗口会被裁**。同一个 Radix 依赖树，顺手一起换 |
+
+### 可换（有得有失）
+
+| 自研 | 现成方案 | 权衡 |
+| --- | --- | --- |
+| `sidebar-backdrop.tsx` 里的 rAF/可见性/媒体查询 | [`usehooks-ts`](https://usehooks-ts.com/)（`useDocumentVisibility` / `useMediaQuery` / `useResizeObserver` / `useInterval`） | 能省 ~40 行样板。不换的理由：这几个 hook 加起来不到 50 行，而且里面两处是**为这个场景特意调的**（每帧不读布局、`dt` 夹上限），用通用 hook 反而要再包一层 |
+| `host/protocol.ts` 的手写类型 + `isHostEvent` | [Zod](https://zod.dev/) schema（**已经在依赖里**，MCP 用的就是它） | 跨进程边界（子进程帧、渲染进程请求）用 schema 校验比手写判断更稳，还能顺便得到类型。代价：协议词表要写成 schema，读起来不如类型别名直观。建议**只换边界上的两处**，纯类型别名保留 |
+| `scripts/build-renderer.ts`（esbuild + PostCSS + Tailwind 手写管线） | [`@electron-forge/plugin-vite`](https://www.electronforge.io/config/plugins/vite) | 官方路径、自带 HMR、少维护一份脚本。不换的理由：脚本才 120 行、一次构建 0.3s，而且已经踩平了两个坑（`file://` 下必须 IIFE、Tailwind 扫 pnpm 符号链接要 `realpath`）。换成 Vite 要重新解决这两件事 |
+| ~~`icons.tsx` 的 12 个手写 SVG~~ | [`lucide-react`](https://lucide.dev/) | **已经换掉了**（图标从 12 个涨到 30+ 时换的）：`icons.tsx` 现在只是包装层，统一尺寸 16 / 线宽 1.75 / 保留 `Icon*` 命名，组件侧一行没改。按需具名 import，Tree-shaking 后只进用到的那些 |
+
+### 不换（换掉更糟）
+
+| 自研 | 「看起来像」的现成方案 | 为什么不换 |
+| --- | --- | --- |
+| `composition.ts` 输入法守卫 | 各种 `is-composing` 小包 | 它们给的是一个布尔标记；这里要的是**三个信号**（`isComposing` / `keyCode 229` / `compositionend` 后同宏任务的临时标记），每一条都有实测原因（见第 6 节）。而且 Tiptap 那条路还要额外判 `view.composing`（合成 Enter），现成包都不覆盖 |
+| `rich-text-tokens.ts` 指令染色 | `linkify-it` / `linkifyjs` | 它们只认 URL；这里认的是**项目自己的词表**（`/命令`、`mcp__*`、技能句式、路径启发式），而且判据要与输入框的触发符规则**共用同一份** |
+| `sidebar-cylinder.ts` 柱面粒子 | `tsParticles` / `particles.js` / `three.js` | 粒子库都是「发射器 + 生命周期」模型，做不出「整段柱面按角度投影、切成网格、随鼓面滚动」这种**几何驱动**的效果。引 three.js 能画，但为了一层背景多 600KB 与一整套 3D 概念不划算 |
+| `mention-menu.tsx` 的候选列表 | `cmdk` / `downshift` | 触发匹配与键盘（↑↓/Enter/Tab/Esc）**已经由 Tiptap 的 suggestion 插件负责**，菜单只是一个列表。引入 combobox 库会和编辑器抢焦点与按键，反而要写更多胶水 |
+| `use-agent.ts` 的 reducer | `zustand` / `jotai` / Redux | 状态只有「一条事件流 → 一棵状态树」，`useReducer` 是 React 原生解法；换状态库只增加概念，不减少代码 |
+| `message.tsx` / `tool-card.tsx` / `file-card.tsx` / `trace.tsx` | 无 | 它们是**这个产品的语义**（回合、工具调用、文件卡片、轨迹），没有通用组件可替 |
+| `message-rail.tsx` 会话刻度尺 | 没有对口货（`react-scrollspy` / `rc-slider` / 各种 minimap） | scrollspy 只给「当前在哪一节」，不给「点刻度跳过去 + 尺子自己滑」；`rc-slider` 是**表单控件**（取值 0~100），语义完全不对。这里要的是「一把可滚动的尺子」，几何与选中规则都是自己的 |
+| `main.ts` 的窗口材质 / 菜单 / 单实例 | 无 | 都是 Electron 原生 API 的直接用法，没有中间层可省 |
+
+> 一句话：**越靠近「协议与几何」的自研越该留，越靠近「通用交互外壳」的自研越该换。**
+> 上面第一档（两个 Radix 组件）是性价比最高的两步。
 
 ---
 
 ## 1. 三个进程，一条数据流
 
 ```
-┌──────────────────────── Electron 主进程 (main.js) ────────────────────────┐
+┌──────────────────────── Electron 主进程 (main.ts) ────────────────────────┐
 │  窗口 / 菜单 / 单实例锁 / 原生目录选择框                                    │
 │  ipcMain.handle(...)  ←─ 只接受本窗口的调用（assertSender）                 │
 └───────┬──────────────────────────────────────────────────▲─────────────────┘
@@ -52,9 +220,9 @@ npm run desktop          # 打开窗口
 
 | 文件 | 语言 | 角色 |
 | --- | --- | --- |
-| `main.js` | JS（ESM） | Electron 主进程：窗口、菜单、生命周期、IPC 收口、host 子进程管理、窗口材质 |
-| `preload.js` | JS（**CommonJS**） | 安全桥：把一组函数挂到 `window.YuanMy`，此外什么都不暴露 |
-| `ipc.js` | JS（ESM） | IPC 频道名 + shell 状态形状（只被主进程引用） |
+| `main.ts` | JS（ESM） | Electron 主进程：窗口、菜单、生命周期、IPC 收口、host 子进程管理、窗口材质 |
+| `preload.cjs` | JS（**CommonJS**） | 安全桥：把一组函数挂到 `window.YuanMy`，此外什么都不暴露 |
+| `ipc.ts` | JS（ESM） | IPC 频道名 + shell 状态形状（只被主进程引用） |
 | `host/index.ts` | TS | agent host：装凭据、起内核、驱动回合、收发协议消息 |
 | `host/bridge.ts` | TS | 内核事件 → UI 帧；工具摘要直接复用 CLI 的 `summarizeCall` / `summarizeResult` |
 | `host/protocol.ts` | TS | 主进程 ⇄ host 的类型契约（唯一的「协议真相」） |
@@ -68,9 +236,9 @@ npm run desktop          # 打开窗口
   它**不归 Electron 加载** —— 由 esbuild 打包，类型由独立的
   `renderer/tsconfig.json` 检查（`DOM` + `jsx: react-jsx`），与 Node 侧的
   `tsconfig.json` 分开，互不污染全局类型。
-- **`preload.js` 必须是 JS**：沙箱化 preload 的 `require` 只认 `electron`，
+- **`preload.cjs` 必须是 JS**：沙箱化 preload 的 `require` 只认 `electron`，
   更没有 TypeScript 加载能力，所以它只能是一段自包含的 CommonJS。
-- **`main.js` 保持 JS**：Electron 主进程直接执行它，而 Electron 自带 Node 不保证
+- **`main.ts` 保持 JS**：Electron 主进程直接执行它，而 Electron 自带 Node 不保证
   开启类型擦除，`.ts` 不一定能跑。想改造的话得先引入构建步骤（或确认目标
   Electron 版本的 Node 支持 `--experimental-strip-types`）。
 
@@ -84,7 +252,7 @@ npm run typecheck    # tsc --noEmit（Node 侧） && tsc --noEmit -p app/desktop
 
 Markdown 用 [Streamdown](https://streamdown.ai/)（React 组件）渲染，它需要 React 运行时
 和 Tailwind 生成的样式；浏览器跑不了 JSX，`file://` 下也没有裸包名解析。
-所以 `scripts/build-renderer.js` 用 esbuild + PostCSS 把它们**打成两个文件**：
+所以 `scripts/build-renderer.ts` 用 esbuild + PostCSS 把它们**打成两个文件**：
 
 ```
 renderer/dist/renderer.js     IIFE（React + Streamdown + shiki + 我们的组件）
@@ -120,15 +288,15 @@ renderer/dist/renderer.css    Tailwind 产出（含 Streamdown 的类名）
 
 ## 3. IPC 契约：加一个功能要改哪几处
 
-渲染进程能做的事，全部由 `preload.js` 的 `api` 对象定义。加一个动作的完整链路：
+渲染进程能做的事，全部由 `preload.cjs` 的 `api` 对象定义。加一个动作的完整链路：
 
-1. `ipc.js`：往 `IPC` 表里加频道名（例如 `theme: 'YuanMy:theme'`）；
-2. `main.js`：加 `ipcMain.handle(IPC.theme, (event) => { assertSender(event); … })`；
-3. `preload.js`：在 `CHANNEL` 与 `api` 里各加一条（**沙箱化 preload 不能 require 本地文件，
+1. `ipc.ts`：往 `IPC` 表里加频道名（例如 `theme: 'YuanMy:theme'`）；
+2. `main.ts`：加 `ipcMain.handle(IPC.theme, (event) => { assertSender(event); … })`；
+3. `preload.cjs`：在 `CHANNEL` 与 `api` 里各加一条（**沙箱化 preload 不能 require 本地文件，
    所以频道字面量必须重复一份**）；
 4. `renderer/src/` 里调用 `api.theme(...)`（组件或 `use-agent.ts`）。
 
-第 3 步的两处重复是最容易出错的地方：`ipc.js` 与 `preload.js` 的频道名必须逐字一致，
+第 3 步的两处重复是最容易出错的地方：`ipc.ts` 与 `preload.cjs` 的频道名必须逐字一致，
 渲染进程能调的方法必须在 preload 里都暴露出来。**加界面动作时对着这两份表逐个核对。**
 
 想让界面显示一种**新的内核事件**，则是另一条链路：
@@ -138,14 +306,14 @@ renderer/dist/renderer.css    Tailwind 产出（含 Streamdown 的类名）
 3. `renderer/src/use-agent.ts`：在归约器的 `switch` 里加 `case`，再到 `components/message.tsx` 里决定怎么渲染。
 
 渲染进程里 `case` 的事件类型必须来自 `host/protocol.ts` 的 `HostEvent`，
-或者是 `ipc.js` 里 `SHELL_EVENT_TYPES` 那一组（主进程自己产生的事件）。
+或者是 `ipc.ts` 里 `ShellEvent` 那两个（主进程自己产生的事件）。
 
 ---
 
 ## 4. 启动时序
 
 ```
-main.js: app.whenReady().then(onReady)      ← 注意：不是顶层 await，见下
+main.ts: app.whenReady().then(onReady)      ← 注意：不是顶层 await，见下
   ├─ registerIpc()          先装 handler，避免界面抢跑
   ├─ buildMenu()
   ├─ createWindow()         窗口立刻显示（先出界面，不空等）
@@ -175,7 +343,7 @@ await app.whenReady()
 app.whenReady().then(() => { /* … */ })
 ```
 
-所以 `main.js` 把所有「需要 ready」的工作放进 `onReady()`，用 `.then()` 注册；
+所以 `main.ts` 把所有「需要 ready」的工作放进 `onReady()`，用 `.then()` 注册；
 事件监听（`window-all-closed` / `activate` / `before-quit`）则同步注册，它们不需要等 ready。
 注意这**不是**「顶层 await 不能用」—— `host/index.ts` 就大量用了顶层 await，
 它跑在普通 Node 进程里，没有这个限制。
@@ -189,15 +357,15 @@ app.whenReady().then(() => { /* … */ })
 
 | 措施 | 位置 | 作用 |
 | --- | --- | --- |
-| `contextIsolation: true` | `main.js` | 网页脚本与 preload 处于不同 JS 世界 |
-| `nodeIntegration: false` | `main.js` | 网页拿不到 `require` / `process` |
-| `sandbox: true` | `main.js` | preload 也在沙箱里，只能 `require('electron')` |
-| `contextBridge` 白名单 | `preload.js` | 网页只能看到 9 个函数，看不到 Electron 对象 |
+| `contextIsolation: true` | `main.ts` | 网页脚本与 preload 处于不同 JS 世界 |
+| `nodeIntegration: false` | `main.ts` | 网页拿不到 `require` / `process` |
+| `sandbox: true` | `main.ts` | preload 也在沙箱里，只能 `require('electron')` |
+| `contextBridge` 白名单 | `preload.cjs` | 网页只能看到 9 个函数，看不到 Electron 对象 |
 | CSP `script-src 'self'` | `renderer/index.html` | 界面不加载任何远程脚本 |
 | Streamdown 内置净化 | `streamdown` 依赖 | Markdown 走 `rehype-harden` + `rehype-sanitize` 后再渲染 |
 | 链接只当按钮 | `markdown.tsx` | Streamdown 把链接渲染成 `<button>`，点击经 `window.open` → 主进程转系统浏览器 |
-| `assertSender` | `main.js` | 每个 handler 校验调用方是不是本窗口 |
-| `setWindowOpenHandler` | `main.js` | 新窗口一律拒绝，http(s) 交给系统浏览器 |
+| `assertSender` | `main.ts` | 每个 handler 校验调用方是不是本窗口 |
+| `setWindowOpenHandler` | `main.ts` | 新窗口一律拒绝，http(s) 交给系统浏览器 |
 
 > CSP 里 `style-src` 带 `'unsafe-inline'`：Streamdown / shiki 会在运行时注入 `<style>`
 > （代码高亮主题）。样式注入不构成脚本执行风险，而 `script-src` 依然是收紧的。
@@ -295,7 +463,7 @@ html[data-vibrancy='native'] .app-shell { background: transparent; }
   Tailwind 只为**已定义**的 token 生成工具类，缺了会被静默丢掉（行内代码/链接/表格就没样式），
   所以 `@theme` 里把这一整套别名都映射到了上面的色板。
 - **磨砂玻璃**：由**窗口材质**提供，不是 CSS。
-  `main.js` 的 `windowMaterial()` 在 macOS 用 `vibrancy: 'sidebar'`、
+  `main.ts` 的 `windowMaterial()` 在 macOS 用 `vibrancy: 'sidebar'`、
   Windows 11 用 `backgroundMaterial: 'acrylic'`，Linux 退回不透明。
   渲染进程把结果写进 `html[data-vibrancy]`，CSS 只在 native 时让侧栏让出背景。
   **刻意不用 `backdrop-filter`**。
@@ -346,7 +514,7 @@ html[data-vibrancy='native'] .app-shell { background: transparent; }
 **一个**项目 —— 换到别的项目，上一个就直接消失了。数据位置不动，改用一份线索补齐：
 
 ```
-main.js                                    host（sessions.ts）
+main.ts                                    host（sessions.ts）
 <userData>/projects.json                   roots = [当前项目的库]
   { version, projects: [                   + 每个「最近打开」项目的 <path>/.YuanMy/sessions
       { path, lastOpenedAt }, …            ↓
@@ -366,7 +534,7 @@ main.js                                    host（sessions.ts）
   「列出来的」和「点开的」不是同一个项目的诡异现象；
 - 项目要**被打开过一次**才会进登记 —— 没跑过 YuanMy 的项目不会凭空出现在树里。
 
-> ⚠️ 会话只属于它的项目。`main.js` 的 `restartWith()` 里有条规则：换 cwd 时，
+> ⚠️ 会话只属于它的项目。`main.ts` 的 `restartWith()` 里有条规则：换 cwd 时，
 > **上一个**会话的 `resume` / `sessionId` 要丢掉 —— 否则会拿着旧项目的会话 id
 > 去新项目里找。但「恢复另一个项目里的会话」是**合法**组合（侧栏会同时给出目标
 > cwd 和该项目的会话 id），所以判据是「调用方有没有明确要求恢复」，
@@ -621,10 +789,10 @@ main.js                                    host（sessions.ts）
 手快连点两个会话时，第一次的内核会被第二次 kill 掉，而它晚到的 `history` / `workspace`
 帧会盖到第二次的界面上（表现：先闪一下 A 的会话，或者干脆停在 A）。两处代际守卫：
 
-- `main.js` 的 `AgentHost.generation`：每次 start / stop 都 +1，回调里捕获自己那一代，
+- `main.ts` 的 `AgentHost.generation`：每次 start / stop 都 +1，回调里捕获自己那一代，
   **不是当前代就直接丢弃**（message / error / close 三处）——
   上一版只靠 `this.child !== child` 判断，那只覆盖了 close，覆盖不了 message；
-- `main.js` 的 `restartGeneration`：被后一次切换取代的那次 `restartWith`，
+- `main.ts` 的 `restartGeneration`：被后一次切换取代的那次 `restartWith`，
   它的 resolve/reject **都不写状态、不报错**（它的失败是我们自己 kill 出来的）。
 
 实测：先点「session B」、80ms 后再点「say hi」，+800ms 停在 **say hi**（最后一次点击），
@@ -802,15 +970,16 @@ cacheWriteTokens 写入缓存的输入
 ### 工作台布局（左侧工作区 + 右侧对话/轨迹）
 
 ```
-┌───────────────┬──────────────────────────────────────┐
-│ 工作区  [+新会话]│  对话 | 轨迹            <cwd>         │ ← 标签栏（拖拽区）
-│ [搜索会话   ]  ├──────────────────────────────────────┤
-│ ▾ 项目         │  对话面板：推理行 / Markdown /        │
-│    ● 会话  时间 │  工具行 / 文件卡片（图标+名字+打开）    │
-│ ▸ 另一个项目   ├──────────────────────────────────────┤
-│ ─────────────  │  [+][完全访问][模型▾]         [发送]   │
-│ ● 就绪 13 工具 │  3.2k in/88 out · 3.0s · 1 轮         │ ← 会话统计
-└───────────────┴──────────────────────────────────────┘
+┌───────────────┬───────────────────────────────┬────────────┐
+│ 工作区  [+新会话]│  对话 | 轨迹        <cwd>  [▤] │ 预览面板    │ ← 标签栏（拖拽区）
+│ [搜索会话   ]  ├───────────────────────────────┤（可隐藏）   │
+│ ▾ 项目         │  对话面板：推理行 / Markdown /  ─┤ README.md  │
+│    ● 会话  时间 │  工具行 / 文件卡片（预览+打开） ─┤ 报告/代码/ │
+│ ▸ 另一个项目   ├───────────────────────────────┤ 图片/最近   │
+│ ─────────────  │  [+][完全访问][模型▾]   [发送]  │ 文件        │
+│ ● 就绪 13 工具 │  3.2k in/88 out · 3.0s · 1 轮  │            │
+└───────────────┴───────────────────────────────┴────────────┘
+                    ↑ 右侧一列「会话刻度尺」（对话太长时点刻度跳转）
 ```
 
 新增的构件与它们的**真实数据来源**：
@@ -819,7 +988,9 @@ cacheWriteTokens 写入缓存的输入
 | --- | --- |
 | 搜索框 | 前端过滤会话标题 / id；命中后切成跨项目平铺结果（找会话时层级是干扰） |
 | 标签栏「对话 / 轨迹」 | 同一个 `state.items`，轨迹走 `traceSteps()` 摊平（纯函数） |
-| 文件卡片 + 打开 | `fileActionOf()` 认出 read/write/edit 的路径；打开走主进程 `shell.openPath` |
+| 文件卡片 + 预览 / 打开 | `fileActionOf()` 认出 read/write/edit 的路径；**预览**走 `IPC.previewRead`，**打开**走主进程 `shell.openPath` |
+| 会话刻度尺（最右） | `railMarks()` 一条条目一道刻度；「当前读到第几条」由真实 DOM 位置算（`indexAt`） |
+| 预览面板（右侧列） | 「最近文件」= `recentFiles()`（倒着捞会话里碰过的文件，路径去重）；内容按扩展名分流渲染 |
 | 权限下拉 | **如实显示现状**：本地 provider 无沙箱无审批，所以只有「完全访问」一项 |
 | 模型下拉 | 内核 `ctx.llm.listModels(provider)`（`ready.info.models`），再按**本地清单**过滤 |
 
@@ -849,6 +1020,122 @@ host 侧（`host/index.ts` 的 `listModels`）的规则：
   假的安全控件比没有控件更糟。所以它只显示「完全访问」并说明怎么换成受限形态。
 - **统计里的「耗时」是上一轮的墙钟耗时**，由 host 在回合前后量（`durationMs`），
   不是前端估算；「轮次」是本会话已完成的回合数。
+
+### 会话刻度尺：等距短横线 + 白色长横条
+
+对话一长就没法快速回看：翻记录只能滚轮子，想问「刚才那份报告在哪」得滚半天。
+右侧这一列把整段会话压成一把**竖尺**，一条条目一道刻度：
+
+```
+   ────        普通刻度：14×2px 短横，按角色微调颜色（你=蓝紫 / 助手=灰 / 提示=琥珀）
+   ────────    当前刻度：30×3px **白色长横条** + 一点辉光（"我读到哪儿了"）
+   ↑ 尺子比窗口长时整体上下滑动，让当前刻度停在窗口中间（两端不越界）
+```
+
+三条交互，都是「一眼定位、一下跳过去」：
+
+| 操作 | 行为 |
+| --- | --- |
+| 在尺子上**滚轮** | 一格一格选（一格 = 一条条目），选择即跳转 —— 这就是「可滚动选择的刻度尺」 |
+| **点**某道刻度 | 平滑滚到那一条（`behavior: 'smooth'`） |
+| 在尺子上**拖** | 连续选（每滑过 10px = 一格） |
+| 悬停 | 浮出提示框：角色角标 + 摘要（最多 5 行）+「N 次工具」；正在跑的那条带「运行中」。**移开即渐隐**（160ms 淡出并轻推 6px 收回） |
+| 滚消息 | 尺子自动跟着走：**屏幕上最后那条可见的条目 = 当前刻度**（判定线在视口底边往上 8px），滑到中间 |
+| 键盘 | 焦点在刻度上时 ↑/↓ 换一条 |
+
+「当前是哪一条」只认一条规则：**屏幕上最后那条可见的条目**（判定线 = 视口底边往上
+`ANCHOR`=8px）。取底边而不是顶边是刻意的 —— 用户眼睛停在屏幕最后那条上，滚到会话末尾时
+当前刻度就该是**末尾那一条**；用顶边的话它会停在屏幕中间某条，跟看到的东西对不上。
+
+这条规则还决定了「点刻度跳到哪」：如果只是把条目顶到视口顶，短的条目会被后面几条挤出
+「最后可见」的位置，出现「点第 10 条、高亮跑到第 13 条」。所以落点由纯函数
+`jumpTop()` 给：**条目比视口高就顶到上方**（它的范围本来就盖住判定线），否则**让它的
+底边贴住判定线**（下方留 8px 余量）。这样「点哪条就亮哪条」恒成立 —— 有 126 组几何的
+性质测试盯着（遍历条目高度 × 视口高度 × 下标，断言跳完 `indexAt(jumpTop(...)) === i`）。
+
+数据分成两半，这是这个构件唯一需要理解的地方：
+
+- **有哪些刻度**：`railMarks()`（`use-agent.ts` 的纯函数）—— 角色、摘要、工具数、
+  是否还在跑。摘要压成单行、140 字截断。
+- **刻度在哪儿**：只能问真实 DOM。markdown 渲染出来的高度只有浏览器知道，
+  所以 `measure()` 量每个 `[data-item-id]` 的顶边位置，再交给纯函数 `anchorOf()` /
+  `indexAt()` / `jumpTop()` / `rulerShift()`（`components/message-rail-model.ts`，
+  无 DOM，能在 Node 里跑真值表）。
+
+四个踩过的坑，都写在代码注释里，这里留个索引：
+
+| 坑 | 表现 | 处理 |
+| --- | --- | --- |
+| `setPointerCapture` 抢走 click | 点刻度没反应，滚到的是「鼠标位置居中处」 | 捕获只在**拖动**时用，且监听挂 `window`（不改 click 落点） |
+| 窗口被遮挡时 rAF 被暂停 | 尺子停在 0 位置、点什么都没反应 | **首次测量同步做**；换选中项也同步算（只有重新测量走 rAF） |
+| 平滑滚动中途改写选中项 | 点第 10 条，尺子一路抖最后停在别处 | 跳转期间上锁（`lockRef`），动画结束解锁 |
+| 按内容长度成比例画刻度 | 一条巨长的工具输出占掉半把尺子，「第几条」数不清 | 刻度**等距**；内容高度只用来算「当前第几条」 |
+| 当前刻度按「视口顶边」算 | 滚到会话末尾时高亮停在屏幕中间某条，跟看到的东西对不上 | 判定线挪到**视口底边往上 8px**（`anchorOf()`）；跳转落点同步改成 `jumpTop()`，否则点第 10 条会亮到第 13 条 |
+| 提示框移开不消失、或消失得太生硬 | 悬停信息一直挂在界面上；直接卸载又没有任何过渡 | 分成两份状态：`tipVisible` 先置 false 让 CSS 淡出，`TIP_FADE`(160ms) 之后再清内容卸载；离开**刻度**就触发，划到相邻刻度时 enter 会撤掉定时器（既不残留也不闪） |
+
+> 尺子占 34px 宽（`.main-column--rail .composer` 把输入框右内边距从 24 加到 58），
+> 目的是让输入框与消息区**中心对齐** —— 只让消息那一行窄 34px 的话，两者中心会差 17px。
+
+### 预览面板：右侧可隐藏的报告 / 代码 / 图片视图
+
+挖洞时 agent 会不停产出**报告（markdown）、PoC（代码）、抓包（文本）、截图（图片）**。
+以前只能「用系统程序打开」，一开就是一个外部程序，来回切窗口反而打断思路。
+这个面板把这些东西直接画在界面里，按类型分流渲染：
+
+| 类型（主进程按扩展名判定） | 渲染方式 |
+| --- | --- |
+| `markdown`（`.md` / `.mdx`） | Streamdown —— 和对话正文同一套（`.sd` 作用域），排版天然一致 |
+| `code`（`.ts` / `.py` / `.json`…） | Streamdown + `@streamdown/code`（Shiki 高亮，语言由主进程按扩展名给） |
+| `image`（`png/jpg/gif/webp/svg`…） | data URL 的 `<img>`（下面那条 CSP 决定了必须走 data URL） |
+| `text`（`.txt` / `.log` / `.csv`…） | 等宽 `<pre>` |
+| `binary` / 超大 | 不硬撑：显示原因 + 「用系统程序打开」的出口 |
+
+怎么用：
+
+- 顶栏最右的 **▤** 开关面板；面板头部有「返回文件列表」和「用系统程序打开」。
+- 点对话里**文件卡片的主体** → 面板自动展开并显示那个文件；点「打开」仍然走系统程序。
+- 没选文件时显示**最近文件**：`recentFiles()` 倒着捞这次会话碰过的文件（路径去重，
+  最近的在前）—— SRC 场景下最关心的永远是刚生成的那份。
+- 换会话 / 换项目会清掉当前选中的文件（否则面板里挂着上一个项目的文件，看着像这次产出的）。
+
+四条实现上的取舍：
+
+- **读文件在主进程**（`IPC.previewRead` → `readForPreview()`）：扩展名判断、体积上限
+  （文本 1MB / 图片 8MB）、相对路径按工作目录解析都在那边。渲染进程没有 `fs`，
+  只按 `kind` 画。
+- **图片必须走 data URL**：CSP 是 `default-src 'none'; img-src 'self' data:`，
+  `file://` 不在白名单里 —— 想让 `<img>` 显示本地截图，只能把字节读出来做 data URL。
+- **代码高亮用围栏包一层**再交给 Streamdown：围栏长度取「正文里最长反引号串 + 1」——
+  PoC 脚本里出现 ``` 很常见，固定三个反引号会被提前闭合。
+- **读取代际号**（`generation`）丢弃过期结果：快速连点两个文件时，先发的那次可能后回来。
+
+### 轨迹视图：按角色分色的一条时间线
+
+「轨迹」标签把会话摊平成 agent 做过的每一步（`traceSteps()`），重点不是好看，
+而是**扫一眼就能分出谁在说话、哪一步开始跑偏**：
+
+```
+●─ 你     #1   run bash: echo packaged-ok
+│            run bash: echo packaged-ok
+●─ 推理   #2   （紫色斜体、默认更淡：思考过程读的人少，但要能跳过）
+│            第 1 轮：先看看用户到底要什么…
+●─ 工具   #3   bash
+│            {"command":"echo packaged-ok"}    ← 等宽字体
+●─ 助手   #4   第 1 轮结论：…                  ← 最亮的正文色
+```
+
+| 角色 | 节点图标（lucide） | 颜色 | 说明 |
+| --- | --- | --- | --- |
+| 你 | `user` | 蓝紫 `--ym-accent-text` | 与输入框、发送按钮同族 |
+| 助手 | `messages-square` | 近白 | 「结果」用最亮的颜色 |
+| 推理 | `brain` | 紫 + 斜体 | 读的人少，弱化但不丢 |
+| 工具 | `wrench` / `square-terminal` | 青绿 + 等宽 | 与 `@tool` token 同色；`shell*` 用终端图标 |
+| 提示 / 目标调整 | `info` / `target` | 琥珀 / 蓝紫 | 系统口吻，与用户输入区分 |
+| 失败 | `circle-alert` | 红（压过角色色） | 整行淡红底 + 「失败」角标 |
+
+两个细节：**超过 220 字的步骤默认折三行**，右上角「展开」按需展开（一份 200 行的报告
+不该顶掉后面十几步）；竖线用 `::before` 画在轨道上，首行的线从节点中心开始、
+末行的线到节点中心结束，线不出头。
 
 ### 视觉体系：炭黑 + 低饱和蓝紫
 
@@ -1026,24 +1313,24 @@ Forge 的 `package` 会把项目目录整个复制进 `app.asar`，再按 `packa
 | `node_modules` 是**扁平**布局 | pnpm 是「符号链接 + `.pnpm` 同级解析」 | prune 的依赖遍历看不到那些边，**删掉还要用的包** |
 | 依赖关系写在 `dependencies` | DSH 用 **`peerDependencies`** 装配内核 | prune 不认 peer，把半个内核装配线删掉 |
 
-所以 `scripts/build-app.js` 先物化一个**自包含目录** `build/app/`：
+所以 `scripts/build-app.ts` 先物化一个**自包含目录** `build/app/`：
 
 ```
 build/app/
-  package.json          # 生成：main=desktop/main.js + config.forge + 生产依赖 + electron 精确版本
-  forge.config.js       # 从 app/desktop/ 复制
+  package.json          # 生成：main=desktop/main.ts + config.forge + 生产依赖 + electron 精确版本
+  forge.config.ts       # 从 app/desktop/ 复制
   pnpm-workspace.yaml   # 复制 + nodeLinker: hoisted
   node_modules/         # pnpm install --prod（**扁平真实文件**，93MB）
-  desktop/…             # main.js / preload.js / ipc.js / host/*.ts / renderer/{index.html,dist}
+  desktop/…             # main.ts / ipc.ts / preload.cjs / host/*.ts / renderer/{index.html,dist}
   cli/…  mcp/…          # host 运行时 import 的 CLI 与会内置 MCP 服务器
 ```
 
-目录结构照抄 `app/desktop/`：`main.js` 里所有资源路径都是
+目录结构照抄 `app/desktop/`：`main.ts` 里所有资源路径都是
 `new URL('./xxx', import.meta.url)`，布局不变，主进程代码一行都不用改。
 
 ### 打包形态下内核怎么跑：**不依赖系统 Node**
 
-`main.js` 的 `resolveHostRuntime()` 分三种情形：
+`main.ts` 的 `resolveHostRuntime()` 分三种情形：
 
 | 情形 | 用什么 |
 | --- | --- |
@@ -1064,7 +1351,7 @@ MCP 子进程也是 `process.execPath` 拉起的（`app/cli/kernel.ts` 的 `avai
 （名字不匹配敏感词规则），但那里**显式兜底**了一份 —— 不传的后果是子进程以 GUI 身份启动，
 不报错也不干活，只在 Dock 里多一个图标。
 
-⚠️ 这条链路决定了 `forge.config.js` 里 **`FuseV1Options.RunAsNode` 必须保持 `true`**
+⚠️ 这条链路决定了 `forge.config.ts` 里 **`FuseV1Options.RunAsNode` 必须保持 `true`**
 （Forge 模板默认关掉它）。关掉的表现是「窗口能开、agent 永远不可用」。
 
 ### 四个踩过的坑（都是**静默失效**型）
@@ -1083,11 +1370,11 @@ MCP 子进程也是 `process.execPath` 拉起的（`app/cli/kernel.ts` 的 `avai
    staging 一个都不占时会一路找到**仓库根**，然后把仓库当成要打包的项目 ——
    报错却是 `Failed to locate module "@standard-schema/spec" from …/YuanMy/node_modules/…`，
    完全不提「项目目录认错了」。所以生成的 `package.json` 里写了
-   `config: { forge: './forge.config.js' }`，并保留 `devDependencies.electron`（精确版本，
+   `config: { forge: './forge.config.ts' }`，并保留 `devDependencies.electron`（精确版本，
    它同时是 `getElectronVersion()` 的数据源）。
 4. **别在块注释里写裸 glob。** `**` + `/` + `*` 这种字面量会**提前结束块注释**，
-   报出来的是莫名其妙的 `Unexpected token '.'`。`build-app.js` 里为此加了一条
-   `node --check forge.config.js` 的语法自检（Forge 自己的报错不给行号）。
+   报出来的是莫名其妙的 `Unexpected token '.'`。`build-app.ts` 里为此加了一条
+   `node --check forge.config.ts` 的语法自检（Forge 自己的报错不给行号）。
 
 另外两条小的：`devDependencies.electron` 只是给 Forge 看版本号，**不用真装** ——
 但 Forge 的依赖遍历要求声明的包**物理存在**，而它的向上查找循环

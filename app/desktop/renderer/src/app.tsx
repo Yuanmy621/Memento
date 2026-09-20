@@ -1,15 +1,16 @@
 /**
  * 界面根组件：把状态、事件与各区块拼起来。
  *
- * 布局是三行两列，主区顶部多一条**标签栏**：
+ * 布局是三行两列，主区顶部多一条**标签栏**；主区右侧还能再抽出一列预览面板：
  *
- *   ┌──────────┬──────────────────────────────┐
- *   │ 工作区    │ 对话 / 轨迹                    │ ← 标签栏
- *   │ 搜索      ├──────────────────────────────┤
- *   │ 会话树    │ 对话面板 或 轨迹面板            │
- *   │          ├──────────────────────────────┤
- *   │          │ 输入框 + 会话统计               │
- *   └──────────┴──────────────────────────────┘
+ *   ┌──────────┬───────────────────────────┬────────────┐
+ *   │ 工作区    │ 对话 / 轨迹         [预览]  │ 预览面板    │ ← 标签栏
+ *   │ 搜索      ├───────────────────────────┤（可隐藏）   │
+ *   │ 会话树    │ 对话面板 或 轨迹面板     ▐ │ 报告/代码/  │
+ *   │          ├───────────────────────────┤ 图片/最近文件│
+ *   │          │ 输入框 + 会话统计           │            │
+ *   └──────────┴───────────────────────────┴────────────┘
+ *                                   ↑ 右侧会话刻度尺（对话太长时快速跳转）
  *
  * 平台与窗口材质通过 `<html>` 上的 data 属性暴露给 CSS：
  *   - `data-platform`：darwin 要给红绿灯留位，win32 要给窗口控件留位；
@@ -20,13 +21,15 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
-import { traceSteps, useAgent, type AppInfo } from './use-agent.ts'
+import { railMarks, recentFiles, traceSteps, useAgent, type AppInfo } from './use-agent.ts'
 import { Sidebar } from './components/sidebar.tsx'
 import { Composer } from './components/composer.tsx'
 import { MessageItem } from './components/message.tsx'
+import { MessageRail } from './components/message-rail.tsx'
+import { PreviewPanel } from './components/preview-panel.tsx'
 import { TraceView } from './components/trace.tsx'
 import { SettingsPanel } from './components/settings-panel.tsx'
-import { IconChat, IconTrace } from './icons.tsx'
+import { IconChat, IconPanelClose, IconPanelOpen, IconTrace } from './icons.tsx'
 
 /** 主区顶部的两个面板。 */
 type Tab = 'chat' | 'trace'
@@ -34,13 +37,17 @@ type Tab = 'chat' | 'trace'
 export function App(): ReactElement {
   const {
     state, send, cancel, setModel, newSession, pickDirectory, getAppInfo,
-    resumeSession, openProject, refreshSessions, loadProjectSessions, openPath,
+    resumeSession, openProject, refreshSessions, loadProjectSessions, openPath, previewRead,
     loadSettings, readFile, writeFile, restartKernel, steer, listFiles,
   } = useAgent()
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null)
   const [tab, setTab] = useState<Tab>('chat')
   /** 设置面板是否打开。 */
   const [showSettings, setShowSettings] = useState(false)
+  /** 右侧预览面板是否展开（顶栏那个按钮控制）。 */
+  const [showPreview, setShowPreview] = useState(false)
+  /** 预览面板正在看哪个文件；`null` = 还没选，面板显示「最近文件」列表。 */
+  const [previewPath, setPreviewPath] = useState<string | null>(null)
   const messagesRef = useRef<HTMLDivElement>(null)
   /** 是否贴在底部：用户滚上去看历史时不要把视图拽回来。 */
   const pinnedRef = useRef(true)
@@ -73,6 +80,35 @@ export function App(): ReactElement {
   /** 轨迹：把会话摊平成「agent 做过的每一步」（纯函数，见 use-agent.ts）。 */
   const steps = useMemo(() => traceSteps(state.items), [state.items])
 
+  /** 右侧滑杆的刻度：一条条目一个刻度（同样是纯函数）。 */
+  const marks = useMemo(() => railMarks(state.items), [state.items])
+
+  /** 预览面板的「最近文件」：倒着捞这次会话碰过的文件，最近的在前。 */
+  const recent = useMemo(() => recentFiles(state.items), [state.items])
+
+  /**
+   * 是否显示右侧会话刻度尺。
+   *
+   * 只有一条消息时没什么可导航的，不占那 34px。这个判断同时决定输入框要不要
+   * 跟着让位（`main-column--rail`）—— 两处条件必须一致，所以在这里算一次。
+   */
+  const showRail = tab === 'chat' && marks.length >= 2
+
+  /**
+   * 换会话 / 换项目时把预览里的文件清掉。
+   *
+   * 不清的后果：新会话的面板里还挂着上一个项目的文件，看着像「这个会话产出的」——
+   * 而且那个路径在新工作目录下多半根本不存在。
+   */
+  const sessionKey = state.info?.sessionId ?? 'cold'
+  useEffect(() => { setPreviewPath(null) }, [sessionKey])
+
+  /** 在预览面板里看一个文件（对话里的文件卡片点一下就走到这里）。 */
+  const openPreview = useCallback((path: string): void => {
+    setPreviewPath(path)
+    setShowPreview(true)
+  }, [])
+
   /** 打开设置面板：每次都重新拉一遍数据（改完文件切回来看到的就是盘上的现状）。 */
   const openSettings = useCallback((): void => {
     setShowSettings(true)
@@ -93,7 +129,7 @@ export function App(): ReactElement {
         onOpenSettings={openSettings}
       />
 
-      <main className="main-column">
+      <main className={`main-column${showPreview ? ' main-column--preview' : ''}${showRail ? ' main-column--rail' : ''}`}>
         <header className="topbar drag-region">
           <nav className="tabs" role="tablist">
             <button
@@ -123,8 +159,18 @@ export function App(): ReactElement {
           <span className="topbar__sub" title={state.info?.cwd ?? ''}>
             {state.phase === 'ready' ? state.info?.cwd : ''}
           </span>
+          <button
+            type="button"
+            className={`topbar__icon no-drag${showPreview ? ' topbar__icon--on' : ''}`}
+            aria-pressed={showPreview}
+            title={showPreview ? '隐藏预览面板' : '显示预览面板（报告 / 代码 / 图片）'}
+            onClick={() => { setShowPreview(!showPreview) }}
+          >
+            {showPreview ? <IconPanelClose size={15} /> : <IconPanelOpen size={15} />}
+          </button>
         </header>
 
+        <div className="chat-area">
         {tab === 'chat' ? (
           <div
             className="messages"
@@ -146,7 +192,12 @@ export function App(): ReactElement {
                 </div>
               )}
               {state.items.map((item) => (
-                <MessageItem key={item.id} item={item} onOpenPath={(path) => { void openPath(path) }} />
+                <MessageItem
+                  key={item.id}
+                  item={item}
+                  onOpenPath={(path) => { void openPath(path) }}
+                  onPreview={openPreview}
+                />
               ))}
             </div>
           </div>
@@ -157,6 +208,11 @@ export function App(): ReactElement {
             </div>
           </div>
         )}
+          {/* 会话刻度尺只服务于「对话」：轨迹本身已经是紧凑的一列，不需要再导航 */}
+          {showRail && (
+            <MessageRail scrollRef={messagesRef} marks={marks} revision={state.items} />
+          )}
+        </div>
 
         <Composer
           state={state}
@@ -168,6 +224,17 @@ export function App(): ReactElement {
           onNewSession={() => { void newSession() }}
           onPickDirectory={() => { void pickDirectory() }}
         />
+
+        {showPreview && (
+          <PreviewPanel
+            path={previewPath}
+            recent={recent}
+            onSelect={setPreviewPath}
+            onOpenPath={(path) => { void openPath(path) }}
+            onClose={() => { setShowPreview(false) }}
+            read={previewRead}
+          />
+        )}
       </main>
       {showSettings && (
         <SettingsPanel

@@ -24,7 +24,9 @@
   },
   "include": [
     "app/cli/**/*.ts",
+    "app/desktop/*.ts",
     "app/desktop/host/**/*.ts",
+    "app/desktop/scripts/*.ts",
     "app/mcp/**/*.ts"
   ]
 }

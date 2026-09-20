@@ -11,7 +11,6 @@ import type { ReactElement, ReactNode } from 'react'
 import { tokenizeRichText, type TokenKind } from './rich-text-tokens.ts'
 
 /** 重新导出纯逻辑，组件调用方只需要认这一个模块。 */
-export { looksLikePath, tokenizeRichText, type Token, type TokenKind } from './rich-text-tokens.ts'
 
 /** 每种类型对应的 class（样式在 app.css 的 `.tok--*`）。 */
 const KIND_CLASS: Record<Exclude<TokenKind, 'text'>, string> = {

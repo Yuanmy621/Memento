@@ -44,7 +44,6 @@
   --ds-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
   --ds-transition-duration: 0.2s;
   --ds-transition-duration-fast: 0.1s;
-  --ds-transition-duration-slow: 0.3s;
 
   /* ── 静态色阶（只取暗色主题用得到的档位）───────────────────────────
      「bluish neutral」是这套 UI 的底色特征：不是纯灰，带一点冷调。 */
@@ -380,9 +379,43 @@ html[data-vibrancy="native"] .sidebar__search {
 .main-column {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
+  /* 第一列永远是对话区；预览面板展开时才有第二列（见 --preview） */
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
   background: var(--dsw-alias-bg-base);
+  /*
+   * 展开/收起预览面板时让列宽**过渡**过去，而不是「啪」地跳一下。
+   * Chrome 能对 `grid-template-columns` 做插值（长度值），不支持时退化成瞬变，不影响布局。
+   */
+  transition: grid-template-columns 200ms var(--ds-ease-in-out);
+}
+
+/* 预览面板展开：右侧多一列。宽度用 clamp —— 窄窗口不至于把对话挤没，
+   宽屏也不会让面板宽得离谱（SRC 的报告多是 markdown，太宽反而不便读）。 */
+.main-column--preview {
+  grid-template-columns: minmax(0, 1fr) clamp(340px, 32vw, 560px);
+}
+
+/* 顶栏横跨两列：面板展开时标签栏仍然占满整个主区宽度 */
+.main-column > .topbar { grid-column: 1 / -1; }
+
+/*
+ * 对话区：滚动容器（`.messages`）+ 悬浮在右侧的刻度滑杆（`.rail`）的定位上下文。
+ *
+ * 为什么要包一层：滑杆必须**浮**在消息上（不能挤占滚动条的宽度），
+ * 而 `.messages` 自己就是滚动容器、不能同时当绝对定位容器（会跟着内容滚）。
+ */
+.chat-area {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+.chat-area > .messages {
+  flex: 1;
+  min-width: 0;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -428,6 +461,33 @@ html[data-platform="win32"] .topbar {
   flex: 1;
 }
 
+/* 顶栏上的图标按钮（目前只有「预览面板」开关） */
+.topbar__icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+  transition: background-color var(--ds-transition-duration-fast) var(--ds-ease-in-out),
+    color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.topbar__icon:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* 面板开着时按钮常亮：一眼知道右边那一列是它控制的 */
+.topbar__icon--on {
+  background: var(--ym-accent-soft);
+  color: var(--ym-accent-text);
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
    5. 侧栏：品牌 / 项目树 / 底栏
    ══════════════════════════════════════════════════════════════════════════ */
@@ -446,28 +506,7 @@ html[data-platform="darwin"] .sidebar__brand {
   -webkit-app-region: drag;
 }
 
-.sidebar__sub {
-  display: flex;
-  align-items: center;
-  font-size: 12px;
-  color: var(--dsw-alias-label-secondary);
-}
-
 /* 分区小标题：caption 色 + 轻字距，和官方侧栏标题一致 */
-.sidebar__label {
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.4px;
-  color: var(--dsw-alias-label-caption);
-}
-
-.sidebar__label-actions {
-  display: flex;
-  gap: 8px;
-  float: right;
-  letter-spacing: 0;
-}
-
 .sidebar__section--grow {
   flex: 1;
   min-height: 0;
@@ -557,17 +596,6 @@ html[data-platform="darwin"] .sidebar__brand {
 .tree__leaf {
   display: flex;
   min-width: 0;
-}
-
-.project-tree {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  min-height: 0;
-  overflow-y: auto;
 }
 
 .project-node {
@@ -692,14 +720,6 @@ html[data-platform="darwin"] .sidebar__brand {
   font-size: 13px;
   font-weight: 500;
   color: var(--dsw-alias-label-primary);
-}
-
-.project__path {
-  color: var(--dsw-alias-label-caption);
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .session-list {
@@ -938,12 +958,6 @@ html[data-platform="darwin"] .sidebar__brand {
   gap: 6px;
 }
 
-.stack {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
 .mono {
   font-size: 11px;
 }
@@ -1134,6 +1148,14 @@ html[data-platform="darwin"] .sidebar__brand {
   padding: 0 24px 8px;
 }
 
+/*
+ * 有刻度滑杆时输入框跟着让位 26px。
+ *
+ * 滑杆只占消息那一行的宽度，输入框却在下一行 —— 不让位的话两者的中心会差 13px，
+ * 一眼就能看出「输入框比消息偏右」。多给的右内边距正好把中心拉回来。
+ */
+.main-column--rail .composer { padding-right: 58px; }
+
 .composer__inner {
   width: 100%;
   max-width: calc(var(--dsh-chat-content-width) + 16px);
@@ -1203,46 +1225,6 @@ html[data-platform="darwin"] .sidebar__brand {
 }
 
 /* ── token 统计：官方 StatsPills 规格（居中、13px、胶囊、tabular-nums）*/
-.tokenbar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  margin-top: 6px;
-  font-size: var(--dsh-content-font-size-secondary);
-  line-height: var(--dsh-content-line-height-secondary);
-}
-
-.tokenbar__item {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 1px 8px;
-  border-radius: 24px;
-  color: var(--dsw-alias-label-tertiary);
-  /* 数字等宽：token 数跳动时列不会左右抖 */
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  cursor: default;
-  transition: background-color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
-}
-
-.tokenbar__item:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-secondary);
-}
-
-.tokenbar__item b {
-  color: var(--dsw-alias-label-secondary);
-  font-weight: 500;
-}
-
-.tokenbar__item--muted { color: var(--dsw-alias-label-caption); }
-
-.tokenbar__sep { color: var(--dsw-alias-label-caption); }
-
-.tokenbar__spacer { flex: 1; }
-
 /* ══════════════════════════════════════════════════════════════════════════
    9. Markdown（Streamdown 输出容器）
    ══════════════════════════════════════════════════════════════════════════ */
@@ -1505,13 +1487,35 @@ html[data-platform="darwin"] .sidebar__brand {
 .filecard {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 2px;
   max-width: 420px;
-  padding: 7px 10px;
+  padding: 0 6px 0 0;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 8px;
   background: var(--dsw-alias-bg-layer-1);
 }
+
+/* 卡片主体是**按钮**：点一下就在右侧预览面板里打开（「打开」按钮才走系统程序） */
+.filecard__main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 7px 8px 7px 10px;
+  border: none;
+  border-radius: 8px 0 0 8px;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.filecard__main:hover { background: var(--dsw-alias-interactive-bg-hover); }
+
+/* 悬停时文件名变强调色：告诉用户「这里点得动，而且点了是预览」 */
+.filecard__main:hover .filecard__name { color: var(--ym-accent-text); }
 
 .filecard__icon {
   display: inline-flex;
@@ -1567,15 +1571,23 @@ html[data-platform="darwin"] .sidebar__brand {
   color: var(--ym-accent-text);
 }
 
-/* ── 轨迹视图：等宽、单行截断、失败标红 ───────────────────────────── */
+/* ── 轨迹视图：一条按角色分色的时间线 ─────────────────────────────────
+ *
+ * 结构是「轨道 + 节点 + 卡片」：左边一条竖线把整段过程串起来，节点里放角色图标，
+ * 右边是该步的内容。颜色靠两个变量下发（`--trace-tone` 图标/角标色、
+ * `--trace-fill` 角标底），**每类角色只写一组变量**，样式规则本身不重复。
+ * ───────────────────────────────────────────────────────────────────── */
 
 .trace {
+  list-style: none;
+  margin: 0;
+  padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 1px;
-  font-family: var(--ds-font-family-code);
-  font-size: 12px;
-  line-height: 18px;
+  /* 行间距为 0：竖线要靠卡片自己的内边距连起来，有 gap 就会断成一节一节 */
+  gap: 0;
+  --trace-tone: var(--dsw-alias-label-tertiary);
+  --trace-fill: rgba(255, 255, 255, 0.06);
 }
 
 .trace__empty {
@@ -1586,47 +1598,166 @@ html[data-platform="darwin"] .sidebar__brand {
 
 .trace__step {
   display: flex;
-  gap: 10px;
-  padding: 4px 6px;
-  border-radius: 6px;
-}
-
-.trace__step:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.trace__step--error {
-  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 10%, transparent);
-}
-
-.trace__kind {
-  flex: none;
-  width: 46px;
-  color: var(--dsw-alias-label-caption);
-  font-size: 10.5px;
-  letter-spacing: 0.4px;
-}
-
-.trace__kind--tool { color: var(--ym-accent-text); }
-.trace__kind--user { color: var(--dsw-alias-label-secondary); }
-.trace__kind--note { color: var(--dsw-alias-state-warn-primary); }
-
-.trace__body {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
+  gap: 8px;
   min-width: 0;
 }
 
-.trace__label {
-  color: var(--dsw-alias-label-primary);
+/* 轨道：一条贯穿整行的竖线 + 一个圆节点 */
+.trace__rail {
+  position: relative;
+  flex: none;
+  width: 24px;
+  display: flex;
+  justify-content: center;
 }
 
-.trace__detail {
+.trace__rail::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  transform: translateX(-50%);
+  background: var(--dsw-alias-border-l2);
+}
+
+/* 第一行的线从节点中心开始、最后一行的线到节点中心结束 —— 线不出头 */
+.trace__step:first-child .trace__rail::before { top: 16px; }
+.trace__step:last-child .trace__rail::before { bottom: calc(100% - 16px); }
+
+.trace__node {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: var(--dsw-static-violet-900);
+  color: var(--trace-tone);
+  box-shadow: inset 0 0 0 0.5px var(--dsw-alias-border-l2);
+}
+
+.trace__card {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 10px 8px 2px;
+  border-radius: 8px;
+}
+
+.trace__step:hover .trace__card {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.trace__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.trace__role {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 5px;
+  background: var(--trace-fill);
+  color: var(--trace-tone);
+  font-size: 10.5px;
+  line-height: 16px;
+}
+
+.trace__label {
+  font-family: var(--ds-font-family-code);
+  font-size: 11.5px;
   color: var(--dsw-alias-label-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trace__flag {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 18%, transparent);
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 10px;
+  line-height: 15px;
+}
+
+.trace__spacer { flex: 1; }
+
+.trace__seq {
+  flex: none;
+  font-family: var(--ds-font-family-code);
+  font-size: 10px;
+  color: var(--dsw-alias-label-caption);
+  opacity: 0.75;
+}
+
+/* 「展开 / 收起」只在悬停或键盘聚焦时露出来：默认状态下轨迹要够干净 */
+.trace__toggle {
+  flex: none;
+  padding: 0 6px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  font: inherit;
+  font-size: 11px;
+  line-height: 16px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.trace__step:hover .trace__toggle,
+.trace__toggle:focus-visible { opacity: 1; }
+
+.trace__toggle:hover { color: var(--ym-accent-text); }
+
+.trace__detail {
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* 长内容默认只留三行：一份 200 行的报告不该顶掉后面十几步 */
+.trace__detail--clamp {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ── 角色分色（只换变量）───────────────────────────────────────────── */
+
+/* 你：强调色 —— 和输入框、发送按钮同族，一眼找到「我说了什么」 */
+.trace__step--user { --trace-tone: var(--ym-accent-text); --trace-fill: var(--ym-accent-soft); }
+/* 助手回复：最亮的正文色，它是「结果」 */
+.trace__step--text { --trace-tone: var(--dsw-alias-label-primary); --trace-fill: rgba(255, 255, 255, 0.08); }
+/* 推理：紫、斜体、更淡 —— 读的人少，但要能一眼跳过 */
+.trace__step--reasoning { --trace-tone: rgb(178, 166, 224); --trace-fill: rgba(168, 140, 214, 0.16); }
+.trace__step--reasoning .trace__detail { font-style: italic; color: var(--dsw-alias-label-tertiary); }
+/* 工具：青绿 + 等宽 —— 和 `@工具` token 同色，参数/结果用代码字体 */
+.trace__step--tool { --trace-tone: rgb(140, 214, 199); --trace-fill: rgba(86, 184, 166, 0.14); }
+.trace__step--tool .trace__detail {
+  font-family: var(--ds-font-family-code);
+  font-size: 11.5px;
+  line-height: 17px;
+}
+/* 提示：琥珀（警告语义） */
+.trace__step--note { --trace-tone: var(--dsw-static-amber-400); --trace-fill: rgba(247, 173, 49, 0.14); }
+/* 目标调整：单独一类，和提示区分开 */
+.trace__step--steer { --trace-tone: var(--ym-accent-text); --trace-fill: var(--ym-accent-soft); }
+/* 失败：整行压红，且**压过上面的角色色**（顺序在最后） */
+.trace__step--error { --trace-tone: var(--dsw-alias-state-error-primary); --trace-fill: rgba(242, 90, 90, 0.16); }
+.trace__step--error .trace__card { background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 8%, transparent); }
 
 /* ── 下拉（加号 / 权限 / 模型）──────────────────────────────────────── */
 
@@ -2133,8 +2264,6 @@ html[data-platform="darwin"] .sidebar__brand {
 
 .msg--steer__text { min-width: 0; overflow-wrap: anywhere; }
 
-.trace__kind--steer { color: var(--ym-accent-text); }
-
 /* ─────────────────────────────────────────────────────────────────────────────
  * 指令 token 的样式（`/命令` · `@工具` · `#文件` · 技能名）
  *
@@ -2226,4 +2355,420 @@ html[data-platform="darwin"] .sidebar__brand {
 .composer__input .chip.ProseMirror-selectednode {
   outline: 1.5px solid currentcolor;
   outline-offset: 1px;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   12. 右侧刻度滑杆（会话导航）+ 预览面板
+
+   两个都是「对话太长 / 产出太多」的解药：
+     · 滑杆把整段会话压成一条带刻度的尺子，点一下就跳过去；
+     · 预览面板把 agent 产出的报告 / 代码 / 截图直接画在界面里，不用开外部程序。
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── 刻度尺 ───────────────────────────────────────────────────────── */
+
+/*
+ * 外层 `.rail` 只负责定位与提示框；真正被裁切的是里面那层 `.rail__scale`
+ * （`overflow: hidden`）—— 尺子整体在它里面滑动，刻度密度因此永远不变。
+ * 提示框必须留在 `.rail` 这一层，否则会被窗口裁掉。
+ */
+.rail {
+  position: relative;
+  flex: none;
+  width: 34px;
+  padding: 10px 0;
+  display: flex;
+  justify-content: flex-end;
+  z-index: 3;
+}
+
+/* 尺子的「窗口」：固定高度，内容超出就裁掉（尺子在里面滑） */
+.rail__scale {
+  position: relative;
+  width: 30px;
+  height: 100%;
+  overflow: hidden;
+  /* 拖动时不要选中文字 */
+  user-select: none;
+  touch-action: none;
+}
+
+/* 尺子本体：高度 = 刻度数 × 间距，靠 translateY 整体滑动 */
+.rail__ruler {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 30px;
+  height: 0;
+  /* 换选中项时尺子滑过去（短一点更跟手；拖动/滚轮是连续动作，不觉得卡） */
+  transition: transform 140ms var(--ds-ease-in-out);
+}
+
+/*
+ * 一道刻度 = 一条等距短横线，右对齐。
+ *
+ * 宽度只占 14px（右端对齐），当前那条是 30px 的白色长横条 —— 两者一长一短、
+ * 一亮一暗，「我读到哪儿了」不用找。
+ */
+.rail__tick {
+  position: absolute;
+  right: 0;
+  width: 14px;
+  height: 2px;
+  padding: 0;
+  border: none;
+  border-radius: 1px;
+  background: var(--rail-tone, var(--dsw-alias-label-caption));
+  opacity: 0.45;
+  cursor: pointer;
+  transition: width 140ms var(--ds-ease-in-out), opacity var(--ds-transition-duration-fast) var(--ds-ease-in-out),
+    background-color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+/* 悬停：变亮变长，和「当前」区分开（当前是纯白，悬停是彩色拉长） */
+.rail__tick:hover {
+  width: 22px;
+  opacity: 1;
+}
+
+/* 当前刻度：白色长横条 —— 整把尺子上最亮最长的那个 */
+.rail__tick--current {
+  width: 30px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--dsw-static-neutral-bluish-50);
+  opacity: 1;
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.28);
+}
+
+.rail__tick--user { --rail-tone: var(--ym-accent); }
+.rail__tick--assistant { --rail-tone: var(--dsw-static-neutral-bluish-300); }
+.rail__tick--note { --rail-tone: var(--dsw-static-amber-400); }
+.rail__tick--steer { --rail-tone: rgb(140, 214, 199); }
+
+/* 还没跑完的那条在呼吸：一眼看出「现在跑到哪儿了」 */
+.rail__tick--running { animation: ym-rail-breath 1.6s ease-in-out infinite; }
+
+@keyframes ym-rail-breath {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 0.9; }
+}
+
+/*
+ * 悬停提示：角色 + 摘要（最多 5 行，超出省略）。
+ *
+ * 出现用 `animation`、消失用 `transition` —— 这是刻意的组合：
+ *   · 挂载时**动画一定会跑**（不需要「先渲染成透明再改状态」那种两帧套路）；
+ *   · 卸载前由 React 先加 `.rail__tip--out`（`opacity: 0`），过渡就能把淡出画完，
+ *     等 160ms 之后才真正卸载节点（时长常量 `TIP_FADE` 在 message-rail.tsx 里）。
+ * 两处的 `transform` 都必须带上 `translateY(-50%)` —— 那是「以 top 为中线」的定位，
+ * 漏掉的话提示框会一边淡出一边往下跳半格。
+ */
+.rail__tip {
+  position: absolute;
+  right: 36px;
+  width: 268px;
+  padding: 8px 10px;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--dsw-static-violet-900) 94%, transparent);
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.45);
+  transform: translateY(-50%);
+  pointer-events: none;
+  z-index: 4;
+  animation: ym-tip-in 140ms var(--ds-ease-in-out);
+  transition: opacity 160ms var(--ds-ease-in-out), transform 160ms var(--ds-ease-in-out);
+}
+
+@keyframes ym-tip-in {
+  from { opacity: 0; transform: translateY(-50%) translateX(8px); }
+  to { opacity: 1; transform: translateY(-50%); }
+}
+
+/* 移开鼠标：往尺子那侧轻推 6px 并淡出（「收回去」而不是「原地消失」） */
+.rail__tip--out {
+  opacity: 0;
+  transform: translateY(-50%) translateX(6px);
+}
+
+.rail__tip-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.rail__role {
+  padding: 0 6px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 10.5px;
+  line-height: 16px;
+}
+
+.rail__role--user { background: var(--ym-accent-soft); color: var(--ym-accent-text); }
+.rail__role--note { background: rgba(247, 173, 49, 0.16); color: var(--dsw-static-amber-400); }
+.rail__role--steer { background: rgba(86, 184, 166, 0.16); color: rgb(140, 214, 199); }
+
+.rail__tip-tools,
+.rail__tip-running {
+  font-size: 10.5px;
+  color: var(--dsw-alias-label-caption);
+}
+
+.rail__tip-running { color: var(--ym-accent-text); }
+
+.rail__tip-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11.5px;
+  line-height: 17px;
+  word-break: break-word;
+}
+
+/* ── 预览面板 ─────────────────────────────────────────────────────── */
+
+.preview {
+  grid-column: 2;
+  /* 从顶栏下面一直铺到底（输入框那一行也占掉）：面板是「旁路」，不参与对话排版 */
+  grid-row: 2 / -1;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
+  border-left: 0.5px solid var(--dsw-alias-border-l2);
+  /* 比主区亮一档：面板是「浮在对话之上的工具层」 */
+  background: color-mix(in srgb, var(--dsw-static-violet-900) 72%, var(--dsw-static-violet-950));
+  animation: ym-preview-in 180ms var(--ds-ease-in-out);
+}
+
+@keyframes ym-preview-in {
+  from { opacity: 0; transform: translateX(10px); }
+  to { opacity: 1; transform: none; }
+}
+
+.preview__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 38px;
+  padding: 0 8px 0 12px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l1);
+}
+
+.preview__icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.preview__title {
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview__badge {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--ym-accent-soft);
+  color: var(--ym-accent-text);
+  font-size: 10px;
+  line-height: 15px;
+}
+
+.preview__spacer { flex: 1; }
+
+.preview__btn {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+  transition: background-color var(--ds-transition-duration-fast) var(--ds-ease-in-out),
+    color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.preview__btn:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.preview__path {
+  padding: 0 12px 7px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l1);
+  color: var(--dsw-alias-label-caption);
+  font-size: 10.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview__body {
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+}
+
+.preview__body::-webkit-scrollbar { width: 8px; }
+.preview__body::-webkit-scrollbar-thumb {
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* markdown / 代码：交给 Streamdown，面板自己不再补内边距 */
+.preview__content--markdown,
+.preview__content--code { padding: 0; }
+
+/* 预览里的 markdown 比对话正文小一档：面板窄，字号跟着收 */
+.preview__content .sd { font-size: 12.5px; }
+.preview__content .sd pre { font-size: 11.5px; }
+
+.preview__pre {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11.5px;
+  line-height: 17px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.preview__img {
+  display: block;
+  max-width: 100%;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  /* 棋盘底：透明 PNG 也能看出哪里是透明的 */
+  background-image:
+    linear-gradient(45deg, rgba(255, 255, 255, 0.04) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(255, 255, 255, 0.04) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(255, 255, 255, 0.04) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(255, 255, 255, 0.04) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
+
+/* 最近文件列表 */
+.preview__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.preview__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.preview__item:hover { background: var(--dsw-alias-interactive-bg-hover); }
+
+.preview__item-icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.preview__item-text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.preview__item-name {
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview__item-dir {
+  color: var(--dsw-alias-label-caption);
+  font-size: 10.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview__item-action {
+  flex: none;
+  color: var(--dsw-alias-label-caption);
+  font-size: 10.5px;
+}
+
+.preview__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 36px 16px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  text-align: center;
+}
+
+.preview__empty p { margin: 0; }
+
+.preview__hint { color: var(--dsw-alias-label-caption); font-size: 11px; }
+
+.preview__loading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 2px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+}
+
+.preview__foot {
+  display: flex;
+  gap: 12px;
+  padding: 6px 12px;
+  border-top: 0.5px solid var(--dsw-alias-border-l1);
+  color: var(--dsw-alias-label-caption);
+  font-size: 10.5px;
+}
+
+/* 转圈（预览面板的「正在读取」） */
+@keyframes ym-spin { to { transform: rotate(360deg); } }
+.spin { animation: ym-spin 900ms linear infinite; }
+
+/* 装饰性动效一律给「减弱动态效果」让路（和侧栏粒子同一条原则） */
+@media (prefers-reduced-motion: reduce) {
+  .main-column { transition: none; }
+  .preview { animation: none; }
+  .rail__ruler { transition: none; }
+  .rail__tick--running { animation: none; opacity: 0.6; }
+  /* 提示框：不做入场/退场位移，淡出时长也压到最短 */
+  .rail__tip { animation: none; transition: opacity 80ms linear; }
+  .rail__tip--out { transform: translateY(-50%); }
+  .spin { animation: none; }
 }

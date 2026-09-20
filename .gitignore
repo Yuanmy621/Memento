@@ -2,8 +2,11 @@ node_modules/
 .tmp/
 .YuanMy/
 
-# 渲染进程构建产物：由 `npm run build:renderer` 生成（React + Streamdown + Tailwind 打成一个 bundle）
+# 客户端构建产物：由 `npm run build:renderer` 生成
+#   renderer/dist/  —— React + Streamdown + Tailwind 打成一个 bundle
+#   preload.cjs     —— preload.ts 打成的自包含 CommonJS（沙箱 preload 只认 CJS）
 app/desktop/renderer/dist/
+app/desktop/preload.cjs
 
 # 本地密钥：任何情况下都不要提交
 .env

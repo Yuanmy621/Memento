@@ -1,105 +1,93 @@
 /**
- * 界面图标：内联 SVG，不引图标库。
+ * 图标：**统一走 [lucide-react](https://lucide.dev/)**，这个文件只做「名字与尺寸的收敛」。
  *
- * 规则：只用 `currentColor`（所以「白色图标」由容器字色决定，侧栏里就是白的），
- * `stroke-width: 1.5`、`stroke-linecap: round`，尺寸由 `size` 参数给 ——
- * 与官方 ui-primitives 里图标的观感一致：细、线性、无填充。
+ * ## 为什么从手写 SVG 换成图标库
  *
- * @module YuanMy/desktop/renderer/icons
+ * 早先这里是自己画 SVG（12 个）。到「轨迹按角色区分 + 会话导航条 + 预览面板」这一步，
+ * 需要的图标变成 30 个上下：手写既慢又难统一（线宽、圆角、视觉重心各画各的）。
+ * lucide 的图标是 24px 网格、`currentColor` 描边，与本项目的单色图标风格一致，
+ * 而且**按需引入**（具名 import → Tree-shaking，用不到的不进 bundle）。
+ *
+ * ## 为什么还要包一层
+ *
+ * 三件事集中在这里，别散到各个组件里：
+ *   1. **尺寸**：本项目界面偏紧（侧栏行 24px、标签栏 44px），图标基本是 12~16px；
+ *   2. **线宽**：lucide 默认 2，在小尺寸下略粗，这里统一降到 1.75；
+ *   3. **命名**：保留 `Icon*` 前缀，改图标库时组件侧不用动。
+ *
+ * @module YuanMy/desktop/renderer/src/icons
  */
 
+import {
+  Activity, ArrowLeft, Brain, ChevronDown, CircleAlert, Clock, Code, Coins, Copy, ExternalLink,
+  FileCode, FileImage, FileQuestionMark, FileText, FolderOpen, Image, Info, ListTree,
+  LoaderCircle, MessageSquare, MessagesSquare, PanelRightClose, PanelRightOpen, Plus,
+  Repeat, Search, SendHorizontal, ShieldCheck, Sparkles, SquareTerminal, Target,
+  TriangleAlert, User, Wrench, X,
+} from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import type { ReactElement } from 'react'
 
-/** 所有图标共用的属性。 */
-interface IconProps {
-  /** 边长（px），默认 16。 */
+/**
+ * 图标属性。
+ *
+ * 颜色一律 `currentColor`（由 CSS 决定），所以这里只有尺寸和一个 class ——
+ * class 是给「转圈」这类整体动效留的钩子（例如 `IconSpinner className="spin"`）。
+ */
+export interface IconProps {
   readonly size?: number
-  /** 附加类名。 */
   readonly className?: string
 }
 
-/** 统一的 svg 外壳。 */
-function Svg({ size = 16, className, children }: IconProps & { readonly children: ReactElement | ReactElement[] }): ReactElement {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.5}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={className}
-      aria-hidden="true"
-      focusable="false"
-    >
-      {children}
-    </svg>
-  )
+/** 把 lucide 图标包成项目里统一的 `Icon*` 组件。 */
+function icon(Component: LucideIcon): (props: IconProps) => ReactElement {
+  return function Icon({ size = 16, className }: IconProps): ReactElement {
+    return <Component size={size} strokeWidth={1.75} className={className} aria-hidden />
+  }
 }
 
-/** 搜索。 */
-export const IconSearch = (props: IconProps): ReactElement => (
-  <Svg {...props}><circle cx="11" cy="11" r="7" /><path d="m20 20-3.2-3.2" /></Svg>
-)
+// ── 通用 ────────────────────────────────────────────────────────────────────
+export const IconSearch = icon(Search)
+export const IconPlus = icon(Plus)
+export const IconChevronDown = icon(ChevronDown)
+export const IconBack = icon(ArrowLeft)
+export const IconSend = icon(SendHorizontal)
+export const IconExternal = icon(ExternalLink)
+export const IconShield = icon(ShieldCheck)
+export const IconToken = icon(Coins)
+export const IconClock = icon(Clock)
+export const IconTurns = icon(Repeat)
+export const IconCopy = icon(Copy)
+export const IconClose = icon(X)
+export const IconSpinner = icon(LoaderCircle)
 
-/** 新建（加号）。 */
-export const IconPlus = (props: IconProps): ReactElement => (
-  <Svg {...props}><path d="M12 5v14M5 12h14" /></Svg>
-)
+// ── 标签栏 / 面板 ───────────────────────────────────────────────────────────
+export const IconChat = icon(MessageSquare)
+export const IconTrace = icon(ListTree)
+export const IconPanelOpen = icon(PanelRightOpen)
+export const IconPanelClose = icon(PanelRightClose)
 
-/** 下拉箭头。 */
-export const IconChevronDown = (props: IconProps): ReactElement => (
-  <Svg {...props}><path d="m6 9 6 6 6-6" /></Svg>
-)
+// ── 轨迹（按角色区分）────────────────────────────────────────────────────────
+export const IconUser = icon(User)
+export const IconReasoning = icon(Brain)
+export const IconReply = icon(MessagesSquare)
+export const IconTool = icon(Wrench)
+export const IconBug = icon(CircleAlert)
+export const IconNote = icon(Info)
+export const IconWarn = icon(TriangleAlert)
+export const IconSkill = icon(Sparkles)
+export const IconShell = icon(SquareTerminal)
+export const IconGoal = icon(Target)
 
-/** 会话（对话气泡）。 */
-export const IconChat = (props: IconProps): ReactElement => (
-  <Svg {...props}><path d="M20 15a2 2 0 0 1-2 2H8l-4 3V6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2z" /></Svg>
-)
+// ── 预览面板（按文件类型区分）───────────────────────────────────────────────
+export const IconCode = icon(Code)
+export const IconCodeFile = icon(FileCode)
+export const IconImageFile = icon(FileImage)
+export const IconImage = icon(Image)
+export const IconFileQuestion = icon(FileQuestionMark)
+export const IconFolderOpen = icon(FolderOpen)
 
-/** 轨迹（分支 / 时间线）。 */
-export const IconTrace = (props: IconProps): ReactElement => (
-  <Svg {...props}><circle cx="6" cy="6" r="2.5" /><circle cx="6" cy="18" r="2.5" /><path d="M6 8.5v7M11 6h7M11 18h7" /></Svg>
-)
-
-/** 发送。 */
-export const IconSend = (props: IconProps): ReactElement => (
-  <Svg {...props}><path d="M4.5 12 20 4.5 15 20l-3.4-6.1z" /><path d="m11.6 13.9 3.4-3.4" /></Svg>
-)
-
-/** 文件。 */
-export const IconFile = (props: IconProps): ReactElement => (
-  <Svg {...props}><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /></Svg>
-)
-
-/** 文件夹。 */
-export const IconFolder = (props: IconProps): ReactElement => (
-  <Svg {...props}><path d="M3 7a2 2 0 0 1 2-2h3.6l2 2H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></Svg>
-)
-
-/** 外部打开。 */
-export const IconExternal = (props: IconProps): ReactElement => (
-  <Svg {...props}><path d="M14 4h6v6" /><path d="M20 4 10 14" /><path d="M18 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5" /></Svg>
-)
-
-/** 权限（盾牌）。 */
-export const IconShield = (props: IconProps): ReactElement => (
-  <Svg {...props}><path d="M12 3 5 6v6c0 4.2 2.9 7.6 7 9 4.1-1.4 7-4.8 7-9V6z" /></Svg>
-)
-
-/** 用量（令牌）。 */
-export const IconToken = (props: IconProps): ReactElement => (
-  <Svg {...props}><circle cx="12" cy="12" r="8" /><path d="M12 8v8M9.5 10h5M9.5 14h5" /></Svg>
-)
-
-/** 耗时（时钟）。 */
-export const IconClock = (props: IconProps): ReactElement => (
-  <Svg {...props}><circle cx="12" cy="12" r="8" /><path d="M12 8v4.5l3 1.8" /></Svg>
-)
-
-/** 轮次（列表）。 */
-export const IconTurns = (props: IconProps): ReactElement => (
-  <Svg {...props}><path d="M4 7h16M4 12h16M4 17h10" /></Svg>
-)
+/** 文件卡片等地方用的「普通文件」图标。 */
+export const IconFile = icon(FileText)
+/** 没有类型可判断时的中性图标。 */
+export const IconPulse = icon(Activity)

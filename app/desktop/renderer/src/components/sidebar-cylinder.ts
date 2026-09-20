@@ -485,30 +485,3 @@ export function visibleRows(field: Field): number {
   }
   return rows
 }
-
-/**
- * 这一帧要画的格子总数（调试/真值表用）。
- *
- * @param field - 场。
- * @returns `可见行数 × 列数`。
- */
-export function visibleTileCount(field: Field): number {
-  return visibleRows(field) * field.dense
-}
-
-/**
- * 此刻有多少块「正在滚」（真值表与排查用）。
- *
- * @param field - 场。
- * @returns 数量。
- */
-export function detachedCount(field: Field): number {
-  let count = 0
-  const rows = visibleRows(field)
-  for (let row = 0; row < rows; row += 1) {
-    for (let dense = 0; dense < field.dense; dense += 1) {
-      if (tileFrame(field, dense, row)?.detached === true) count += 1
-    }
-  }
-  return count
-}

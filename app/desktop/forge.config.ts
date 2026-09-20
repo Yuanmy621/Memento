@@ -1,5 +1,5 @@
 /**
- * Electron Forge 配置（`app/desktop/forge.config.js`）。
+ * Electron Forge 配置（`app/desktop/forge.config.ts`）。
  *
  * ## 为什么这个文件不在仓库根、也不直接打包仓库根
  *
@@ -19,9 +19,13 @@
  *
  * ```bash
  * npm run app:build      # 生成 build/app/
- * npm run package        # electron-forge package build/app   → build/app/out/**\/*.app
+ * npm run package        # electron-forge package build/app   → out/…（未压缩的 .app）
  * npm run make           # electron-forge make build/app      → out/make/**（zip + dmg）
  * ```
+ *
+ * ⚠️ 这个文件是 `.ts`：Forge 用 **jiti** 加载配置（`@electron-forge/core` 的
+ * `forge-config.ts` 里对 `.ts/.mts/.cts` 走 jiti，其余走 rechoir），所以能直接吃 TS。
+ * 名字必须与 staging 的 `package.json` 里 `config.forge` 指的那个一致。
  *
  * （Forge 的 `package`/`make` 接受一个目录参数，所以不必 cd 过去。）
  *

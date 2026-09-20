@@ -19,25 +19,6 @@
 /** 协议版本：主进程与 host 对不上时直接报错，避免静默错位。 */
 export const PROTOCOL_VERSION = 1
 
-/** host 启动时可被覆盖的配置（其余字段沿用 CLI 的默认值）。 */
-export interface HostLaunchConfig {
-  /** agent 的工作目录；文件工具与 bash 都以它为基准。 */
-  readonly cwd: string
-  /** 模型 id；省略则用 `$YuanMy_MODEL` 或 CLI 默认值。 */
-  readonly model?: string
-  /** provider id；省略则用 CLI 默认值。 */
-  readonly provider?: string
-  /** 推理强度：off | low | high | max。 */
-  readonly effort?: string
-  /** 会话数据目录（默认 `<cwd>/.YuanMy`）。 */
-  readonly stateDir?: string
-  /** 是否把会话写入磁盘。 */
-  readonly persist?: boolean
-  /** 指定新会话 id。 */
-  readonly sessionId?: string
-  /** 恢复一个已落盘的会话 id。 */
-  readonly resume?: string
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 会话记录（transcript）的词表
@@ -506,41 +487,26 @@ export type HostEvent =
   /** 致命错误：host 即将退出。 */
   | { readonly type: 'fatal'; readonly message: string }
 
-/** 判断一个来自 host 的未知值是否是合法事件（子进程输出不可信）。 */
+/** 全部 host 事件类型（`isHostEvent` 用它做形状校验）。 */
+const HOST_EVENT_TYPES: ReadonlySet<string> = new Set([
+  'ready', 'history', 'text-delta', 'reasoning-delta', 'tool-call', 'tool-result',
+  'usage', 'turn-end', 'notice', 'fatal', 'workspace', 'project-sessions',
+  'settings', 'files', 'model-changed',
+])
+
+/**
+ * 这个值是不是一个 host 事件。
+ *
+ * 为什么要它：主进程拿到的是**子进程**的输出，按不可信处理 —— 转发给渲染进程之前
+ * 至少得确认「它是个我们认识的事件」。只认 `type` 在名单里这一条，字段内容由
+ * 渲染进程自己的归约器兜（它本来就有 default 分支）。
+ *
+ * @param value - 任意值（通常是 child_process 的 message）。
+ * @returns 是 host 事件时为 `true`（类型收窄成 {@link HostEvent}）。
+ */
 export function isHostEvent(value: unknown): value is HostEvent {
   if (typeof value !== 'object' || value === null) return false
-  const candidate = value as Record<string, unknown>
-  switch (candidate['type']) {
-    case 'ready':
-      return typeof candidate['info'] === 'object' && candidate['info'] !== null
-    case 'text-delta':
-    case 'reasoning-delta':
-      return typeof candidate['turnId'] === 'string' && typeof candidate['text'] === 'string'
-    case 'tool-call':
-    case 'tool-result':
-      return typeof candidate['turnId'] === 'string' && typeof candidate['callId'] === 'string'
-        && typeof candidate['name'] === 'string' && typeof candidate['summary'] === 'string'
-    case 'turn-end':
-      return typeof candidate['turnId'] === 'string' && typeof candidate['outcome'] === 'string'
-    case 'model-changed':
-      return typeof candidate['model'] === 'string'
-    case 'usage':
-      return typeof candidate['turnId'] === 'string' && typeof candidate['usage'] === 'object' && candidate['usage'] !== null
-    case 'workspace':
-      return Array.isArray(candidate['projects']) && Array.isArray(candidate['sessions'])
-    case 'history':
-      return Array.isArray(candidate['items'])
-    case 'files':
-      return typeof candidate['query'] === 'string' && Array.isArray(candidate['items'])
-    case 'settings':
-      return Array.isArray(candidate['skills']) && Array.isArray(candidate['commands']) && Array.isArray(candidate['mcp'])
-    case 'project-sessions':
-      return typeof candidate['path'] === 'string' && Array.isArray(candidate['sessions'])
-    case 'notice':
-      return typeof candidate['message'] === 'string'
-    case 'fatal':
-      return typeof candidate['message'] === 'string'
-    default:
-      return false
-  }
+  const { type } = value as { type?: unknown }
+  return typeof type === 'string' && HOST_EVENT_TYPES.has(type)
 }
+
