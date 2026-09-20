@@ -70,7 +70,6 @@ export interface SidebarProps {
   readonly onNewSession: () => void
   readonly onOpenSession: (sessionId: string, cwd?: string) => void
   readonly onOpenProject: (path: string) => void
-  readonly onRefreshSessions: () => void
   readonly onLoadProjectSessions: (path: string) => void
   /** 打开设置面板（技能 / 命令 / MCP）。 */
   readonly onOpenSettings: () => void
@@ -79,9 +78,8 @@ export interface SidebarProps {
 export function Sidebar(props: SidebarProps): ReactElement {
   const {
     state, appInfo, now, onNewSession,
-    onOpenSession, onOpenProject, onRefreshSessions, onLoadProjectSessions, onOpenSettings,
+    onOpenSession, onOpenProject, onLoadProjectSessions, onOpenSettings,
   } = props
-  const [showTools, setShowTools] = useState(false)
   const [query, setQuery] = useState('')
   /** 其他项目里「被点开过」的路径。 */
   const [expandedProjects, setExpandedProjects] = useState<readonly string[]>([])
@@ -102,7 +100,6 @@ export function Sidebar(props: SidebarProps): ReactElement {
   const requestedProjects = useRef<readonly string[]>([])
   const ime = useImeGuard()
   const info = state.info
-  const tools = info?.tools ?? []
 
   /**
    * 内核重启后，把**已展开项目**的会话补回来。
@@ -310,17 +307,6 @@ export function Sidebar(props: SidebarProps): ReactElement {
           <button
             type="button"
             className="link no-drag"
-            title="查看已注册的工具"
-            onClick={() => { setShowTools((open) => !open) }}
-          >
-            {tools.length} 工具
-          </button>
-          <button type="button" className="link no-drag" title="重新扫描磁盘上的会话" onClick={onRefreshSessions}>
-            刷新
-          </button>
-          <button
-            type="button"
-            className="link no-drag"
             title="设置：查看 / 编辑技能、命令与 MCP"
             onClick={onOpenSettings}
           >
@@ -332,13 +318,6 @@ export function Sidebar(props: SidebarProps): ReactElement {
           </span>
         </div>
 
-        {showTools && (
-          <ul className="tool-list">
-            {tools.map((tool) => (
-              <li key={tool.name} title={tool.description}>{tool.name}</li>
-            ))}
-          </ul>
-        )}
       </div>
     </aside>
   )

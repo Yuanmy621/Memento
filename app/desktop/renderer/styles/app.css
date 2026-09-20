@@ -841,24 +841,6 @@ html[data-platform="darwin"] .sidebar__brand {
   font-size: 12px;
 }
 
-.tool-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  max-height: 180px;
-  overflow-y: auto;
-  font-family: var(--ds-font-family-code);
-  font-size: 11px;
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.tool-list li {
-  padding: 2px 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /* ══════════════════════════════════════════════════════════════════════════
    6. 构件：按钮 / 输入（对齐 ui-primitives）
    ══════════════════════════════════════════════════════════════════════════ */
@@ -1759,14 +1741,20 @@ html[data-platform="darwin"] .sidebar__brand {
 .trace__step--error { --trace-tone: var(--dsw-alias-state-error-primary); --trace-fill: rgba(242, 90, 90, 0.16); }
 .trace__step--error .trace__card { background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 8%, transparent); }
 
-/* ── 下拉（加号 / 权限 / 模型）──────────────────────────────────────── */
+/* ── 浮层菜单（输入框那三个下拉 + 侧栏工具清单）────────────────────────
+ *
+ * 一份实现三处用：`+`（新建会话 / 打开目录）、权限说明、模型清单，
+ * 以及侧栏底栏的「N 工具」。行为（键盘、ARIA、点外面关掉）在 `components/menu.tsx`，
+ * 这里只管长相。
+ * ───────────────────────────────────────────────────────────────────── */
 
-.dd {
+.menu {
   position: relative;
   display: inline-flex;
 }
 
-.dd__trigger {
+/* 输入框那一排的触发器：药丸状图标按钮 */
+.menu__trigger {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -1783,18 +1771,18 @@ html[data-platform="darwin"] .sidebar__brand {
     color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
 }
 
-.dd__trigger:hover:not(:disabled),
-.dd__trigger[aria-expanded="true"] {
+.menu__trigger:hover:not(:disabled),
+.menu__trigger[aria-expanded="true"] {
   background: var(--dsw-alias-interactive-bg-hover);
   color: var(--dsw-alias-label-primary);
 }
 
-.dd__trigger:disabled {
+.menu__trigger:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }
 
-.dd__label {
+.menu__label {
   max-width: 190px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1802,71 +1790,142 @@ html[data-platform="darwin"] .sidebar__brand {
 }
 
 /* 模型下拉前的小圆点：当前模型的「在用它」标记 */
-.dd__mark {
+.menu__mark {
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: var(--ym-accent);
 }
 
-/* 菜单：hover 打开的浮层，点空白关掉 */
-.dd__scrim {
-  position: fixed;
-  inset: 0;
-  z-index: 20;
-}
-
-.dd__menu {
+/*
+ * 菜单本体。
+ *
+ * 限高 + 内部滚动是给侧栏工具清单准备的（20 条已经超过半屏）；
+ * `overscroll-behavior: contain` 让它滚到底时不把消息流也带着滚。
+ */
+.menu__pop {
   position: absolute;
-  bottom: calc(100% + 6px);
-  left: 0;
   z-index: 21;
   display: flex;
   flex-direction: column;
-  min-width: 200px;
-  max-width: 320px;
-  padding: 4px;
+  min-width: 180px;
+  max-width: min(92vw, 420px);
+  max-height: min(62vh, 480px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 5px;
   border: 1px solid var(--dsw-alias-border-l3);
   border-radius: 10px;
   background: var(--dsw-alias-bg-layer-3);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  animation: ym-menu-in 120ms var(--ds-ease-in-out);
+  /* 焦点是给键盘事件用的（打开时程序化聚焦），所以不要那圈整块的高亮框 */
+  outline: none;
 }
 
-.dd__item {
+.menu__pop::-webkit-scrollbar { width: 8px; }
+.menu__pop::-webkit-scrollbar-thumb {
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* 往上弹（底栏的工具清单）/ 往下弹（输入框上方那一排） */
+.menu__pop--top { bottom: calc(100% + 6px); }
+.menu__pop--bottom { top: calc(100% + 6px); }
+.menu__pop--start { left: 0; }
+.menu__pop--end { right: 0; }
+
+@keyframes ym-menu-in {
+  from { opacity: 0; transform: translateY(4px) scale(0.99); }
+  to { opacity: 1; transform: none; }
+}
+
+/* 整段说明（权限菜单用：先把「无沙箱」说清楚，再让人看选项） */
+.menu__block {
+  padding: 7px 9px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11.5px;
+  line-height: 17px;
+  white-space: normal;
+}
+
+.menu__item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
   padding: 6px 9px;
   border: none;
   border-radius: 6px;
   background: transparent;
   color: var(--dsw-alias-label-secondary);
   font: inherit;
-  font-size: 12px;
   text-align: left;
   cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  transition: background-color var(--ds-transition-duration-fast) var(--ds-ease-in-out),
+    color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
 }
 
-.dd__item:hover {
+/* `--cursor` 是键盘高亮：和鼠标悬停长一样，用户不用分「我现在是用哪种方式选的」 */
+.menu__item:hover:not(:disabled),
+.menu__item--cursor {
   background: var(--dsw-alias-interactive-bg-hover);
   color: var(--dsw-alias-label-primary);
 }
 
-/* 当前选中的模型 */
-.dd__item--active {
+.menu__item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.menu__item--active .menu__name { color: var(--ym-accent-text); }
+
+/* 当前项右侧的对勾（用伪元素，不占 JSX 结构） */
+.menu__item--active::after {
+  content: '✓';
+  flex: none;
+  margin-left: auto;
+  color: var(--ym-accent-text);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.menu__icon {
+  display: inline-flex;
+  flex: none;
+  margin-top: 2px;
+  color: var(--dsw-alias-label-caption);
+}
+
+.menu__item:hover:not(:disabled) .menu__icon,
+.menu__item--cursor .menu__icon {
   color: var(--ym-accent-text);
 }
 
-.dd__item--active::after {
-  content: ' ✓';
+.menu__text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
 }
 
-.dd__note {
-  padding: 7px 9px;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 11.5px;
+.menu__name {
+  color: inherit;
+  font-size: 12px;
   line-height: 17px;
-  white-space: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 一行小字说明：菜单里**不再出现变量名**，靠它讲清这个工具干什么 */
+.menu__note {
+  color: var(--dsw-alias-label-caption);
+  font-size: 11px;
+  line-height: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ── 会话统计行（输入框下方）──────────────────────────────────────── */
@@ -2765,6 +2824,7 @@ html[data-platform="darwin"] .sidebar__brand {
 @media (prefers-reduced-motion: reduce) {
   .main-column { transition: none; }
   .preview { animation: none; }
+  .menu__pop { animation: none; }
   .rail__ruler { transition: none; }
   .rail__tick--running { animation: none; opacity: 0.6; }
   /* 提示框：不做入场/退场位移，淡出时长也压到最短 */

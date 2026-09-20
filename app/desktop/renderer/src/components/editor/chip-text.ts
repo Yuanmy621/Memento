@@ -5,7 +5,7 @@
  * | --- | --- | --- |
  * | 命令 | `/report` | `/report` |
  * | 技能 | `report` | `用 skill 工具加载 report 后按它执行：` |
- * | 工具 | `mcp__butian__butian_rank` | `用 mcp__butian__butian_rank 工具：` |
+ * | 工具 | `补天 · 白帽排行`（中文功能名，见 `tool-names.ts`） | `用 mcp__butian__butian_rank 工具：` |
  * | 文件 | `app/cli/main.ts` | `app/cli/main.ts` |
  *
  * 技能与工具为什么要多那一句：它们是**说给模型听的**。只落一个名字，模型未必知道
@@ -41,11 +41,15 @@ export function skillChip(name: string): ChipAttrs {
 
 /**
  * MCP 工具 chip。
+ *
+ * `label` 与 `text` 在这里是**故意分开**的典型例子：界面上显示中文功能名
+ * （「补天 · 项目大厅」），落到会话记录里仍然是原名加一句指令 —— 模型只认原名。
  * @param name - 工具全名（`mcp__<server>__<tool>`）。
+ * @param label - 界面上显示的名字（省略则退回原名）。
  * @returns chip 属性。
  */
-export function toolChip(name: string): ChipAttrs {
-  return { kind: 'tool', label: name, text: `用 ${name} 工具：` }
+export function toolChip(name: string, label?: string): ChipAttrs {
+  return { kind: 'tool', label: label ?? name, text: `用 ${name} 工具：` }
 }
 
 /**

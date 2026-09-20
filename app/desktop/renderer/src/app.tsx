@@ -37,7 +37,7 @@ type Tab = 'chat' | 'trace'
 export function App(): ReactElement {
   const {
     state, send, cancel, setModel, newSession, pickDirectory, getAppInfo,
-    resumeSession, openProject, refreshSessions, loadProjectSessions, openPath, previewRead,
+    resumeSession, openProject, loadProjectSessions, openPath, previewRead,
     loadSettings, readFile, writeFile, restartKernel, steer, listFiles,
   } = useAgent()
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null)
@@ -124,7 +124,6 @@ export function App(): ReactElement {
         onNewSession={() => { void newSession() }}
         onOpenSession={(sessionId, cwd) => { void resumeSession(sessionId, cwd) }}
         onOpenProject={(path) => { void openProject(path) }}
-        onRefreshSessions={() => { void refreshSessions() }}
         onLoadProjectSessions={(path) => { void loadProjectSessions(path) }}
         onOpenSettings={openSettings}
       />

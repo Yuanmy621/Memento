@@ -46,10 +46,11 @@ import { createComposerExtensions } from './editor/kit.ts'
 import { SuggestController, type SuggestSource, type SuggestView } from './editor/suggestions.ts'
 import { TRIGGER_TITLE } from './editor/triggers.ts'
 import { billedInputTokens, cacheHitRate, type AgentState } from '../use-agent.ts'
-import { IconChevronDown, IconClock, IconPlus, IconSend, IconShield, IconToken, IconTurns } from '../icons.tsx'
+import { Menu, type MenuEntry } from './menu.tsx'
+import { IconClock, IconPlus, IconSend, IconShield, IconToken, IconTurns } from '../icons.tsx'
 
-/** 空输入框里的提示语（也是触发符的教学文案）。 */
-const PLACEHOLDER = '描述任务，或粘贴报错 / 代码（/ 命令 · @ 工具 · # 文件；Enter 发送，Shift+Enter 换行）'
+/** 空输入框里的提示语 **/
+const PLACEHOLDER = '说点什么开始我们的学习吧～'
 
 /** 输入框最高长到多少像素，超过就内部滚动。 */
 const MAX_INPUT_HEIGHT = 190
@@ -102,40 +103,6 @@ function StatsBar({ state }: { readonly state: AgentState }): ReactElement {
   )
 }
 
-/** 一个自定义下拉（不用原生 select，便于统一暗色配色）。 */
-function Dropdown(props: {
-  readonly icon: ReactElement
-  readonly label: string
-  readonly title: string
-  readonly disabled?: boolean
-  readonly menu?: ReactElement
-}): ReactElement {
-  const [open, setOpen] = useState(false)
-  return (
-    <div className="dd">
-      <button
-        type="button"
-        className="dd__trigger no-drag"
-        aria-expanded={open}
-        disabled={props.disabled ?? false}
-        title={props.title}
-        onClick={() => { setOpen((value) => !value) }}
-      >
-        {props.icon}
-        {props.label !== '' && <span className="dd__label">{props.label}</span>}
-        <IconChevronDown size={12} />
-      </button>
-      {open && props.menu !== undefined && (
-        <>
-          {/* 点空白处关掉菜单 */}
-          <div className="dd__scrim" onClick={() => { setOpen(false) }} />
-          <div className="dd__menu" role="menu">{props.menu}</div>
-        </>
-      )}
-    </div>
-  )
-}
-
 export interface ComposerProps {
   readonly state: AgentState
   readonly onSend: (text: string) => void
@@ -147,6 +114,14 @@ export interface ComposerProps {
   readonly onListFiles: (query: string) => void
   readonly onNewSession: () => void
   readonly onPickDirectory: () => void
+}
+
+/** 加号菜单的两项（真实动作，不是占位）。函数放模块级，免得每次渲染现拼数组。 */
+function ACTION_ENTRIES(onNewSession: () => void, onPickDirectory: () => void): MenuEntry[] {
+  return [
+    { key: 'new-session', label: '新建会话', note: '清空当前上下文，开一段新对话', onSelect: onNewSession },
+    { key: 'open-dir', label: '打开工作目录…', note: '换一个目录，会话按项目分开', onSelect: onPickDirectory },
+  ]
 }
 
 export function Composer(props: ComposerProps): ReactElement {
@@ -332,50 +307,43 @@ export function Composer(props: ComposerProps): ReactElement {
           />
 
           <div className="composer__actions">
-            <Dropdown
+            <Menu
               icon={<IconPlus size={15} />}
-              label=""
               title="更多操作"
-              menu={(
-                <>
-                  <button type="button" className="dd__item" onClick={onNewSession}>新建会话</button>
-                  <button type="button" className="dd__item" onClick={onPickDirectory}>打开工作目录…</button>
-                </>
-              )}
+              caret
+              entries={ACTION_ENTRIES(onNewSession, onPickDirectory)}
+              width={200}
             />
 
-            <Dropdown
+            <Menu
               icon={<IconShield size={14} />}
               label="完全访问"
               title="YuanMy 的本地 provider 没有沙箱与审批：agent 拥有当前用户的全部读写与执行权限"
-              menu={(
-                <div className="dd__note">
-                  本地 provider 无沙箱、无审批，agent 拥有当前用户的全部权限。
-                  要受限形态需替换 fs / shell provider，见根 README「已知边界」。
-                </div>
-              )}
+              caret
+              width={300}
+              entries={[{
+                key: 'note',
+                kind: 'block',
+                label: '本地 provider 无沙箱、无审批，agent 拥有当前用户的全部权限。'
+                  + '要受限形态需替换 fs / shell provider，见根 README「已知边界」。',
+              }]}
             />
 
-            <Dropdown
-              icon={<span className="dd__mark" />}
+            <Menu
+              icon={<span className="menu__mark" />}
               label={currentName === '' ? '模型' : currentName}
               title={`当前 ${state.info?.provider ?? ''}/${currentModel}`}
+              caret
+              width={240}
               disabled={state.phase !== 'ready' || state.models.length === 0}
-              menu={(
-                <>
-                  {state.models.map((model) => (
-                    <button
-                      key={model.id}
-                      type="button"
-                      className={`dd__item${model.id === currentModel ? ' dd__item--active' : ''}`}
-                      title={model.description ?? model.id}
-                      onClick={() => { onSetModel(model.id) }}
-                    >
-                      {model.name}
-                    </button>
-                  ))}
-                </>
-              )}
+              entries={state.models.map((model): MenuEntry => ({
+                key: model.id,
+                label: model.name,
+                note: model.description,
+                hint: model.description ?? model.id,
+                active: model.id === currentModel,
+                onSelect: () => { onSetModel(model.id) },
+              }))}
             />
 
             <span className="composer__spacer" />

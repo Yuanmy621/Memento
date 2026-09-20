@@ -19,11 +19,11 @@
  */
 
 import {
-  Activity, ArrowLeft, Brain, ChevronDown, CircleAlert, Clock, Code, Coins, Copy, ExternalLink,
-  FileCode, FileImage, FileQuestionMark, FileText, FolderOpen, Image, Info, ListTree,
+  ArrowLeft, Brain, ChevronDown, CircleAlert, Clock, Coins, ExternalLink,
+  FileCode, FileImage, FileQuestionMark, FileText, FolderOpen, Info, ListTree,
   LoaderCircle, MessageSquare, MessagesSquare, PanelRightClose, PanelRightOpen, Plus,
-  Repeat, Search, SendHorizontal, ShieldCheck, Sparkles, SquareTerminal, Target,
-  TriangleAlert, User, Wrench, X,
+  Repeat, Search, SendHorizontal, ShieldCheck, SquareTerminal, Target,
+  User, Wrench, X,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { ReactElement } from 'react'
@@ -57,7 +57,6 @@ export const IconShield = icon(ShieldCheck)
 export const IconToken = icon(Coins)
 export const IconClock = icon(Clock)
 export const IconTurns = icon(Repeat)
-export const IconCopy = icon(Copy)
 export const IconClose = icon(X)
 export const IconSpinner = icon(LoaderCircle)
 
@@ -74,20 +73,15 @@ export const IconReply = icon(MessagesSquare)
 export const IconTool = icon(Wrench)
 export const IconBug = icon(CircleAlert)
 export const IconNote = icon(Info)
-export const IconWarn = icon(TriangleAlert)
-export const IconSkill = icon(Sparkles)
 export const IconShell = icon(SquareTerminal)
 export const IconGoal = icon(Target)
 
 // ── 预览面板（按文件类型区分）───────────────────────────────────────────────
-export const IconCode = icon(Code)
 export const IconCodeFile = icon(FileCode)
 export const IconImageFile = icon(FileImage)
-export const IconImage = icon(Image)
 export const IconFileQuestion = icon(FileQuestionMark)
 export const IconFolderOpen = icon(FolderOpen)
 
 /** 文件卡片等地方用的「普通文件」图标。 */
 export const IconFile = icon(FileText)
 /** 没有类型可判断时的中性图标。 */
-export const IconPulse = icon(Activity)

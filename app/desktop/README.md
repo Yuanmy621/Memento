@@ -65,6 +65,8 @@ app/desktop/
       sidebar-backdrop.tsx 侧栏粒子的 canvas 那半边（rAF/DPR/暂停/颜色）
       composer.tsx         输入区 + 触发符菜单接线 + 键盘总闸
       mention-menu.tsx     触发符候选（纯逻辑 + 列表 UI）
+      menu.tsx             通用浮层菜单（键盘 / ARIA / 点外关掉；输入框三个下拉共用）
+      ../tool-names.ts     工具 → 中文功能名 / 说明（纯表 + 兜底规则；`@` 菜单用）
       editor/              Tiptap：chip 节点、文档↔文本、触发符规则、suggestion 插件、扩展集
       message.tsx          一条会话条目（用户/助手/提示/纠偏；带 data-item-id）
       tool-card.tsx        工具调用卡片
@@ -168,7 +170,7 @@ app/desktop/
 | 自研 | 现成方案 | 为什么值得换 |
 | --- | --- | --- |
 | `settings-panel.tsx` 的模态 | [`@radix-ui/react-dialog`](https://www.radix-ui.com/primitives/docs/components/dialog) | 手写的模态只做了「点击遮罩关闭」。**焦点陷阱、`aria-modal`、Esc 语义、打开时锁定背景滚动、关闭后把焦点还回去**这些都要自己补 —— 现在一个都没有。Radix 是 headless 的（样式还是我们的 CSS），加一个依赖换一整套可访问性 |
-| `composer.tsx` 里的 `Dropdown` | [`@radix-ui/react-dropdown-menu`](https://www.radix-ui.com/primitives/docs/components/dropdown-menu) 或 [`@floating-ui/react`](https://floating-ui.com/docs/react) | 现在的下拉：点击遮罩关闭 + 位置写死（`absolute`）。**没有方向键导航、没有菜单语义、窄窗口会被裁**。同一个 Radix 依赖树，顺手一起换 |
+| `composer.tsx` 里的 `Dropdown` → 已抽成 `components/menu.tsx` | [`@radix-ui/react-dropdown-menu`](https://www.radix-ui.com/primitives/docs/components/dropdown-menu) 或 [`@floating-ui/react`](https://floating-ui.com/docs/react) | **本轮已经把缺的补齐**（方向键 / Home / End、`role=menu` + `aria-haspopup/expanded`、Esc 关闭并把焦点还回触发器、点外面关掉、向上向下弹、限高滚动），并且输入框三个下拉共用（`+` / 权限 / 模型）。仍建议后续换 Radix：能省掉翻页/子菜单/碰撞翻转这些还没做的部分；但**输入框里的 `@` 候选菜单不能换**（它必须由编辑器持有焦点与按键，见下方那条） |
 
 ### 可换（有得有失）
 
@@ -543,7 +545,7 @@ main.ts                                    host（sessions.ts）
 
 **侧栏刻意不放的东西**（都是重复或只在排查时才有用的「参数」）：
 状态行 → 并进底栏一个小圆点；模型名 → 就是下面那个输入框；会话 id → 树里已高亮；
-工具清单 → 底栏 `13 工具` 点一下展开；凭据 → **只在缺失时**以警告形式出现。
+凭据 → **只在缺失时**以警告形式出现（左下角底栏只有状态点 / 设置 / 版本号）。
 
 点击会话 = `restart({ resume: id, cwd })`（CLI 的 `--resume` 早就通了，这里只是给它一个界面）。
 点击其它项目的「切换」= `restart({ cwd })`，即用新工作目录启一个新会话。
@@ -813,7 +815,7 @@ Enter / 发送按钮      →  docToText(doc).trim()  →  纯文本  →  host 
 | 触发符 | 选什么 | chip 上显示 | 落库文本 |
 | --- | --- | --- | --- |
 | `/` | 命令 + 技能（按组分列） | `/名字` / 技能名 | 命令落 `/名字`（host 展开，见下）；技能落「用 skill 工具加载 … 后按它执行：」 |
-| `@` | MCP 工具（按 server 分组） | 工具名 | `用 mcp__<server>__<tool> 工具：` |
+| `@` | MCP 工具（按中文 server 名分组，功能名排序） | **中文功能名**（`补天 · 白帽排行`） | `用 mcp__<server>__<tool> 工具：`（**原名照旧**，见「`@` 菜单：显示中文功能名」一节） |
 | `#` | 工作目录里的文件 | 相对路径 | 相对路径（`read` 与文件卡片都认相对路径） |
 
 ↑↓ 选择、Enter/Tab 确认、Esc 关闭；点一下也能选（用 `onMouseDown` 而不是 `onClick` ——
@@ -977,7 +979,7 @@ cacheWriteTokens 写入缓存的输入
 │    ● 会话  时间 │  工具行 / 文件卡片（预览+打开） ─┤ 报告/代码/ │
 │ ▸ 另一个项目   ├───────────────────────────────┤ 图片/最近   │
 │ ─────────────  │  [+][完全访问][模型▾]   [发送]  │ 文件        │
-│ ● 就绪 13 工具 │  3.2k in/88 out · 3.0s · 1 轮  │            │
+│ ● 就绪 设置 v1 │  3.2k in/88 out · 3.0s · 1 轮  │            │
 └───────────────┴───────────────────────────────┴────────────┘
                     ↑ 右侧一列「会话刻度尺」（对话太长时点刻度跳转）
 ```
@@ -1075,6 +1077,55 @@ host 侧（`host/index.ts` 的 `listModels`）的规则：
 
 > 尺子占 34px 宽（`.main-column--rail .composer` 把输入框右内边距从 24 加到 58），
 > 目的是让输入框与消息区**中心对齐** —— 只让消息那一行窄 34px 的话，两者中心会差 17px。
+
+### `@` 菜单：显示中文功能名，不显示变量名
+
+`@` 弹出的 MCP 候选一律用**中文功能名**（「补天 · 白帽排行」），因为
+`mcp__butian__butian_rank` 这种名字是给模型看的，不是给人看的。真正发给模型的东西
+一个字都没变：插进输入框的 chip 落库时仍是 `用 mcp__butian__butian_rank 工具：`
+（`label` 与 `text` 在 `editor/chip-text.ts` 里本来就是分开的两件事）。
+
+| | 之前 | 现在 |
+| --- | --- | --- |
+| 分组 | `butian` | **补天**（server 的中文名；认不出的 server 显示 `MCP · <id>`） |
+| 名字 | `mcp__butian__butian_rank` | **白帽排行**（功能名） |
+| 说明 | 英文 description | 中文描述（英文的不显示，免得中英混排） |
+| chip 上显示的字 | `mcp__butian__butian_rank` | **补天 · 白帽排行**（落库文本仍是原名指令） |
+
+名字与说明集中在 `renderer/src/tool-names.ts`（纯表 + 兜底规则，无 JSX、无 DOM，
+能在 Node 里跑真值表）：
+
+- **补天 MCP**：7 个工具的 `title` 本来就是中文（`app/mcp/butian/server.ts`），抄一份到表里；
+  `toolOrder()` 顺便定死菜单里的顺序（项目大厅 → 排行 → 平台数字 → 我的空间 → …）。
+- **内置工具**：13 个也逐个写了中文名与说明（`read` → 「读取文件」）。**目前没有界面在展示
+  它们**（工具清单已按需求从侧栏移除），这张表是 `toolDisplay()` 的完整契约：任何地方要显示
+  工具名，调它就有中文，不必各写一份。
+- **认不出来就不编**：用户自己挂的 MCP server（或内核换了工具名）显示
+  `MCP · <server id>` + 功能名兜底为原名；说明只在服务端给了**中文**描述时才有。
+  宁可露出变量名，也不能瞎起一个会让人误判的中文名。
+- 描述里给模型看的 markdown 记号（补天的「（\*\*需要登录 Cookie\*\*）」）会先洗掉；
+  搜索同时匹配原名与中文名 —— `@butian` 和 `@排行` 都能找到「白帽排行」。
+
+### 通用浮层菜单（`components/menu.tsx`）
+
+输入框那三个下拉（`+` / 权限 / 模型）现在共用同一个菜单组件（原先各写各的）。
+抽出来的同时把「一个真菜单该有的东西」补齐了：
+
+| 能力 | 说明 |
+| --- | --- |
+| ↑ / ↓ / Home / End + Enter / Space | 键盘能整条走完；高亮与鼠标悬停是**同一种视觉**（`--cursor`），不用分辨自己用哪种方式选的 |
+| `role="menu"` / `menuitem` + `aria-haspopup` / `aria-expanded` | 读屏软件知道「这是菜单、现在开着」 |
+| Esc 关闭并把焦点**还给触发器** | 关掉之后接着按 ↓ 还能再打开 |
+| 点外面关掉（`pointerdown` 捕获阶段） | 不再用「整屏遮罩」那种做法 —— 遮罩会挡住底下一切交互，而且它本身就只是个「点了就关」的 hack |
+| 向上 / 向下弹、贴左 / 贴右、限高滚动 | 输入框在底部，菜单一律往上弹；条目多时能滚（`overscroll-behavior: contain`，滚到底不会把消息流带着滚） |
+| `block` 非选项行 | 「先说清楚再给选项」的整段说明（权限菜单那段「无沙箱」） |
+
+⚠️ 一个容易踩的坑：**打开时定位高亮的 `useEffect` 依赖里只能有 `open`**。
+`entries` 是调用方每次渲染现拼的数组，把它放进依赖会变成「鼠标划过某项 → 重渲染 →
+effect 又把高亮弹回第一项」，键盘和鼠标互相打架。
+
+`@` 候选菜单**不用**这个组件：它必须由编辑器（ProseMirror）持有焦点与按键，
+库或自定义浮层来抢焦点都会把输入框的键盘逻辑搞乱 —— 它的长相走 `.mention*` 那套 CSS。
 
 ### 预览面板：右侧可隐藏的报告 / 代码 / 图片视图
 

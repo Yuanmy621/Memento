@@ -4,7 +4,7 @@
  * | 触发符 | 选什么 | chip 上显示 | 落库文本 |
  * | --- | --- | --- | --- |
  * | `/` | 用户命令 + 技能 | `/名字` / 技能名 | `/名字` / 「用 skill 工具加载 …」 |
- * | `@` | MCP 工具（按 server 分组） | 工具名 | 「用 … 工具：」 |
+ * | `@` | MCP 工具（按 server 分组） | 中文功能名（`补天 · 白帽排行`） | 「用 `mcp__butian__butian_rank` 工具：」 |
  * | `#` | 工作目录里的文件 | 相对路径 | 相对路径 |
  *
  * ## 分工
@@ -23,6 +23,7 @@
 import type { ReactElement } from 'react'
 import type { ChipAttrs } from './editor/chip.ts'
 import { commandChip, fileChip, skillChip, toolChip } from './editor/chip-text.ts'
+import { toolDisplay, toolOrder } from '../tool-names.ts'
 import type { Trigger } from './editor/triggers.ts'
 import type { CommandBrief, FileBrief, HostToolInfo, SkillBrief } from '../use-agent.ts'
 
@@ -32,6 +33,8 @@ export interface Mention {
   readonly key: string
   /** 选中后插进输入框的 chip（显示文字与落库文字都在里面）。 */
   readonly chip: ChipAttrs
+  /** 菜单里显示的名字（省略则用 `chip.label`）。 */
+  readonly label?: string
   /** 右侧说明。 */
   readonly hint: string
   /** 分组名（`@` 按 MCP server 分组时用）。 */
@@ -87,18 +90,21 @@ export function buildMentions(
   if (trigger === '@') {
     return data.tools
       .filter(item => item.name.startsWith('mcp__'))
-      .filter(item => hit(item.name) || hit(item.description))
-      .map((item) => {
-        // 工具名形如 mcp__<server>__<tool>：中间那段就是 MCP server 名，用来分组
-        const parts = item.name.split('__')
-        const server = parts.length >= 3 ? parts[1] ?? 'mcp' : 'mcp'
-        return {
-          key: `tool:${item.name}`,
-          chip: toolChip(item.name),
-          hint: item.description,
-          group: server,
-        }
-      })
+      .map((item) => ({ item, display: toolDisplay(item.name, item.description) }))
+      // 匹配三种写法：原名（`butian`）、中文名（`排行`）、说明里的词
+      .filter(({ item, display }) => hit(item.name) || hit(display.label) || hit(display.note))
+      // 与侧栏工具清单同一套顺序（否则同一条工具在两处的名次不一样）
+      .sort((a, b) => toolOrder(a.item.name) - toolOrder(b.item.name) || a.item.name.localeCompare(b.item.name))
+      .map(({ item, display }) => ({
+        key: `tool:${item.name}`,
+        // 菜单里挂在「补天」分组下，所以只显示功能名；chip 插进输入框后会离开分组，
+        // 那时才需要带上 server 前缀（见下面 chip 的 label）
+        label: display.label,
+        chip: toolChip(item.name, `${display.group} · ${display.label}`),
+        // 说明用中文描述（服务端没给中文就留空，不硬塞英文）
+        hint: display.note,
+        group: display.group,
+      }))
       .slice(0, limit)
   }
 
@@ -145,7 +151,7 @@ export function MentionMenu(props: MentionMenuProps): ReactElement | null {
               // onMouseDown 而不是 onClick：click 之前编辑器会先失焦，光标位置就丢了
               onMouseDown={(event) => { event.preventDefault(); props.onPick(mention) }}
             >
-              <span className="mention__label">{mention.chip.label}</span>
+              <span className="mention__label">{mention.label ?? mention.chip.label}</span>
               <span className="mention__hint">{mention.hint}</span>
             </button>
           </div>

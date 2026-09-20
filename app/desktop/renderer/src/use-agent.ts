@@ -859,7 +859,6 @@ export interface AgentController {
   /** 切到另一个项目（换工作目录 = 用新 cwd 重启内核）。 */
   readonly openProject: (path: string) => Promise<void>
   /** 重新扫描会话列表。 */
-  readonly refreshSessions: () => Promise<void>
   /** 读一个折叠项目的会话明细（结果以 `project-sessions` 事件回来）。 */
   readonly loadProjectSessions: (path: string) => Promise<void>
   /** 用系统默认程序打开一个文件（文件卡片的「打开」按钮）。 */
@@ -930,7 +929,14 @@ export function useAgent(): AgentController {
     // host 事件与主进程自产事件共用一条通道，形状由协议保证。
     const off = api.onEvent((event) => { dispatchRef.current(event) })
 
-    // 清单也主动拉一次：即使首帧推送被丢掉，也能自己补上（host 会重新扫盘）。
+    /*
+     * 清单主动拉一次：即使首帧推送被丢掉，也能自己补上（host 会重新扫盘）。
+     *
+     * ⚠️ 这是**启动自愈**用的，不是界面功能 —— 底栏那个「刷新」按钮已经删掉了
+     * （用户要求：左下角不展示工具 / 刷新），但这条链路要留着，否则首帧一旦丢掉
+     * 侧栏就永远是空的。所以 `preload` / `main` / host 三层的 `refreshSessions`
+     * 仍然在，删掉的只有 hook 对外导出的那个 `refreshSessions`。
+     */
     void api.refreshSessions().catch(() => { /* 拿不到就等下一次推送 */ })
 
     api.getState().then(
@@ -998,10 +1004,6 @@ export function useAgent(): AgentController {
     } catch (error) {
       dispatch({ type: 'user-error', message: `切换项目失败：${String((error as Error | undefined)?.message ?? error)}` })
     }
-  }, [api])
-  const refreshSessions = useCallback(async (): Promise<void> => {
-    // 主进程会把这个请求转给 host，结果以 `workspace` 帧回来。
-    await api?.refreshSessions()
   }, [api])
   /**
    * 展开一个折叠的项目：让 host 去读它的会话。
@@ -1097,7 +1099,6 @@ export function useAgent(): AgentController {
     newSession,
     resumeSession,
     openProject,
-    refreshSessions,
     loadProjectSessions,
     openPath,
     previewRead,
