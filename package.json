@@ -13,7 +13,8 @@
     "desktop:host": "node app/desktop/host/index.ts",
     "typecheck": "tsc --noEmit && tsc --noEmit -p app/desktop/renderer/tsconfig.json && tsc --noEmit -p tsconfig.js.json",
     "mcp:butian": "node app/mcp/butian/server.ts",
-    "desktop:butian": "YuanMy_MCP=butian npm run desktop"
+    "desktop:butian": "YuanMy_MCP=butian npm run desktop",
+    "opencli:install": "node app/opencli/install.js"
   },
   "keywords": [],
   "license": "MIT",

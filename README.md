@@ -105,6 +105,7 @@ npm run typecheck          # Node 侧 TS + 渲染进程 TSX + Node 侧 JS
 npm run desktop            # 真开窗口（会自动重新构建渲染进程）
 npm run desktop:butian     # 带补天 MCP 起桌面端
 npm run desktop:host       # 只起内核宿主，输出 NDJSON，可 `| jq` 单看内核链路
+npm run opencli:install    # 把 app/opencli 下的适配器同步给全局的 opencli
 ```
 
 > ⚠️ 改 `main.js` 时注意：**Electron 的 ESM 主进程入口不能用顶层 `await app.whenReady()`**。
@@ -150,6 +151,11 @@ app/
     scripts/
       build-renderer.js  渲染进程打包（esbuild + PostCSS/Tailwind）
     README.md            桌面端设计说明
+
+  opencli/               把站点包成 shell 命令（适配器源在这里，装在 ~/.opencli/clis/）
+    clis/butian/*.js     补天个人中心：center / vulns / missions / sign
+    install.js           同步到 opencli 的适配器目录（npm run opencli:install）
+    README.md            命令清单、凭据位置、为什么不需要 Chrome 扩展
 
   mcp/                   自己带的 MCP 服务器（外部工具，默认不挂载）
     README.md            怎么接到内核上、凭据怎么转发、pnpm 依赖坑
@@ -322,6 +328,7 @@ ctx.tools.register(defineTool({
 | 读会话历史 / 列会话 | 会话以 JSONL 落在 `<cwd>/.YuanMy/sessions/<项目>/<会话 id>/session.v3.jsonl`，第一行是头 | `app/desktop/host/sessions.ts` |
 | 列会话（项目 → 会话树） | 会话以 JSONL 落在 `<cwd>/.YuanMy/sessions/<项目>/<会话 id>/session.v3.jsonl`，第一行是头 | `app/desktop/host/sessions.ts` |
 | 跨项目列表 | 内核 stateDir 每项目一份库 → 桌面端记一份「最近打开过的项目」（`<userData>/projects.json`），经 `YuanMy_PROJECT_ROOTS` 交给 host 多扫几个根 | `app/desktop/main.js` + `host/sessions.ts` |
+| 把某个网站包成 agent 能用的命令 | 写 opencli 适配器放 `app/opencli/clis/<site>/`，`npm run opencli:install` 同步到 `~/.opencli/clis/`（要真实目录、只认 .js） | `app/opencli/` |
 | 接一个 MCP 服务器 | `YuanMy_MCP=<名字> npm start`（默认不挂）；内置的在 `app/cli/kernel.ts` 的 `mcpSpecs()`，也可以丢一个 `<cwd>/.YuanMy/mcp/<名字>.ts` | `app/mcp/` |
 | 回放一个会话的历史 | 恢复会话 = `--resume <id>` 重启内核；界面侧由 host 读日志发 `history` 帧（实时路径与回放路径共用 `protocol.ts` 的词表与 `toOutcome`） | `app/desktop/host/history.ts` |
 | 拿 token 计量 | `session/event` 的 `assistant/message` 带 `usage`（计数互斥：未命中/命中/写入分开记） | `bridge.ts` 的 `usage` 帧 |

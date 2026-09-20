@@ -39,6 +39,16 @@ chmod 600 ~/.YuanMy/butian-cookie.txt     # 只有自己可读
 
 填完让模型跑一次 `butian_doctor`，它会逐个接口报告「通了 / 需要登录 / 失败」。
 
+### 光有 Cookie 还不够：`token`（已自动处理）
+
+补天需登录的接口除 Cookie 外还要一个表单字段 `token`，只带 Cookie 会拿到
+`{"status":0,"info":"no token"}`。这个 token **不在 Cookie 里**，而是服务端内联渲染进
+`/WhiteHat/Center` 页面 HTML 的一个 Vue data 字段。
+
+不需要你手动做任何事：`client.ts` 的 `authToken()` 会带 Cookie 拉一次个人中心页把它抠出来，
+按 Cookie 缓存；接口报 `no token`（会话轮换）时自动清缓存，下次调用重抓。
+登录态真失效时会明确提示「登录态无效或已过期」，而不是丢一个无法解读的 `no token`。
+
 ## 工具
 
 | 工具 | 登录 | 接口 |
@@ -70,6 +80,7 @@ chmod 600 ~/.YuanMy/butian-cookie.txt     # 只有自己可读
 | `POST` 必须带 `ajax=1` | 前端拦截器 `merge({ ajax: 1 }, data)`；少了会被当普通页面请求 |
 | `Content-Type: application/x-www-form-urlencoded` | 前端 axios 实例就是这么建的 |
 | 成功判定 `status === 1 \|\| success === 1` | 响应拦截器；业务失败也是 HTTP 200 |
+| **需登录的接口还要带 `token`** | 页面里 `var token = ""` 渲染进 Vue data；只带 Cookie 会回 `no token` |
 
 envelope 长这样：
 
@@ -77,15 +88,15 @@ envelope 长这样：
 {"status":1,"info":"棒棒哒","data":{"count":200,"current":1,"list":[...]}}
 ```
 
-### 已验证 / 未验证
+### 已验证
 
-| 状态 | 内容 |
-| --- | --- |
-| ✅ 实测过 | 4 个免登录接口的真实返回结构（`/Reward/corps` 的 count 恒为 0、`/Reward/corps` 的 count 恒为 0 这类坑都记在代码注释里） |
-| ⚠️ 只从 bundle 读到「路径+方法+参数名」 | 4 个登录接口的**返回结构**。没有凭据无法预先确认字段名，所以 `butian_me` / `butian_missions` / `butian_my_follow` 目前把原始 JSON 交给模型 —— 跑一次 `butian_doctor` 就能看到字段，随之固化成可读文本 |
+| 内容 |
+| --- |
+| 4 个免登录接口的真实返回结构（`/Reward/corps` 的 count 恒为 0 这类坑都记在代码注释里） |
+| 4 个登录接口的真实返回结构：`spaceData` 返回 uid/user_name/price/level/rank/team/honor_count 等；`Mission/lists` 返回按分类分组的 `{list, total}`；`Follow/index` 返回 `{list, total}`；`Sign/continue_days` 返回连续签到天数（number） |
 
-这也是为什么有 `butian_doctor`：填完凭据跑一次，就能看清每个登录接口的真实结构，
-不用逐个工具去试。
+`butian_me` / `butian_missions` / `butian_my_follow` 目前仍把原始 JSON 交给模型 ——
+字段名已经对齐，但还没固化成给人看的可读文本。
 
 
 离线冒烟覆盖：工具表与只读边界、`ajax=1`/Content-Type/`X-Requested-With` 契约、

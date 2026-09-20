@@ -30,6 +30,11 @@
  * 没配也能启动：那些工具会返回「需要凭据」的明确提示，而不是报错崩掉。
  * 填好后用 `butian_doctor` 工具一次性看清哪些接口通了。
  *
+ * ⚠️ 光有 Cookie 还不够：补天需登录的接口还要一个表单字段 `token`，它**不在 Cookie 里**，
+ * 而是内联渲染在 `/WhiteHat/Center` 页面 HTML 中。{@link authToken} 负责带 Cookie 拉
+ * 一次这个页面并抠出来（按 Cookie 缓存），{@link loginCall} 负责把它补进参数。
+ * 详见 `client.ts` 的模块注释。
+ *
  * ## 只读承诺
  *
  * 这里**故意不注册**任何改变账号状态的接口（签到 `/WhiteHat/Sign/userCheckin`、
@@ -45,7 +50,7 @@ import { join } from 'node:path'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
-import { apiGet, apiPost, ButianError, site, type CallOptions } from './client.ts'
+import { apiGet, apiPost, authToken, ButianError, site, type CallOptions } from './client.ts'
 
 /** 这个 server 的名字：工具名会变成 `mcp__butian__<工具>`。 */
 const SERVER_NAME = 'butian'
@@ -92,6 +97,42 @@ function normalizeCookie(raw: string): string {
 /** 每次调用都重新读：用户在会话中途填了凭据，不用重启 MCP。 */
 async function options(): Promise<CallOptions> {
   return { cookie: await readCookie() }
+}
+
+/**
+ * 取登录 Cookie；没有就抛可操作的 `no-credential`。
+ *
+ * 集中在这里是为了让类型收窄一次，调用方拿到的就是 `string`。
+ */
+function requireCookie(opts: CallOptions, tool: string): string {
+  if (opts.cookie === undefined) {
+    throw new ButianError('no-credential', `${tool} 需要登录后才能调用`)
+  }
+  return opts.cookie
+}
+
+/**
+ * 调**需登录**的接口：自动补上补天要求的 `token`。
+ *
+ * 光有 Cookie 不够 —— 补天会回 `{status:0, info:"no token"}`。token 得从个人中心页
+ * 的 HTML 里刮（见 `client.ts` 的 {@link authToken}，按 Cookie 缓存）。
+ *
+ * @param path - 接口路径。
+ * @param method - `GET` / `POST`。
+ * @param params - 业务参数；`token` 由这里补，别自己传。
+ * @param cookie - 登录 Cookie（用 {@link requireCookie} 取）。
+ * @param referer - 伪造的来源页。
+ */
+async function loginCall(
+  path: string,
+  method: 'GET' | 'POST',
+  params: Readonly<Record<string, string | number | undefined>>,
+  cookie: string,
+  referer: string,
+): Promise<unknown> {
+  const withToken = { ...params, token: await authToken(cookie) }
+  const opts: CallOptions = { cookie }
+  return method === 'GET' ? apiGet(path, withToken, opts, referer) : apiPost(path, withToken, opts, referer)
 }
 
 /** 把任意数据序列化成给模型看的紧凑 JSON（控制体积，避免把上下文塞满）。 */
@@ -268,11 +309,8 @@ server.registerTool('butian_me', {
   inputSchema: {},
   annotations: { readOnlyHint: true, openWorldHint: true },
 }, async () => guard(async () => {
-  const opts = await options()
-  if (opts.cookie === undefined) {
-    throw new ButianError('no-credential', 'butian_me 需要登录后才能读个人中心')
-  }
-  const data = await apiPost('/WhiteHat/Center/spaceData', {}, opts, `${site()}/WhiteHat/Center`)
+  const cookie = requireCookie(await options(), 'butian_me')
+  const data = await loginCall('/WhiteHat/Center/spaceData', 'POST', {}, cookie, `${site()}/WhiteHat/Center`)
   return `个人中心数据（原始返回）：\n${toText(data)}`
 }))
 
@@ -285,11 +323,8 @@ server.registerTool('butian_missions', {
   },
   annotations: { readOnlyHint: true, openWorldHint: true },
 }, async ({ page }) => guard(async () => {
-  const opts = await options()
-  if (opts.cookie === undefined) {
-    throw new ButianError('no-credential', 'butian_missions 需要登录后才能读任务列表')
-  }
-  const data = await apiGet('/WhiteHat/Mission/lists', { p: page }, opts, `${site()}/WhiteHat/Center`)
+  const cookie = requireCookie(await options(), 'butian_missions')
+  const data = await loginCall('/WhiteHat/Mission/lists', 'GET', { p: page }, cookie, `${site()}/WhiteHat/Center`)
   return `任务列表（原始返回）：\n${toText(data)}`
 }))
 
@@ -302,11 +337,8 @@ server.registerTool('butian_my_follow', {
   },
   annotations: { readOnlyHint: true, openWorldHint: true },
 }, async ({ page }) => guard(async () => {
-  const opts = await options()
-  if (opts.cookie === undefined) {
-    throw new ButianError('no-credential', 'butian_my_follow 需要登录后才能读关注列表')
-  }
-  const data = await apiPost('/WhiteHat/Follow/index', { p: page }, opts, `${site()}/WhiteHat/Center`)
+  const cookie = requireCookie(await options(), 'butian_my_follow')
+  const data = await loginCall('/WhiteHat/Follow/index', 'POST', { p: page }, cookie, `${site()}/WhiteHat/Center`)
   return `我关注的厂商（原始返回）：\n${toText(data)}`
 }))
 
@@ -351,9 +383,12 @@ server.registerTool('butian_doctor', {
       continue
     }
     try {
-      const data = probe.method === 'GET'
-        ? await apiGet(probe.path, probe.params, opts, probe.referer)
-        : await apiPost(probe.path, probe.params, opts, probe.referer)
+      // 需登录的接口要额外带 token（由 loginCall 从个人中心页刮取并缓存）。
+      const data = probe.needsLogin
+        ? await loginCall(probe.path, probe.method, probe.params, requireCookie(opts, 'butian_doctor'), probe.referer)
+        : probe.method === 'GET'
+          ? await apiGet(probe.path, probe.params, opts, probe.referer)
+          : await apiPost(probe.path, probe.params, opts, probe.referer)
       const shape = JSON.stringify(data)
       const keys = typeof data === 'object' && data !== null && !Array.isArray(data)
         ? Object.keys(data as Record<string, unknown>).join(', ')
