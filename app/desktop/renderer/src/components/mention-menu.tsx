@@ -76,12 +76,21 @@ export function buildMentions(
         hint: item.description === '' ? '命令' : item.description,
         group: '命令',
       }))
+    /*
+     * 只列**模型能加载**的全局技能。
+     *
+     * `disable-model-invocation` 的「命令专用技能」（`report`、`ip-as-logo` 这类）不能进这里：
+     * chip 落库是「用 skill 工具加载 X 后按它执行：」，而内核的 skill 工具**明确拒绝**加载
+     * 这类技能（`not available for model invocation`）—— 列出来就是个点了报错的选项。
+     * 它们的入口是各自的 `/命令`（就在上面的「命令」组里），设置界面里能看它们的调用政策。
+     */
     const skills = data.skills
+      .filter(item => item.invocation === 'global')
       .filter(item => hit(item.name) || hit(item.description))
       .map(item => ({
         key: `skill:${item.name}`,
         chip: skillChip(item.name),
-        hint: `${item.invocation === 'command' ? '命令专用技能' : '全局技能'} · ${item.description}`,
+        hint: `全局技能 · ${item.description}`,
         group: '技能',
       }))
     return [...commands, ...skills].slice(0, limit)

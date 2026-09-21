@@ -955,6 +955,28 @@ html[data-platform="darwin"] .sidebar__brand {
   container-type: inline-size;
 }
 
+/*
+ * 有刻度尺的时候不再画系统滚动条：位置与跳转都由右侧那把尺子负责
+ * （见 `.rail` —— 当前刻度滑到中间就是游标，点/滚/拖都能跳），
+ * 两个指示器同时出现纯属视觉噪音。
+ *
+ * 只加 `.main-column--rail` 前缀，是因为**只有对话面板有尺子**：
+ * 轨迹面板（以及刚开的新会话，条目不足两条时不显示尺子）仍然保留滚动条，
+ * 否则那里就一个位置提示都没有了。
+ *
+ * 滚动本身一点没动：滚轮 / 触控板 / 键盘 / 程序化 `scrollTop` 全都照旧 ——
+ * 去掉的只是那根可见的条。
+ */
+.main-column--rail .messages {
+  scrollbar-width: none;
+}
+
+.main-column--rail .messages::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
 .messages__inner {
   display: flex;
   flex-direction: column;
