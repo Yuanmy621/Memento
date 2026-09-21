@@ -195,6 +195,9 @@ copy('app/desktop/renderer/dist', 'desktop/renderer/dist')
 copy('app/cli', 'cli')
 // 内置 MCP 服务器：app/cli/kernel.ts 按 `../mcp/butian/server.ts` 相对解析并拉起
 copy('app/mcp', 'mcp')
+// 应用图标：Forge 按 `packagerConfig.icon: 'assets/icon'` 找 `assets/icon.icns`（macOS）
+// 或 `assets/icon.ico`（Windows）—— 路径相对 staging 根目录。
+copy('app/desktop/assets', 'assets')
 // Forge 配置（Forge 用 jiti 加载 .ts，见 forge.config.ts 的注释）
 copy('app/desktop/forge.config.ts', 'forge.config.ts')
 
@@ -252,6 +255,7 @@ const mustHave = [
   'desktop/preload.cjs',
   'desktop/host/index.ts',
   'desktop/renderer/index.html',
+  'assets/icon.icns',
   'desktop/renderer/dist/renderer.js',
   'desktop/renderer/dist/renderer.css',
   'cli/kernel.ts',

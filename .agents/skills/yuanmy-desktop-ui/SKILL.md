@@ -23,6 +23,34 @@ CJS 加载器，不认识 TS —— 它**静默失败**，界面只会说「prel
 唯一保留 `.js` 的是 `app/opencli/**`（opencli 只发现 `.js`，见该目录 README），
 归属单独放在 `tsconfig.js.json`。
 
+## 界面底座是 Beautiful UI（vendored，MIT）
+
+**当前状态（已迁移完成）**：令牌全部来自 foundation；构件用它的
+`Button/EntityChip/ValuePill/Shimmer`（atoms）与
+`ThinkingState/ToolChips/TaskRows/CodeBlock/LoadingState`（primitives）；
+Tiptap 与 Streamdown 只换外壳；刻度尺 / 浮层菜单 / 柱面粒子仍是自研。
+下面四条是改这块时必须记住的：
+
+界面构件来自 <https://www.beautifului.dev/>（MIT）：源码在
+`app/desktop/renderer/src/ui/beautifului/`（`foundation.css` + `atoms/` + `primitives/`），
+接法、三处坑与分阶段迁移表都在 `app/desktop/README.md` 的「5.5 界面底座」一节。
+动手前记住四条：
+
+1. **改样式先看令牌**：`bg-page` / `text-ink-2` / `rounded-window` / `shadow-card` 这些类来自
+   foundation 的 `@theme inline`，不要自己写死颜色；品牌色是 `--accent`（我们换成了蓝紫）。
+2. **`foundation.css` 括号不配平**（上游 bug）：Tailwind 遇到它会**整份丢掉并且不报错** ——
+   改完 foundation 一定要数一次括号，并在真窗口里确认 `--page` 这类令牌还在。
+3. **`--color-accent` 撞名**：全局是 Beautiful UI 的品牌语义，Streamdown 的 `.sd` 作用域里才是
+   shadcn 的 hover 底。加新样式时别在 `.sd` 里用 `bg-accent` 当品牌色。
+4. **Tiptap 与 Streamdown 不换**（只换外壳）；刻度尺 / 浮层菜单 / 柱面粒子上游没有对应物，继续自研。
+   ⚠️ **删 CSS 只按选择器删，别按行区间删**，删完必须跑 `npm run audit:css`：
+   这个仓库踩过一次「按区间删轨迹样式，连带删掉菜单/提及/统计/token/chip 的活样式」——
+   编译与类型检查都不报错，只有界面没样式。
+5. **上游有四个构件是「展示件」不是可嵌组件**（`PromptBar` 自带 textarea + 自播放 walkthrough + glimm 扫光；
+   `ChatComposer` 是整块消息列表 demo；`SidebarNav` 是扁平 recents；`ThinkingState`/`ToolChips` 内建演示时序）。
+   前三个只取**样式/结构**，第四个用 vendored 补丁的 `live`/`working`/`expanded`/`compact` 改成数据驱动 —— 取舍表在
+   README「5.5 界面底座」里。
+
 ## 先记住：渲染进程需要构建
 
 界面源码是 **TSX**（`app/desktop/renderer/src/`），由 esbuild + Tailwind 打成
@@ -284,6 +312,27 @@ if (view.composing || ime.isImeKeyNative(event)) return false
 层级靠「缩进 + 竖线 + 字号 + 行高」，**不要**把会话做成两行的卡片（早先 42px，
 比项目行还厚，一屏放不下几条）。改完在真窗口里量一下：
 `document.querySelectorAll('.session')[0].getBoundingClientRect().height` 应该是 24。
+
+## 品牌行 / 图标：界面里 16px，系统图标按 Apple 网格
+
+侧栏品牌行照 macOS 侧栏头部来：`.sidebar__logo` **16×16 + 圆角 4px**、标题 **13px/600**、
+`gap: 6px`、`padding: 8px 10px 6px`（darwin 再被 `padding-top: 34px` 顶下来给红绿灯）。
+16px 恰好等于项目行 `Monogram` 的 `size-4`，一行里三个东西（图标 / 标题 / 右侧 26px 的
+「新会话」按钮）视觉宽度才对得上。**踩过**：一开始 logo 给的是 20px / 圆角 6px、标题 14px，
+整行像网页标题栏 —— 用户一眼就说「太大了，参考 macOS 的应用 UI 尺寸」。
+
+`assets/` 下三份图标是**两档尺寸规范**，别互相顶：
+
+| 档 | 文件 | 规范 |
+| --- | --- | --- |
+| 界面内 | `logo.png`(128²) | **铺满画布**，尺寸与圆角全交给 CSS（16px / 4px） |
+| 系统 | `icon.png`(1024²) / `icon.icns` | **Apple 图标网格**：画布 1024²、方片本体 824² 居中（80.47%）、本体圆角 22.45%、本体外透明 |
+
+系统图标铺满画布是**错的** —— macOS 上所有 App 图标本体都只占画布的 ~80%，
+100% 的图标在 Dock 里比邻居胖一圈。透明只给**方片外面**，本体仍是不透明的浅紫底
+（抠掉背景图案会在浅色桌面上「浮」着）。派生脚本 `app/desktop/scripts/make-icons.py`
+（要 Pillow，不参与构建）；自检口径：`icon.png` 不透明 bbox = `100,100 → 923,923`、
+四角 alpha = 0，`iconutil -c iconset` 回解出来的每一档都应是 80.47% 左右。
 
 ## 侧栏背景的柱面网格：纯模拟与 DOM 分开
 

@@ -23,8 +23,10 @@ import { memo, useCallback, useEffect, useRef, useState, type ReactElement } fro
 import type { PreviewPayload } from '../../../ipc.ts'
 import type { RecentFile } from '../use-agent.ts'
 import { Markdown } from '../markdown.tsx'
+import CodeBlock from '../ui/beautifului/primitives/CodeBlock.tsx'
+import { Button } from '../ui/beautifului/atoms/Button.tsx'
 import {
-  IconBack, IconClose, IconCodeFile, IconExternal, IconFile, IconFileQuestion,
+  IconBack, IconClose, IconCodeFile, IconCopy, IconExternal, IconFile, IconFileQuestion,
   IconFolderOpen, IconImageFile, IconSpinner,
 } from '../icons.tsx'
 
@@ -142,9 +144,9 @@ export const PreviewPanel = memo(function PreviewPanel({
           而这个面板的用法恰恰是「看完一份报告马上翻下一份」。
         */}
         {path !== null ? (
-          <button type="button" className="preview__btn" title="返回文件列表" onClick={() => { onSelect(null) }}>
+          <Button variant="quiet" size="xs" className="preview__btn" title="返回文件列表" onClick={() => { onSelect(null) }}>
             <IconBack size={14} />
-          </button>
+          </Button>
         ) : (
           <span className="preview__icon"><IconFile size={14} /></span>
         )}
@@ -154,14 +156,25 @@ export const PreviewPanel = memo(function PreviewPanel({
           <span className="preview__badge">{KIND_LABEL[payload.kind]}</span>
         )}
         <span className="preview__spacer" />
-        {path !== null && (
-          <button type="button" className="preview__btn" title={`用系统默认程序打开 ${path}`} onClick={openExternally}>
-            <IconExternal size={13} />
-          </button>
+        {path !== null && payload !== null && payload.ok && payload.text !== undefined && (
+          <Button
+            variant="quiet"
+            size="xs"
+            className="preview__btn"
+            title="复制全文"
+            onClick={() => { void navigator.clipboard.writeText(payload.text ?? '') }}
+          >
+            <IconCopy size={13} />
+          </Button>
         )}
-        <button type="button" className="preview__btn" title="收起预览面板" onClick={onClose}>
+        {path !== null && (
+          <Button variant="quiet" size="xs" className="preview__btn" title={`用系统默认程序打开 ${path}`} onClick={openExternally}>
+            <IconExternal size={13} />
+          </Button>
+        )}
+        <Button variant="quiet" size="xs" className="preview__btn" title="收起预览面板" onClick={onClose}>
           <IconClose size={13} />
-        </button>
+        </Button>
       </header>
       {dir !== '' && <div className="preview__path mono" title={path ?? ''}>{dir}</div>}
 
@@ -217,7 +230,17 @@ export const PreviewPanel = memo(function PreviewPanel({
           <div className={`preview__content preview__content--${payload.kind}`}>
             {payload.kind === 'markdown' && <Markdown>{payload.text ?? ''}</Markdown>}
             {payload.kind === 'code' && <Markdown>{fenced(payload.text ?? '', payload.language ?? '')}</Markdown>}
-            {payload.kind === 'text' && <pre className="preview__pre mono">{payload.text ?? ''}</pre>}
+            {/* 纯文本 / 日志：用 Beautiful UI 的 CodeBlock（行号 + 文件名头 + 一键复制），
+                比光秃秃的 <pre> 多出「这是哪个文件、复制走」两件事 */}
+            {payload.kind === 'text' && (
+              <CodeBlock
+                variant="Code"
+                lines={(payload.text ?? '').split('\n')}
+                code={payload.text ?? ''}
+                filename={name}
+                labels={{ copy: '复制全文', copied: '已复制' }}
+              />
+            )}
             {payload.kind === 'image' && <img className="preview__img" src={payload.dataUrl ?? ''} alt={name} />}
             {payload.kind === 'binary' && (
               <div className="preview__empty">

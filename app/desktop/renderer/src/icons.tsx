@@ -19,7 +19,7 @@
  */
 
 import {
-  ArrowLeft, Brain, ChevronDown, CircleAlert, Clock, Coins, ExternalLink,
+  ArrowLeft, Brain, ChevronDown, CircleAlert, Clock, Coins, Copy, ExternalLink,
   FileCode, FileImage, FileQuestionMark, FileText, FolderOpen, Info, ListTree,
   LoaderCircle, MessageSquare, MessagesSquare, PanelRightClose, PanelRightOpen, Plus,
   Repeat, Search, SendHorizontal, ShieldCheck, SquareTerminal, Target,
@@ -58,6 +58,7 @@ export const IconToken = icon(Coins)
 export const IconClock = icon(Clock)
 export const IconTurns = icon(Repeat)
 export const IconClose = icon(X)
+export const IconCopy = icon(Copy)
 export const IconSpinner = icon(LoaderCircle)
 
 // ── 标签栏 / 面板 ───────────────────────────────────────────────────────────

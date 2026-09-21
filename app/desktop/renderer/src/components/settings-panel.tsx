@@ -27,6 +27,7 @@
 
 import { useEffect, useState, type ReactElement } from 'react'
 import type { FileResult, McpEntry, SettingsData, SkillEntry } from '../use-agent.ts'
+import { Button } from '../ui/beautifului/atoms/Button.tsx'
 
 /** 三个标签页。 */
 type Tab = 'skills' | 'commands' | 'mcp'
@@ -128,9 +129,9 @@ function Editor(props: {
       <div className="setedit__bar">
         <span className="setedit__path" title={props.path}>{props.path}</span>
         <span className="setedit__status">{status}</span>
-        <button type="button" className="setbtn no-drag" disabled={busy || content === null} onClick={() => { void save() }}>
+        <Button type="button" variant="secondary" size="xs" disabled={busy || content === null} onClick={() => { void save() }}>
           {busy ? '保存中…' : '保存'}
-        </button>
+        </Button>
       </div>
       <textarea
         className="setedit__area no-drag"
@@ -220,10 +221,10 @@ export function SettingsPanel(props: SettingsPanelProps): ReactElement {
             ))}
           </nav>
           <span className="setmodal__spacer" />
-          <button type="button" className="setbtn no-drag" onClick={props.onReload} disabled={props.busy}>
+          <Button type="button" variant="secondary" size="xs" onClick={props.onReload} disabled={props.busy}>
             {props.busy ? '刷新中…' : '刷新'}
-          </button>
-          <button type="button" className="setbtn no-drag" onClick={props.onClose}>关闭</button>
+          </Button>
+          <Button type="button" variant="secondary" size="xs" onClick={props.onClose}>关闭</Button>
         </header>
 
         <div className="setmodal__body">
@@ -261,13 +262,14 @@ export function SettingsPanel(props: SettingsPanelProps): ReactElement {
             {tab === 'mcp' && mcp.length === 0 && <p className="setempty">没有可用的 MCP 服务器。</p>}
             {tab === 'mcp' && data !== null && (
               <div className="setmcpcfg">
-                <button
+                <Button
                   type="button"
-                  className="setbtn no-drag"
+                  variant="secondary"
+                  size="xs"
                   onClick={() => { setPicked(data.mcpConfigPath) }}
                 >
                   编辑配置 JSON
-                </button>
+                </Button>
                 {data.mcpConfigError !== undefined && (
                   <p className="setwarn">配置文件解析失败：{data.mcpConfigError}</p>
                 )}
@@ -295,7 +297,7 @@ export function SettingsPanel(props: SettingsPanelProps): ReactElement {
             技能放 .agents/skills/，命令放 .agents/commands/，MCP 配置在 .YuanMy/mcp.json
             —— 都是纯文本，界面里改完即写盘。
           </span>
-          <button type="button" className="setbtn no-drag" onClick={props.onRestart}>重启内核</button>
+          <Button type="button" variant="secondary" size="xs" onClick={props.onRestart}>重启内核</Button>
         </footer>
       </div>
     </div>
@@ -324,14 +326,15 @@ function McpRow(props: {
       <span className="setrow__sub" title={detail}>
         {server.transport} · {server.reason} · {detail.length > 70 ? `${detail.slice(0, 69)}…` : detail}
       </span>
-      <button
+      <Button
         type="button"
-        className="setbtn setbtn--sm no-drag"
+        variant="secondary"
+        size="xs"
         disabled={props.disabled}
         onClick={props.onToggle}
       >
         {server.enabled ? '停用' : '启用'}
-      </button>
+      </Button>
     </div>
   )
 }

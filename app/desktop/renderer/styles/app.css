@@ -30,6 +30,38 @@
 
 @import "tailwindcss";
 
+/*
+ * Beautiful UI 的设计底座（vendored，MIT —— 见 ui/beautifului/README.md）。
+ *
+ * 放在 `@import "tailwindcss"` 之后：它自带 `@theme inline` 与 `.dark` 令牌块，
+ * 会生成 `bg-page` / `text-ink-2` / `rounded-window` / `shadow-card` 这些类，
+ * 那些构件（atoms / primitives）全都靠它们。
+ *
+ * ⚠️ 它内部已经 `@import "tailwindcss"` 过了，vendored 时删掉了重复那一行；
+ * `shadow-plugin/unprefixed` 那行保留（构件的阴影栈 `--shadow-xs…lg` 来自它）。
+ */
+@import "../src/ui/beautifului/foundation.css";
+
+/*
+ * 字体族：Beautiful UI 用 `--font-inter` / `--font-mono-face`（Next.js 里由 next/font 注入）。
+ * 我们是本地应用、不引 webfont，所以把它的两个变量指到项目现有的两套字体上 ——
+ * 否则它那边的 `font-sans` 会掉到浏览器默认字体，和我们自己的界面不一致。
+ */
+:root {
+  --font-inter: var(--dsw-font-family);
+  --font-mono-face: var(--ds-font-family-code);
+
+  /*
+   * 品牌强调色：Beautiful UI 默认是蓝（`--accent: oklch(0.68 0.173 253.301)`），
+   * YuanMy 沿用自己那支低饱和蓝紫 —— 这是设计系统留的口子，只换色相不动结构。
+   * 三个变量要一起换：`--accent` 是填充色，`--accent-ink` 是文字色（暗色下更亮），
+   * `--accent-tint` 是它 16% 的底。
+   */
+  --accent: oklch(0.62 0.16 285.5);
+  --accent-ink: oklch(0.78 0.11 285.5);
+  --accent-tint: oklch(0.62 0.16 285.5 / 0.16);
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
    1. 设计令牌
    ══════════════════════════════════════════════════════════════════════════ */
@@ -48,13 +80,11 @@
   /* ── 静态色阶（只取暗色主题用得到的档位）───────────────────────────
      「bluish neutral」是这套 UI 的底色特征：不是纯灰，带一点冷调。 */
   --dsw-static-neutral-bluish-1000: rgb(12, 12, 14);
-  --dsw-static-neutral-bluish-950: rgb(17, 17, 19);
   --dsw-static-neutral-bluish-900: rgb(23, 23, 26);
   --dsw-static-neutral-bluish-875: rgb(30, 30, 34);
   --dsw-static-neutral-bluish-850: rgb(38, 38, 43);
   --dsw-static-neutral-bluish-800: rgb(46, 46, 52);
   --dsw-static-neutral-bluish-750: rgb(56, 56, 63);
-  --dsw-static-neutral-bluish-700: rgb(72, 72, 80);
   --dsw-static-neutral-bluish-600: rgb(122, 126, 138);
   --dsw-static-neutral-bluish-400: rgb(158, 162, 176);
   --dsw-static-neutral-bluish-300: rgb(196, 200, 212);
@@ -67,20 +97,15 @@
    * 和强调色（蓝紫 126,134,222）同族，但暗到不会参与视觉竞争。
    * 侧栏**不用**它：侧栏是磨砂玻璃，底色由系统材质决定（见 `--ym-sidebar-tint`）。
    */
-  --dsw-static-violet-1000: rgb(9, 8, 13);
   --dsw-static-violet-950: rgb(14, 12, 20);
   --dsw-static-violet-900: rgb(20, 17, 28);
   --dsw-static-neutral-800: rgb(41, 41, 41);
   --dsw-static-neutral-700: rgb(60, 60, 61);
   --dsw-static-neutral-600: rgb(84, 85, 87);
   --dsw-static-deepseek-400: rgb(103, 158, 254);
-  --dsw-static-deepseek-450: rgb(86, 134, 254);
-  --dsw-static-green-400: rgb(78, 209, 126);
   --dsw-static-green-500: rgb(34, 197, 94);
-  --dsw-static-amber-400: rgb(247, 173, 49);
   --dsw-static-amber-500: rgb(245, 158, 11);
   --dsw-static-red-400: rgb(242, 90, 90);
-  --dsw-static-red-500: rgb(239, 68, 68);
 
   /* ── 语义别名（暗色主题取值）─────────────────────────────────────── */
   /* 基础底色 = 淡紫黑（主界面）。磨砂玻璃的侧栏不刷这一层，见 vibrancy 那几段。 */
@@ -111,32 +136,33 @@
   --dsw-alias-button-primary-hover: rgb(140, 148, 236);
   --dsw-alias-link: var(--ym-accent-text);
 
-  --dsw-alias-state-success-primary: var(--dsw-static-green-500);
   --dsw-alias-state-error-primary: var(--dsw-static-red-400);
   --dsw-alias-state-warn-primary: var(--dsw-static-amber-500);
-  --dsw-alias-state-business-primary: var(--dsw-static-deepseek-400);
   /* 运行中 / 强调：低饱和蓝紫。界面里所有「活的」、可交互的东西都用它 ——
      当前标签下划线、发送按钮、焦点环、链接、运行中状态点。 */
-  --ym-accent: rgb(126, 134, 222);
-  --ym-accent-text: rgb(160, 168, 240);
-  --ym-accent-soft: rgba(126, 134, 222, 0.14);
-  --ym-accent-line: rgba(126, 134, 222, 0.5);
-  --dsh-state-ongoing: var(--ym-accent);
+  /*
+   * 历史别名：早期界面到处用 `--ym-accent*`，现在它们只是 Beautiful UI 那套
+   * `--accent / --accent-ink / --accent-tint` 的别名 —— 一处改色全站跟上，
+   * 也省得逐个文件去换名字（真正的取值在 foundation.css 的令牌块，见上面的覆盖）。
+   */
+  --ym-accent: var(--accent);
+  --ym-accent-text: var(--accent-ink);
+  --ym-accent-soft: var(--accent-tint);
+  --ym-accent-line: color-mix(in srgb, var(--accent) 50%, transparent);
 
   /* ── 侧栏「当前项」的两档底色 ──────────────────────────────────────
    * 侧栏底是 900。当前项刻意**只用比 hover 深一档**的 800，而不是跳两档的 750：
    * 配合「字重 + 内缩药丸」（见 `.session--current`），强调由形状与字重承担，
    * 底色只负责把这一行从列表里轻轻托起来 —— 切换会话时因此不会「闪」一下。 */
-  --ym-nav-current-fill: var(--dsw-static-neutral-bluish-800);
-  --ym-nav-current-fill-hover: var(--dsw-static-neutral-bluish-750);
+  --ym-nav-current-fill: var(--hover);
+  --ym-nav-current-fill-hover: var(--hover-2);
   /* 当前项目只是当前会话的**容器**：底色再轻一档，避免高低两层同时重描。 */
-  --ym-nav-current-parent-fill: var(--dsw-static-neutral-bluish-875);
+  --ym-nav-current-parent-fill: var(--hover);
 
   --dsw-specific-sidebar-fill: var(--dsw-static-neutral-bluish-900);
   --dsw-specific-sidebar-nav-item-hover: var(--dsw-static-neutral-bluish-850);
   --dsw-specific-sidebar-nav-item-active: var(--dsw-static-neutral-bluish-750);
   --dsw-specific-bubble: var(--dsw-static-neutral-bluish-850);
-  --dsw-specific-input-major: var(--dsw-static-neutral-bluish-850);
 
   --dsw-alias-markdown-code-block: var(--dsw-static-neutral-bluish-900);
   --dsw-alias-markdown-inline-code: var(--dsw-static-neutral-800);
@@ -147,9 +173,7 @@
   /* ── 版面轴：内容宽度与正文字号（与官方同名变量）──────────────────── */
   --dsh-chat-content-width: 748px;
   --dsh-content-font-size: 14px;
-  --dsh-content-font-size-secondary: 13px;
   --dsh-content-line-height: 22px;
-  --dsh-content-line-height-secondary: 20px;
   --dsh-chat-flow-gap: 16px;
   --dsh-scrollbar-width: 8px;
 }
@@ -172,7 +196,14 @@
   --color-popover-foreground: var(--dsw-alias-label-primary);
   --color-secondary: var(--dsw-alias-bg-layer-2);
   --color-secondary-foreground: var(--dsw-alias-label-primary);
-  --color-accent: var(--dsw-alias-bg-layer-2);
+  /*
+   * ⚠️ `accent` 这个名字两边都有、语义却不同：
+   *   · Beautiful UI（vendored foundation）把它当**品牌色**（`bg-accent` 填充主按钮）；
+   *   · Streamdown 那套 shadcn 主题把它当**hover 底色**（`bg-accent` 是浅色悬浮底）。
+   * @theme 里只能有一个值，所以这里给品牌语义（全局），
+   * Streamdown 的那份收进 `.sd` 作用域（见下方 `.sd` 规则里的同名覆盖）。
+   */
+  --color-accent: var(--accent);
   --color-accent-foreground: var(--dsw-alias-label-primary);
   --color-primary: var(--dsw-alias-brand-primary);
   --color-primary-foreground: var(--dsw-alias-label-primary-foreground);
@@ -336,9 +367,9 @@ html[data-vibrancy="native"] .app-shell {
    */
   --ym-sidebar-tint: color-mix(in srgb, var(--dsw-static-violet-900) 47%, transparent);
   /* 柱面表面（还在曲面上的那些小方块） */
-  --ym-surface: color-mix(in srgb, var(--dsw-alias-label-primary) 55%, transparent);
+  --ym-surface: color-mix(in srgb, var(--ink) 55%, transparent);
   /* 被切下来、正在向右滚的碎屑：略偏强调色，和「表面」区分开 */
-  --ym-shard: color-mix(in srgb, var(--ym-accent-text) 80%, transparent);
+  --ym-shard: color-mix(in srgb, var(--accent-ink) 80%, transparent);
 }
 
 /* 有原生磨砂玻璃时侧栏让出背景，只留一层极淡的同色染色保证对比度。
@@ -529,8 +560,8 @@ html[data-platform="darwin"] .sidebar__brand {
   gap: 8px;
   margin-top: auto;
   padding: 8px 12px;
-  border-top: 0.5px solid var(--dsw-alias-border-l1);
-  color: var(--dsw-alias-label-caption);
+  border-top: 1px solid var(--line-soft);
+  color: var(--ink-3);
   font-size: 11px;
 }
 
@@ -573,10 +604,10 @@ html[data-platform="darwin"] .sidebar__brand {
   background: currentColor;
 }
 
-.dot__mark--ready { color: var(--dsw-alias-state-success-primary); }
-.dot__mark--busy { color: var(--dsh-state-ongoing); }
-.dot__mark--error { color: var(--dsw-alias-state-error-primary); }
-.dot__mark--idle { color: var(--dsw-alias-label-tertiary); }
+.dot__mark--ready { color: var(--green); }
+.dot__mark--busy { color: var(--accent); }
+.dot__mark--error { color: var(--red); }
+.dot__mark--idle { color: var(--ink-3); }
 
 /* ── 项目 → 会话树 ─────────────────────────────────────────────────── */
 
@@ -626,7 +657,8 @@ html[data-platform="darwin"] .sidebar__brand {
   min-width: 0;
   padding: 5px 6px;
   border: none;
-  border-radius: 8px;
+  /* 他们的行高亮规格：7px 圆角 + hover-2 底 */
+  border-radius: 7px;
   background: transparent;
   color: inherit;
   font: inherit;
@@ -649,7 +681,7 @@ html[data-platform="darwin"] .sidebar__brand {
  * 项目名本来就是 primary/500（`.project__name`），所以当前项目不需要再加字重 ——
  * 它的强调全部由这一层底色承担。 */
 .project-node--current > .project-node__row > .project-node__head {
-  background: var(--ym-nav-current-parent-fill);
+  background: var(--hover);
   box-shadow: none;
 }
 
@@ -669,8 +701,10 @@ html[data-platform="darwin"] .sidebar__brand {
 
 .project-node__count {
   flex: none;
-  color: var(--dsw-alias-label-caption);
-  font-size: 11px;
+  /* 他们的计数是 tabular-nums 的小字（见侧栏 workspace 行的 3/10） */
+  color: var(--ink-3);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 /* 「切换」平时隐形，悬停整行才出现 —— 免得和折叠手势抢注意力 */
@@ -789,8 +823,8 @@ html[data-platform="darwin"] .sidebar__brand {
  * 图标仍是强调色（见下方 `.session__icon`），点出「这是活着的那个会话」。
  */
 .session--current {
-  background: var(--ym-nav-current-fill);
-  color: var(--dsw-alias-label-primary);
+  background: var(--hover);
+  color: var(--ink);
   font-weight: 500;
   cursor: default;
 }
@@ -812,7 +846,7 @@ html[data-platform="darwin"] .sidebar__brand {
 
 /* 当前项也要有 hover 反馈（否则鼠标移上去像「死了」），只是变化幅度更小。 */
 .session--current:hover {
-  background: var(--ym-nav-current-fill-hover);
+  background: var(--hover-2);
 }
 
 .session__title {
@@ -827,7 +861,8 @@ html[data-platform="darwin"] .sidebar__brand {
   /* 时间贴右端、最多占 45%（搜索结果里它前面还带项目名） */
   flex: none;
   max-width: 45%;
-  color: var(--dsw-alias-label-caption);
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
   font-size: 10.5px;
   line-height: 16px;
   overflow: hidden;
@@ -837,7 +872,7 @@ html[data-platform="darwin"] .sidebar__brand {
 
 .session-empty {
   padding: 4px 8px;
-  color: var(--dsw-alias-label-caption);
+  color: var(--ink-3);
   font-size: 12px;
 }
 
@@ -899,18 +934,20 @@ html[data-platform="darwin"] .sidebar__brand {
 }
 
 .link {
-  padding: 0;
+  padding: 2px 6px;
   border: none;
+  border-radius: 6px;
   background: none;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--ink-3);
   font: inherit;
-  font-size: 11px;
+  font-size: 11.5px;
   cursor: pointer;
-  transition: color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+  transition: background-color 150ms var(--ease-in-out-strong), color 150ms var(--ease-in-out-strong);
 }
 
 .link:hover {
-  color: var(--dsw-alias-label-primary);
+  background: var(--hover-2);
+  color: var(--ink);
 }
 
 .input {
@@ -1040,107 +1077,6 @@ html[data-platform="darwin"] .sidebar__brand {
 
 .msg__meta--error { color: var(--dsw-alias-state-error-primary); }
 
-/* ── 推理行：官方折叠态固定 24px，运行中一道扫光 ───────────────────── */
-.reasoning {
-  position: relative;
-  overflow: hidden;
-}
-
-.reasoning > summary {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: 24px;
-  cursor: pointer;
-  user-select: none;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 12px;
-  list-style: none;
-}
-
-.reasoning > summary::-webkit-details-marker { display: none; }
-.reasoning > summary::before { content: '▸'; font-size: 10px; color: var(--dsw-alias-label-caption); }
-.reasoning[open] > summary::before { content: '▾'; }
-
-.reasoning__body {
-  margin: 4px 0 2px;
-  padding-left: 12px;
-  border-left: 1px solid var(--dsw-alias-border-l2);
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 13px;
-  line-height: 20px;
-  white-space: pre-wrap;
-  /* 推理里可能出现超长无空格片段（路径、base64、连续汉字）：
-     `break-word` 不参与 min-content 计算，容器仍会被撑开；`anywhere` 才会。 */
-  overflow-wrap: anywhere;
-}
-
-/* 运行中：不做扫光之类的装饰，只把「推理过程」四个字点上强调色 */
-.reasoning--running > summary {
-  color: var(--ym-accent-text);
-}
-
-/* ── 工具调用行（官方是「行」不是「卡片」：无边框、无底色）────────── */
-.tool-card {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.tool-card__head {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: 24px;
-  overflow: hidden;
-  font-size: 13px;
-}
-
-.tool-card__name {
-  flex: none;
-  color: var(--dsw-alias-label-primary);
-  font-weight: 400;
-}
-
-.tool-card__args {
-  color: var(--dsw-alias-label-tertiary);
-  font-family: var(--ds-font-family-code);
-  font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.tool-card__result {
-  padding-left: 16px;
-  color: var(--dsw-alias-label-tertiary);
-  font-family: var(--ds-font-family-code);
-  font-size: 12px;
-  line-height: 18px;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-.tool-card__result--error {
-  color: var(--dsw-alias-state-error-primary);
-}
-
-.tool-card__exit--ok { color: var(--dsw-alias-state-success-primary); margin-left: 6px; }
-.tool-card__exit--bad { color: var(--dsw-alias-state-error-primary); margin-left: 6px; }
-
-/* 运行中：工具名旁的强调色小点，不用动画 */
-.tool-card--pending .tool-card__name::after {
-  content: '';
-  display: inline-block;
-  width: 5px;
-  height: 5px;
-  margin-left: 6px;
-  border-radius: 50%;
-  background: var(--ym-accent);
-  vertical-align: middle;
-}
-
 /* ══════════════════════════════════════════════════════════════════════════
    8. 输入区（对齐 InputBar 卡片 + 官方 token 胶囊）
    ══════════════════════════════════════════════════════════════════════════ */
@@ -1165,22 +1101,28 @@ html[data-platform="darwin"] .sidebar__brand {
   max-width: calc(var(--dsh-chat-content-width) + 16px);
 }
 
+/*
+ * 输入框外壳：观感照 Beautiful UI 的 Prompt Bar 字段
+ * （`border border-line bg-surface shadow-card focus-within:border-line-strong`、
+ * 14px 圆角）。那边只有 `textarea` + 自演示流程，是展示件而不是可嵌入的组件，
+ * 所以这里取它的**样式**，编辑内核仍然是 Tiptap（Tiptap / Streamdown 不换）。
+ */
 .composer__box {
   position: relative;
   display: flex;
   flex-direction: column;
   gap: 8px;
   padding: 8px 12px 10px;
-  border: 0;
-  border-radius: 12px;
-  background: var(--dsw-specific-input-major);
-  /* 官方做法：描边画成 elevation 发丝线，不占布局 */
-  box-shadow: 0 0 0 0.5px var(--dsw-alias-border-l2);
-  transition: box-shadow var(--ds-transition-duration) var(--ds-ease-in-out);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  transition: border-color 150ms var(--ease-in-out-strong), box-shadow 150ms var(--ease-in-out-strong);
 }
 
 .composer__box:focus-within {
-  box-shadow: 0 0 0 0.5px var(--dsw-alias-border-l4);
+  border-color: var(--line-strong);
+  box-shadow: var(--shadow-raised);
 }
 
 /* EditorContent 的包裹层：占满宽度，其余交给里面的 contenteditable。 */
@@ -1234,6 +1176,10 @@ html[data-platform="darwin"] .sidebar__brand {
    ══════════════════════════════════════════════════════════════════════════ */
 
 .sd {
+  /* Streamdown 的 shadcn 主题把 `accent` 当 hover 底色用（见上面 @theme 的说明）：
+     在它的作用域里还原这个语义，外面（我们的界面与 Beautiful UI 构件）用品牌色。 */
+  --color-accent: var(--dsw-alias-bg-layer-2);
+
   color: var(--dsw-alias-label-primary);
   font-size: var(--dsh-content-font-size);
   line-height: var(--dsh-content-line-height);
@@ -1336,20 +1282,22 @@ html[data-platform="darwin"] .sidebar__brand {
 
 /* ── 侧栏头部：「工作区」+ 新会话 ───────────────────────────────────── */
 
+/* 品牌行按 macOS 侧栏头部尺寸：16px 图标 + 13px 标题，和下面的会话行
+   （13px）同档；间距收到 6px，标题紧贴图标，不再像网页标题栏。 */
 .sidebar__brand {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 12px 6px;
+  gap: 6px;
+  padding: 8px 10px 6px;
 }
 
 .sidebar__title {
   flex: 1;
   min-width: 0;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
-  letter-spacing: 0.3px;
-  color: var(--dsw-alias-label-secondary);
+  letter-spacing: 0;
+  color: var(--ink-2);
 }
 
 /* 顶部主按钮：强调色，左图标右文字，紧凑 */
@@ -1360,18 +1308,20 @@ html[data-platform="darwin"] .sidebar__brand {
   height: 26px;
   padding: 0 9px;
   border: none;
-  border-radius: 13px;
-  background: var(--ym-accent-soft);
-  color: var(--ym-accent-text);
+  /* Beautiful UI 侧栏底部的 CTA 规格：hover-2 底 + ink 字，按下缩 0.98 */
+  border-radius: var(--radius-control);
+  background: var(--hover-2);
+  color: var(--ink);
   font: inherit;
-  font-size: 12px;
+  font-size: 12.5px;
+  font-weight: 500;
   cursor: pointer;
+  transition: background-color 150ms var(--ease-in-out-strong), transform 150ms var(--ease-in-out-strong);
   transition: background-color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
 }
 
-.sidebar__new:hover {
-  background: color-mix(in srgb, var(--ym-accent) 26%, transparent);
-}
+.sidebar__new:hover { background: var(--line-strong); }
+.sidebar__new:active { transform: scale(0.98); }
 
 /* ── 搜索 ─────────────────────────────────────────────────────────── */
 
@@ -1382,20 +1332,23 @@ html[data-platform="darwin"] .sidebar__brand {
   margin: 2px 12px 8px;
   padding: 0 8px;
   height: 28px;
-  border: 1px solid var(--dsw-alias-border-l2);
+  border: none;
   border-radius: 8px;
-  background: var(--dsw-alias-bg-base);
+  /* 他们的搜索字段：bg-field + hairline 环（不是描边） */
+  background: var(--field);
+  box-shadow: var(--shadow-hairline);
   transition: border-color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
 }
 
 .sidebar__search:focus-within {
-  border-color: var(--ym-accent-line);
+  color: var(--ink-2);
+  box-shadow: 0 0 0 1px var(--accent);
 }
 
 .sidebar__search-icon {
   display: inline-flex;
   flex: none;
-  color: var(--dsw-alias-label-caption);
+  color: var(--ink-3);
 }
 
 .sidebar__search-input {
@@ -1480,963 +1433,30 @@ html[data-platform="darwin"] .sidebar__brand {
   font-variant-numeric: tabular-nums;
 }
 
-/* ── 文件卡片 ─────────────────────────────────────────────────────── */
 
-.tool-file {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.filecard {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  max-width: 420px;
-  padding: 0 6px 0 0;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
-  background: var(--dsw-alias-bg-layer-1);
-}
-
-/* 卡片主体是**按钮**：点一下就在右侧预览面板里打开（「打开」按钮才走系统程序） */
-.filecard__main {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 1;
-  min-width: 0;
-  padding: 7px 8px 7px 10px;
-  border: none;
-  border-radius: 8px 0 0 8px;
-  background: transparent;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition: background-color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
-}
-
-.filecard__main:hover { background: var(--dsw-alias-interactive-bg-hover); }
-
-/* 悬停时文件名变强调色：告诉用户「这里点得动，而且点了是预览」 */
-.filecard__main:hover .filecard__name { color: var(--ym-accent-text); }
-
-.filecard__icon {
-  display: inline-flex;
-  flex: none;
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.filecard__text {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-width: 0;
-}
-
-.filecard__name {
-  font-family: var(--ds-font-family-code);
-  font-size: 12.5px;
-  color: var(--dsw-alias-label-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.filecard__path {
-  color: var(--dsw-alias-label-caption);
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.filecard__open {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  flex: none;
-  height: 24px;
-  padding: 0 9px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 12px;
-  background: transparent;
-  color: var(--dsw-alias-label-secondary);
-  font: inherit;
-  font-size: 11.5px;
-  cursor: pointer;
-  transition: background-color var(--ds-transition-duration-fast) var(--ds-ease-in-out),
-    color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
-}
-
-.filecard__open:hover {
-  background: var(--ym-accent-soft);
-  border-color: var(--ym-accent-line);
-  color: var(--ym-accent-text);
-}
-
-/* ── 轨迹视图：一条按角色分色的时间线 ─────────────────────────────────
+/* ── 轨迹视图：容器 + 空态 ─────────────────────────────────────────────
  *
- * 结构是「轨道 + 节点 + 卡片」：左边一条竖线把整段过程串起来，节点里放角色图标，
- * 右边是该步的内容。颜色靠两个变量下发（`--trace-tone` 图标/角标色、
- * `--trace-fill` 角标底），**每类角色只写一组变量**，样式规则本身不重复。
+ * 真正的时间线构件是 Beautiful UI 的 `TaskRows`（见 `components/trace.tsx`），
+ * 这里只留容器与空态。
  * ───────────────────────────────────────────────────────────────────── */
 
 .trace {
-  list-style: none;
-  margin: 0;
-  padding: 0;
   display: flex;
   flex-direction: column;
-  /* 行间距为 0：竖线要靠卡片自己的内边距连起来，有 gap 就会断成一节一节 */
   gap: 0;
-  --trace-tone: var(--dsw-alias-label-tertiary);
-  --trace-fill: rgba(255, 255, 255, 0.06);
 }
 
 .trace__empty {
   padding: 12px 2px;
-  color: var(--dsw-alias-label-caption);
+  color: var(--ink-3);
   font-size: 12.5px;
 }
 
-.trace__step {
-  display: flex;
-  gap: 8px;
-  min-width: 0;
+/* TaskRows 的 List 变体自带 surface 卡 + 分隔线，这里只压一下圆角 */
+.trace__tasks {
+  border-radius: var(--radius-card);
 }
 
-/* 轨道：一条贯穿整行的竖线 + 一个圆节点 */
-.trace__rail {
-  position: relative;
-  flex: none;
-  width: 24px;
-  display: flex;
-  justify-content: center;
-}
-
-.trace__rail::before {
-  content: '';
-  position: absolute;
-  left: 50%;
-  top: 0;
-  bottom: 0;
-  width: 1px;
-  transform: translateX(-50%);
-  background: var(--dsw-alias-border-l2);
-}
-
-/* 第一行的线从节点中心开始、最后一行的线到节点中心结束 —— 线不出头 */
-.trace__step:first-child .trace__rail::before { top: 16px; }
-.trace__step:last-child .trace__rail::before { bottom: calc(100% - 16px); }
-
-.trace__node {
-  position: relative;
-  z-index: 1;
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  margin-top: 5px;
-  border-radius: 50%;
-  background: var(--dsw-static-violet-900);
-  color: var(--trace-tone);
-  box-shadow: inset 0 0 0 0.5px var(--dsw-alias-border-l2);
-}
-
-.trace__card {
-  flex: 1;
-  min-width: 0;
-  padding: 4px 10px 8px 2px;
-  border-radius: 8px;
-}
-
-.trace__step:hover .trace__card {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.trace__head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.trace__role {
-  flex: none;
-  padding: 0 6px;
-  border-radius: 5px;
-  background: var(--trace-fill);
-  color: var(--trace-tone);
-  font-size: 10.5px;
-  line-height: 16px;
-}
-
-.trace__label {
-  font-family: var(--ds-font-family-code);
-  font-size: 11.5px;
-  color: var(--dsw-alias-label-tertiary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.trace__flag {
-  flex: none;
-  padding: 0 5px;
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 18%, transparent);
-  color: var(--dsw-alias-state-error-primary);
-  font-size: 10px;
-  line-height: 15px;
-}
-
-.trace__spacer { flex: 1; }
-
-.trace__seq {
-  flex: none;
-  font-family: var(--ds-font-family-code);
-  font-size: 10px;
-  color: var(--dsw-alias-label-caption);
-  opacity: 0.75;
-}
-
-/* 「展开 / 收起」只在悬停或键盘聚焦时露出来：默认状态下轨迹要够干净 */
-.trace__toggle {
-  flex: none;
-  padding: 0 6px;
-  border: none;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--dsw-alias-label-tertiary);
-  font: inherit;
-  font-size: 11px;
-  line-height: 16px;
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity var(--ds-transition-duration-fast) var(--ds-ease-in-out);
-}
-
-.trace__step:hover .trace__toggle,
-.trace__toggle:focus-visible { opacity: 1; }
-
-.trace__toggle:hover { color: var(--ym-accent-text); }
-
-.trace__detail {
-  margin-top: 2px;
-  font-size: 12px;
-  line-height: 18px;
-  color: var(--dsw-alias-label-secondary);
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
-/* 长内容默认只留三行：一份 200 行的报告不该顶掉后面十几步 */
-.trace__detail--clamp {
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-/* ── 角色分色（只换变量）───────────────────────────────────────────── */
-
-/* 你：强调色 —— 和输入框、发送按钮同族，一眼找到「我说了什么」 */
-.trace__step--user { --trace-tone: var(--ym-accent-text); --trace-fill: var(--ym-accent-soft); }
-/* 助手回复：最亮的正文色，它是「结果」 */
-.trace__step--text { --trace-tone: var(--dsw-alias-label-primary); --trace-fill: rgba(255, 255, 255, 0.08); }
-/* 推理：紫、斜体、更淡 —— 读的人少，但要能一眼跳过 */
-.trace__step--reasoning { --trace-tone: rgb(178, 166, 224); --trace-fill: rgba(168, 140, 214, 0.16); }
-.trace__step--reasoning .trace__detail { font-style: italic; color: var(--dsw-alias-label-tertiary); }
-/* 工具：青绿 + 等宽 —— 和 `@工具` token 同色，参数/结果用代码字体 */
-.trace__step--tool { --trace-tone: rgb(140, 214, 199); --trace-fill: rgba(86, 184, 166, 0.14); }
-.trace__step--tool .trace__detail {
-  font-family: var(--ds-font-family-code);
-  font-size: 11.5px;
-  line-height: 17px;
-}
-/* 提示：琥珀（警告语义） */
-.trace__step--note { --trace-tone: var(--dsw-static-amber-400); --trace-fill: rgba(247, 173, 49, 0.14); }
-/* 目标调整：单独一类，和提示区分开 */
-.trace__step--steer { --trace-tone: var(--ym-accent-text); --trace-fill: var(--ym-accent-soft); }
-/* 失败：整行压红，且**压过上面的角色色**（顺序在最后） */
-.trace__step--error { --trace-tone: var(--dsw-alias-state-error-primary); --trace-fill: rgba(242, 90, 90, 0.16); }
-.trace__step--error .trace__card { background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 8%, transparent); }
-
-/* ── 浮层菜单（输入框那三个下拉 + 侧栏工具清单）────────────────────────
- *
- * 一份实现三处用：`+`（新建会话 / 打开目录）、权限说明、模型清单，
- * 以及侧栏底栏的「N 工具」。行为（键盘、ARIA、点外面关掉）在 `components/menu.tsx`，
- * 这里只管长相。
- * ───────────────────────────────────────────────────────────────────── */
-
-.menu {
-  position: relative;
-  display: inline-flex;
-}
-
-/* 输入框那一排的触发器：药丸状图标按钮 */
-.menu__trigger {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 28px;
-  padding: 0 9px;
-  border: none;
-  border-radius: 14px;
-  background: transparent;
-  color: var(--dsw-alias-label-secondary);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-  transition: background-color var(--ds-transition-duration-fast) var(--ds-ease-in-out),
-    color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
-}
-
-.menu__trigger:hover:not(:disabled),
-.menu__trigger[aria-expanded="true"] {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-primary);
-}
-
-.menu__trigger:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.menu__label {
-  max-width: 190px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* 模型下拉前的小圆点：当前模型的「在用它」标记 */
-.menu__mark {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--ym-accent);
-}
-
-/*
- * 菜单本体。
- *
- * 限高 + 内部滚动是给侧栏工具清单准备的（20 条已经超过半屏）；
- * `overscroll-behavior: contain` 让它滚到底时不把消息流也带着滚。
- */
-.menu__pop {
-  position: absolute;
-  z-index: 21;
-  display: flex;
-  flex-direction: column;
-  min-width: 180px;
-  max-width: min(92vw, 420px);
-  max-height: min(62vh, 480px);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding: 5px;
-  border: 1px solid var(--dsw-alias-border-l3);
-  border-radius: 10px;
-  background: var(--dsw-alias-bg-layer-3);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
-  animation: ym-menu-in 120ms var(--ds-ease-in-out);
-  /* 焦点是给键盘事件用的（打开时程序化聚焦），所以不要那圈整块的高亮框 */
-  outline: none;
-}
-
-.menu__pop::-webkit-scrollbar { width: 8px; }
-.menu__pop::-webkit-scrollbar-thumb {
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.12);
-}
-
-/* 往上弹（底栏的工具清单）/ 往下弹（输入框上方那一排） */
-.menu__pop--top { bottom: calc(100% + 6px); }
-.menu__pop--bottom { top: calc(100% + 6px); }
-.menu__pop--start { left: 0; }
-.menu__pop--end { right: 0; }
-
-@keyframes ym-menu-in {
-  from { opacity: 0; transform: translateY(4px) scale(0.99); }
-  to { opacity: 1; transform: none; }
-}
-
-/* 整段说明（权限菜单用：先把「无沙箱」说清楚，再让人看选项） */
-.menu__block {
-  padding: 7px 9px;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 11.5px;
-  line-height: 17px;
-  white-space: normal;
-}
-
-.menu__item {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  width: 100%;
-  padding: 6px 9px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--dsw-alias-label-secondary);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition: background-color var(--ds-transition-duration-fast) var(--ds-ease-in-out),
-    color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
-}
-
-/* `--cursor` 是键盘高亮：和鼠标悬停长一样，用户不用分「我现在是用哪种方式选的」 */
-.menu__item:hover:not(:disabled),
-.menu__item--cursor {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-primary);
-}
-
-.menu__item:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-
-.menu__item--active .menu__name { color: var(--ym-accent-text); }
-
-/* 当前项右侧的对勾（用伪元素，不占 JSX 结构） */
-.menu__item--active::after {
-  content: '✓';
-  flex: none;
-  margin-left: auto;
-  color: var(--ym-accent-text);
-  font-size: 11px;
-  line-height: 16px;
-}
-
-.menu__icon {
-  display: inline-flex;
-  flex: none;
-  margin-top: 2px;
-  color: var(--dsw-alias-label-caption);
-}
-
-.menu__item:hover:not(:disabled) .menu__icon,
-.menu__item--cursor .menu__icon {
-  color: var(--ym-accent-text);
-}
-
-.menu__text {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-width: 0;
-}
-
-.menu__name {
-  color: inherit;
-  font-size: 12px;
-  line-height: 17px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* 一行小字说明：菜单里**不再出现变量名**，靠它讲清这个工具干什么 */
-.menu__note {
-  color: var(--dsw-alias-label-caption);
-  font-size: 11px;
-  line-height: 15px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* ── 会话统计行（输入框下方）──────────────────────────────────────── */
-
-.composer__spacer { flex: 1; }
-
-.btn--send {
-  width: 32px;
-  height: 30px;
-  padding: 0;
-  border-radius: 15px;
-}
-
-.stats {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 2px 0;
-  color: var(--dsw-alias-label-caption);
-  font-family: var(--ds-font-family-code);
-  font-size: 11px;
-  line-height: 16px;
-}
-
-.stats__item {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.stats__dim { color: var(--dsw-alias-label-caption); }
-.stats__sep { color: var(--dsw-alias-border-l4); }
-.stats__spacer { flex: 1; }
-
-/* ─────────────────────────────────────────────────────────────────────────────
- * 设置面板（技能 / 命令 / MCP）
- *
- * 一个居中模态：左边是列表（点一项），右边是文本编辑器（改完保存）。
- * 刻意用「文本框」而不是表单字段 —— 这些东西本来就是 Markdown / JSON，
- * 表单只会挡住 frontmatter 和注释。
- * ───────────────────────────────────────────────────────────────────────────── */
-
-.setmodal {
-  position: fixed;
-  inset: 0;
-  z-index: 40;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 40px;
-}
-
-.setmodal__scrim {
-  position: absolute;
-  inset: 0;
-  background: rgb(0 0 0 / 0.45);
-}
-
-.setmodal__box {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  width: min(1040px, 100%);
-  height: min(680px, 100%);
-  background: var(--dsw-alias-bg-layer-1);
-  border: 0.5px solid var(--dsw-alias-border-l2);
-  border-radius: 14px;
-  box-shadow: 0 24px 64px rgb(0 0 0 / 0.5);
-  overflow: hidden;
-}
-
-.setmodal__head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  border-bottom: 0.5px solid var(--dsw-alias-border-l1);
-}
-
-.setmodal__spacer { flex: 1; }
-
-.settabs { display: flex; gap: 2px; }
-
-.settab {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 11px;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--dsw-alias-label-secondary);
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.settab:hover { background: var(--dsw-specific-sidebar-nav-item-hover); }
-
-.settab--active {
-  background: var(--ym-nav-current-fill);
-  color: var(--dsw-alias-label-primary);
-  font-weight: 500;
-}
-
-.settab__count {
-  color: var(--dsw-alias-label-caption);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-}
-
-.setmodal__body {
-  display: grid;
-  grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
-  min-height: 0;
-  flex: 1;
-}
-
-.setlist {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 8px;
-  border-right: 0.5px solid var(--dsw-alias-border-l1);
-}
-
-.setpane { min-height: 0; display: flex; }
-
-.setrow {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  width: 100%;
-  padding: 6px 8px;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--dsw-alias-label-secondary);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.setrow:hover { background: var(--dsw-specific-sidebar-nav-item-hover); }
-
-.setrow--active {
-  background: var(--ym-nav-current-fill);
-  color: var(--dsw-alias-label-primary);
-}
-
-.setrow--static { cursor: default; }
-
-.setrow__head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-.setrow__title {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--dsw-alias-label-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.setrow__sub {
-  color: var(--dsw-alias-label-caption);
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.setrow__warn { color: var(--dsw-alias-state-warn-primary); cursor: help; }
-
-.settag {
-  flex: none;
-  padding: 1px 6px;
-  border-radius: 6px;
-  font-size: 10.5px;
-  line-height: 15px;
-}
-
-/* 三种调用方式用同一套底色梯度：全局最亮（长期占目录），命令专用次之，不对外最暗 */
-.settag--global { background: var(--ym-accent-soft); color: var(--ym-accent-text); }
-.settag--command { background: rgb(255 255 255 / 0.07); color: var(--dsw-alias-label-tertiary); }
-.settag--user-only { background: rgb(255 255 255 / 0.04); color: var(--dsw-alias-label-caption); }
-
-.setedit {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-}
-
-.setedit__bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 10px;
-  border-bottom: 0.5px solid var(--dsw-alias-border-l1);
-}
-
-.setedit__path {
-  flex: 1;
-  min-width: 0;
-  color: var(--dsw-alias-label-caption);
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  direction: rtl;
-  text-align: left;
-}
-
-.setedit__status { flex: none; color: var(--dsw-alias-label-tertiary); font-size: 11px; }
-
-.setedit__area {
-  flex: 1;
-  min-height: 0;
-  padding: 10px 12px;
-  border: none;
-  background: transparent;
-  color: var(--dsw-alias-label-primary);
-  font-family: var(--ds-font-family-code);
-  font-size: 12px;
-  line-height: 18px;
-  resize: none;
-  outline: none;
-}
-
-.setbtn {
-  flex: none;
-  padding: 4px 10px;
-  border: 0.5px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
-  background: transparent;
-  color: var(--dsw-alias-label-secondary);
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.setbtn:hover:not(:disabled) {
-  background: var(--dsw-specific-sidebar-nav-item-hover);
-  color: var(--dsw-alias-label-primary);
-}
-
-.setbtn:disabled { opacity: 0.5; cursor: default; }
-.setbtn--sm { padding: 2px 8px; font-size: 11px; }
-
-.setempty { padding: 14px; color: var(--dsw-alias-label-caption); font-size: 12px; }
-.sethint { padding: 4px 10px; color: var(--dsw-alias-label-caption); font-size: 11px; }
-.setwarn { padding: 4px 10px; color: var(--dsw-alias-state-warn-primary); font-size: 11px; }
-
-.setmcpcfg {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 0.5px solid var(--dsw-alias-border-l1);
-}
-
-.setmodal__foot {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  border-top: 0.5px solid var(--dsw-alias-border-l1);
-}
-
-.setmodal__foot .sethint { flex: 1; padding: 0; }
-
-/* ─────────────────────────────────────────────────────────────────────────────
- * 输入框的触发符补全（`/` 命令与技能 · `@` MCP 工具 · `#` 文件）
- * ───────────────────────────────────────────────────────────────────────────── */
-
-.mention {
-  position: absolute;
-  left: 10px;
-  right: 10px;
-  /* 贴在输入框上方：往下弹会盖住输入内容与工具栏 */
-  bottom: calc(100% - 6px);
-  z-index: 30;
-  max-height: 280px;
-  overflow-y: auto;
-  padding: 4px;
-  border: 0.5px solid var(--dsw-alias-border-l2);
-  border-radius: 10px;
-  background: var(--dsw-alias-bg-layer-2);
-  box-shadow: 0 12px 32px rgb(0 0 0 / 0.45);
-}
-
-/* 顶部说明：这一栏是哪个触发符 + 键盘怎么用 */
-.mention__title {
-  padding: 4px 8px 5px;
-  border-bottom: 0.5px solid var(--dsw-alias-border-l1);
-  color: var(--dsw-alias-label-caption);
-  font-size: 10.5px;
-}
-
-.mention__group {
-  padding: 6px 8px 2px;
-  color: var(--dsw-alias-label-caption);
-  font-size: 10.5px;
-  letter-spacing: 0.04em;
-}
-
-.mention__item {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  width: 100%;
-  padding: 5px 8px;
-  border: none;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--dsw-alias-label-secondary);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.mention__item--active { background: var(--ym-nav-current-fill); }
-
-.mention__label {
-  flex: none;
-  max-width: 46%;
-  color: var(--dsw-alias-label-primary);
-  font-size: 12.5px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/*
- * 候选的名字按类型上色，与它落到输入框里的 chip **同一个颜色**（`--ym-tok-*`）：
- * 选之前就知道它会变成什么样子，不用选完才发现。
- */
-.mention__item[data-kind='command'] .mention__label { color: var(--ym-tok-command-fg); }
-.mention__item[data-kind='tool'] .mention__label { color: var(--ym-tok-tool-fg); }
-.mention__item[data-kind='skill'] .mention__label { color: var(--ym-tok-skill-fg); }
-.mention__item[data-kind='file'] .mention__label {
-  color: var(--ym-tok-file-fg);
-  font-family: var(--ds-font-family-code);
-  font-size: 11.5px;
-}
-
-.mention__hint {
-  flex: 1;
-  min-width: 0;
-  color: var(--dsw-alias-label-caption);
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* ── 中途的目标调整（不是新一轮提问，所以更矮更淡、靠右）────────────────── */
-
-.msg--steer {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  align-self: flex-end;
-  max-width: 82%;
-  margin: 6px 0 6px auto;
-  padding: 5px 10px;
-  border: 0.5px dashed var(--dsw-alias-border-l3);
-  border-radius: 14px;
-  background: transparent;
-  color: var(--dsw-alias-label-secondary);
-  font-size: 13px;
-}
-
-.msg--steer__tag {
-  flex: none;
-  padding: 0 6px;
-  border-radius: 6px;
-  background: var(--ym-accent-soft);
-  color: var(--ym-accent-text);
-  font-size: 10.5px;
-  line-height: 16px;
-}
-
-.msg--steer__text { min-width: 0; overflow-wrap: anywhere; }
-
-/* ─────────────────────────────────────────────────────────────────────────────
- * 指令 token 的样式（`/命令` · `@工具` · `#文件` · 技能名）
- *
- * 这四种东西在会话记录里原本是同一种灰字，扫一眼分不出哪个是命令、哪个是工具、
- * 哪个是文件 —— 而它们恰恰是「这条消息让 agent 干了什么」的关键信息。
- *
- * 分色原则：**不同类不同色相，同一类永远同色**，且都压低饱和度（暗色界面里高饱和
- * 会像报错）。这些色只用在 token 上，不参与按钮/链接等其它语义（那套是 --ym-accent）。
- * ───────────────────────────────────────────────────────────────────────────── */
-
-:root {
-  /* 命令：沿用强调色（它是「要执行的动作」，和发送按钮同族） */
-  --ym-tok-command-bg: var(--ym-accent-soft);
-  --ym-tok-command-fg: var(--ym-accent-text);
-  /* 工具：青绿（外部能力，和本地的命令区分开） */
-  --ym-tok-tool-bg: rgba(86, 184, 166, 0.14);
-  --ym-tok-tool-fg: rgb(140, 214, 199);
-  /* 技能：紫（可复用的指令包） */
-  --ym-tok-skill-bg: rgba(168, 140, 214, 0.16);
-  --ym-tok-skill-fg: rgb(199, 179, 236);
-  /* 文件：中性（它只是「东西」，不该抢眼） */
-  --ym-tok-file-bg: rgba(255, 255, 255, 0.06);
-  --ym-tok-file-fg: var(--dsw-alias-label-secondary);
-}
-
-.rt { white-space: pre-wrap; overflow-wrap: anywhere; }
-
-.tok {
-  padding: 0 5px;
-  border-radius: 5px;
-  font-size: 0.94em;
-  /* 文件路径用等宽：和 `read` 的输出、编辑器里的样子对得上 */
-  white-space: nowrap;
-}
-
-.tok--command { background: var(--ym-tok-command-bg); color: var(--ym-tok-command-fg); font-weight: 500; }
-.tok--tool { background: var(--ym-tok-tool-bg); color: var(--ym-tok-tool-fg); }
-.tok--skill { background: var(--ym-tok-skill-bg); color: var(--ym-tok-skill-fg); }
-.tok--file {
-  background: var(--ym-tok-file-bg);
-  color: var(--ym-tok-file-fg);
-  font-family: var(--ds-font-family-code);
-  font-size: 0.9em;
-}
-
-/* ─────────────────────────────────────────────────────────────────────────────
- * 输入框里的 chip（选中命令/工具/技能/文件之后的样子）
- *
- * 和上面的 `.tok--*` **共用同一组颜色令牌**（`--ym-tok-*`）：在输入框里看到的颜色，
- * 就是它落到会话记录里的颜色。这是刻意的 —— 用户不需要学两套配色。
- *
- * chip 是 ProseMirror 的 inline atom（`contenteditable="false"`）：光标进不去、
- * 退格删掉一整个、方向键一次跨过去。所以这里只需要管长相，不用管「里面的字怎么编辑」。
- * ───────────────────────────────────────────────────────────────────────────── */
-
-.chip {
-  padding: 1px 6px;
-  border-radius: 5px;
-  font-size: 0.94em;
-  /* 光标停在 chip 两侧时是「插入位置」，给个箭头更像一个整体 */
-  cursor: default;
-}
-
-/*
- * ⚠️ 选择器比 `.chip` 多一个元素名是**故意的**：Tiptap 会往 <head> 注入
- * `.ProseMirror [contenteditable="false"] { white-space: normal }`，且注入的样式表在
- * renderer.css **之后**，同权重时它赢。加 `span` 提高权重，路径才不会在 chip 内部折行。
- */
-.composer__input span.chip { white-space: nowrap; }
-
-.chip--command { background: var(--ym-tok-command-bg); color: var(--ym-tok-command-fg); font-weight: 500; }
-.chip--tool { background: var(--ym-tok-tool-bg); color: var(--ym-tok-tool-fg); }
-.chip--skill { background: var(--ym-tok-skill-bg); color: var(--ym-tok-skill-fg); }
-.chip--file {
-  background: var(--ym-tok-file-bg);
-  color: var(--ym-tok-file-fg);
-  font-family: var(--ds-font-family-code);
-  font-size: 0.9em;
-}
-
-/* 菜单开着时，正在输入的那截触发词（Tiptap suggestion 的 decoration）给一点提示：
-   否则 `#app/cli` 和普通文字长得一样，用户不知道「现在这一截是待选中的」 */
-.composer__input .suggestion {
-  border-radius: 4px;
-  background: var(--ym-nav-current-fill);
-}
-
-/* 被方向键整块选中时（NodeSelection）：一圈自己的颜色，别用系统高亮 */
-.composer__input .chip.ProseMirror-selectednode {
-  outline: 1.5px solid currentcolor;
-  outline-offset: 1px;
-}
 
 /* ══════════════════════════════════════════════════════════════════════════
    12. 右侧刻度滑杆（会话导航）+ 预览面板
@@ -2488,8 +1508,8 @@ html[data-platform="darwin"] .sidebar__brand {
 /*
  * 一道刻度 = 一条等距短横线，右对齐。
  *
- * 宽度只占 14px（右端对齐），当前那条是 30px 的白色长横条 —— 两者一长一短、
- * 一亮一暗，「我读到哪儿了」不用找。
+ * 宽度只占 14px（右端对齐），当前那条是 30px 的长横条（用 foundation 的 ink 实心色）
+ * —— 两者一长一短、一亮一暗，「我读到哪儿了」不用找。
  */
 .rail__tick {
   position: absolute;
@@ -2512,20 +1532,20 @@ html[data-platform="darwin"] .sidebar__brand {
   opacity: 1;
 }
 
-/* 当前刻度：白色长横条 —— 整把尺子上最亮最长的那个 */
+/* 当前刻度：整把尺子上最亮最长的那个（用他们的 ink 实心色，而不是写死纯白） */
 .rail__tick--current {
   width: 30px;
   height: 3px;
   border-radius: 2px;
-  background: var(--dsw-static-neutral-bluish-50);
+  background: var(--ink);
   opacity: 1;
-  box-shadow: 0 0 8px rgba(255, 255, 255, 0.28);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--ink) 35%, transparent);
 }
 
-.rail__tick--user { --rail-tone: var(--ym-accent); }
-.rail__tick--assistant { --rail-tone: var(--dsw-static-neutral-bluish-300); }
-.rail__tick--note { --rail-tone: var(--dsw-static-amber-400); }
-.rail__tick--steer { --rail-tone: rgb(140, 214, 199); }
+.rail__tick--user { --rail-tone: var(--accent); }
+.rail__tick--assistant { --rail-tone: var(--ink-2); }
+.rail__tick--note { --rail-tone: var(--orange); }
+.rail__tick--steer { --rail-tone: var(--green); }
 
 /* 还没跑完的那条在呼吸：一眼看出「现在跑到哪儿了」 */
 .rail__tick--running { animation: ym-rail-breath 1.6s ease-in-out infinite; }
@@ -2550,10 +1570,10 @@ html[data-platform="darwin"] .sidebar__brand {
   right: 36px;
   width: 268px;
   padding: 8px 10px;
-  border: 0.5px solid var(--dsw-alias-border-l2);
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--dsw-static-violet-900) 94%, transparent);
-  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.45);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow-raised);
   transform: translateY(-50%);
   pointer-events: none;
   z-index: 4;
@@ -2582,30 +1602,30 @@ html[data-platform="darwin"] .sidebar__brand {
 .rail__role {
   padding: 0 6px;
   border-radius: 5px;
-  background: rgba(255, 255, 255, 0.07);
-  color: var(--dsw-alias-label-secondary);
+  background: var(--field);
+  color: var(--ink-2);
   font-size: 10.5px;
   line-height: 16px;
 }
 
 .rail__role--user { background: var(--ym-accent-soft); color: var(--ym-accent-text); }
-.rail__role--note { background: rgba(247, 173, 49, 0.16); color: var(--dsw-static-amber-400); }
-.rail__role--steer { background: rgba(86, 184, 166, 0.16); color: rgb(140, 214, 199); }
+.rail__role--note { background: var(--orange-tint); color: var(--orange); }
+.rail__role--steer { background: var(--green-tint); color: var(--green); }
 
 .rail__tip-tools,
 .rail__tip-running {
   font-size: 10.5px;
-  color: var(--dsw-alias-label-caption);
+  color: var(--ink-3);
 }
 
-.rail__tip-running { color: var(--ym-accent-text); }
+.rail__tip-running { color: var(--accent-ink); }
 
 .rail__tip-text {
   display: -webkit-box;
   -webkit-line-clamp: 5;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--ink-2);
   font-size: 11.5px;
   line-height: 17px;
   word-break: break-word;
@@ -2621,9 +1641,9 @@ html[data-platform="darwin"] .sidebar__brand {
   grid-template-rows: auto auto minmax(0, 1fr) auto;
   min-width: 0;
   min-height: 0;
-  border-left: 0.5px solid var(--dsw-alias-border-l2);
-  /* 比主区亮一档：面板是「浮在对话之上的工具层」 */
-  background: color-mix(in srgb, var(--dsw-static-violet-900) 72%, var(--dsw-static-violet-950));
+  border-left: 1px solid var(--line);
+  /* 他们的层级里 canvas 比 page 亮一档 —— 面板正是「浮在对话之上的工具层」 */
+  background: var(--canvas);
   animation: ym-preview-in 180ms var(--ds-ease-in-out);
 }
 
@@ -2638,33 +1658,34 @@ html[data-platform="darwin"] .sidebar__brand {
   gap: 6px;
   height: 38px;
   padding: 0 8px 0 12px;
-  border-bottom: 0.5px solid var(--dsw-alias-border-l1);
+  border-bottom: 1px solid var(--line);
 }
 
 .preview__icon {
   display: inline-flex;
   flex: none;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--ink-3);
 }
 
 .preview__title {
   min-width: 0;
-  font-size: 12px;
+  font-size: 12.5px;
   font-weight: 500;
-  color: var(--dsw-alias-label-primary);
+  color: var(--ink);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* 类型角标 = 他们的 accent 药丸（bg-accent-tint + accent-ink） */
 .preview__badge {
   flex: none;
-  padding: 0 5px;
-  border-radius: 4px;
-  background: var(--ym-accent-soft);
-  color: var(--ym-accent-text);
-  font-size: 10px;
-  line-height: 15px;
+  padding: 0 6px;
+  border-radius: var(--radius-chip);
+  background: var(--accent-tint);
+  color: var(--accent-ink);
+  font-size: 10.5px;
+  line-height: 16px;
 }
 
 .preview__spacer { flex: 1; }
@@ -2691,8 +1712,8 @@ html[data-platform="darwin"] .sidebar__brand {
 
 .preview__path {
   padding: 0 12px 7px;
-  border-bottom: 0.5px solid var(--dsw-alias-border-l1);
-  color: var(--dsw-alias-label-caption);
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--ink-3);
   font-size: 10.5px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2760,7 +1781,7 @@ html[data-platform="darwin"] .sidebar__brand {
   width: 100%;
   padding: 6px 8px;
   border: none;
-  border-radius: 6px;
+  border-radius: 7px;
   background: transparent;
   font: inherit;
   text-align: left;
@@ -2768,12 +1789,12 @@ html[data-platform="darwin"] .sidebar__brand {
   transition: background-color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
 }
 
-.preview__item:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.preview__item:hover { background: var(--hover-2); }
 
 .preview__item-icon {
   display: inline-flex;
   flex: none;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--ink-3);
 }
 
 .preview__item-text {
@@ -2784,7 +1805,7 @@ html[data-platform="darwin"] .sidebar__brand {
 }
 
 .preview__item-name {
-  color: var(--dsw-alias-label-primary);
+  color: var(--ink);
   font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2792,7 +1813,7 @@ html[data-platform="darwin"] .sidebar__brand {
 }
 
 .preview__item-dir {
-  color: var(--dsw-alias-label-caption);
+  color: var(--ink-3);
   font-size: 10.5px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2801,7 +1822,7 @@ html[data-platform="darwin"] .sidebar__brand {
 
 .preview__item-action {
   flex: none;
-  color: var(--dsw-alias-label-caption);
+  color: var(--ink-3);
   font-size: 10.5px;
 }
 
@@ -2811,14 +1832,14 @@ html[data-platform="darwin"] .sidebar__brand {
   align-items: center;
   gap: 8px;
   padding: 36px 16px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--ink-3);
   font-size: 12px;
   text-align: center;
 }
 
 .preview__empty p { margin: 0; }
 
-.preview__hint { color: var(--dsw-alias-label-caption); font-size: 11px; }
+.preview__hint { color: var(--ink-3); font-size: 11px; }
 
 .preview__loading {
   display: flex;
@@ -2833,8 +1854,8 @@ html[data-platform="darwin"] .sidebar__brand {
   display: flex;
   gap: 12px;
   padding: 6px 12px;
-  border-top: 0.5px solid var(--dsw-alias-border-l1);
-  color: var(--dsw-alias-label-caption);
+  border-top: 1px solid var(--line-soft);
+  color: var(--ink-3);
   font-size: 10.5px;
 }
 
@@ -2853,4 +1874,716 @@ html[data-platform="darwin"] .sidebar__brand {
   .rail__tip { animation: none; transition: opacity 80ms linear; }
   .rail__tip--out { transform: translateY(-50%); }
   .spin { animation: none; }
+}
+
+/* 项目行的首字母圆牌（Beautiful UI 的 Monogram）：强制定色，别用它的默认橙 */
+.project-node__mono {
+  background: var(--accent) !important;
+  color: #fff;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   13. 设置面板（技能 / 命令 / MCP）
+
+   ⚠️ 这一块曾被「清理死 CSS」时误删（详见 README「5.5 界面底座」里的记录）：
+   类名还在 TSX 里，样式整段没了，表现是设置面板以 `position: static` 铺在
+   侧栏列里、没有遮罩、没有圆角 —— 现在按 Beautiful UI 的令牌重写。
+   ══════════════════════════════════════════════════════════════════════════ */
+
+.setmodal {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+}
+
+.setmodal__scrim {
+  position: absolute;
+  inset: 0;
+  background: rgb(0 0 0 / 0.5);
+}
+
+.setmodal__box {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(1040px, 100%);
+  height: min(680px, 100%);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-window);
+  background: var(--surface);
+  box-shadow: var(--shadow-overlay);
+}
+
+.setmodal__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.setmodal__spacer { flex: 1; }
+
+/* 页签：他们的分段控件规格（6px 圆角 + hover-2；当前项 hover + ink/500） */
+.settabs { display: flex; gap: 2px; }
+
+.settab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background-color 150ms var(--ease-in-out-strong), color 150ms var(--ease-in-out-strong);
+}
+
+.settab:hover { background: var(--hover-2); }
+
+.settab--active {
+  background: var(--hover);
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.settab__count {
+  color: var(--ink-3);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.setmodal__body {
+  display: grid;
+  grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
+  min-height: 0;
+  flex: 1;
+}
+
+.setlist {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px;
+  border-right: 1px solid var(--line-soft);
+}
+
+.setpane { min-height: 0; display: flex; }
+
+.setrow {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.setrow:hover { background: var(--hover-2); }
+
+.setrow--active {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.setrow--static { cursor: default; }
+
+.setrow__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.setrow__title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.setrow__sub {
+  color: var(--ink-3);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.setrow__warn { color: var(--orange); cursor: help; }
+
+/* 三种调用方式：全局限目录（accent）、命令专用（field）、不对外（field 更淡） */
+.settag {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: var(--radius-chip);
+  font-size: 10.5px;
+  line-height: 15px;
+}
+
+.settag--global { background: var(--accent-tint); color: var(--accent-ink); }
+.settag--command { background: var(--field); color: var(--ink-2); }
+.settag--user-only { background: var(--field); color: var(--ink-3); }
+
+.setedit {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.setedit__bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.setedit__path {
+  flex: 1;
+  min-width: 0;
+  color: var(--ink-3);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.setedit__status { flex: none; color: var(--ink-3); font-size: 11px; }
+
+.setedit__area {
+  flex: 1;
+  min-height: 0;
+  padding: 10px 12px;
+  border: none;
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
+  line-height: 18px;
+  resize: none;
+  outline: none;
+}
+
+.setempty {
+  padding: 10px 2px;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
+.sethint { color: var(--ink-3); font-size: 11.5px; line-height: 17px; margin: 4px 0; }
+.setwarn { color: var(--red); font-size: 11.5px; }
+
+.setmcpcfg {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.setmodal__foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.setmodal__foot .sethint { flex: 1; padding: 0; margin: 0; }
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+   14. 恢复：曾被「清理死 CSS」误删的活样式
+
+   ⚠️ 本轮删轨迹时间线样式时，删除区间取的是「到下一个分节注释为止」，而那一大段里
+   还夹着**下拉菜单、提及菜单、统计行、纠偏气泡、指令 token、输入框 chip** 的样式 ——
+   它们全是活的（类名还在 TSX 里），删完这些地方就没样式了。
+   这里从上一个提交（`git show HEAD:...`）按选择器逐个取回，并把能迁移的旧令牌
+   换成 foundation 令牌（与前面各阶段同一套值）。教训已写进 README。
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── 浮层菜单（输入框那三个下拉 + 侧栏工具清单）────────────────────────
+ *
+ * 一份实现三处用：`+`（新建会话 / 打开目录）、权限说明、模型清单，
+ * 以及侧栏底栏的「N 工具」。行为（键盘、ARIA、点外面关掉）在 `components/menu.tsx`，
+ * 这里只管长相。
+ * ───────────────────────────────────────────────────────────────────── */
+
+.menu {
+  position: relative;
+  display: inline-flex;
+}
+
+/* 输入框那一排的触发器：药丸状图标按钮 */
+.menu__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 9px;
+  border: none;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background-color var(--ds-transition-duration-fast) var(--ds-ease-in-out),
+    color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.menu__trigger:hover:not(:disabled),
+.menu__trigger[aria-expanded="true"] {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.menu__trigger:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.menu__label {
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 模型下拉前的小圆点：当前模型的「在用它」标记 */
+.menu__mark {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ym-accent);
+}
+
+/*
+ * 菜单本体。
+ *
+ * 限高 + 内部滚动是给侧栏工具清单准备的（20 条已经超过半屏）；
+ * `overscroll-behavior: contain` 让它滚到底时不把消息流也带着滚。
+ */
+.menu__pop {
+  position: absolute;
+  z-index: 21;
+  display: flex;
+  flex-direction: column;
+  min-width: 180px;
+  max-width: min(92vw, 420px);
+  max-height: min(62vh, 480px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow-raised);
+  animation: ym-menu-in 120ms var(--ds-ease-in-out);
+  /* 焦点是给键盘事件用的（打开时程序化聚焦），所以不要那圈整块的高亮框 */
+  outline: none;
+}
+
+.menu__pop::-webkit-scrollbar { width: 8px; }
+
+.menu__pop::-webkit-scrollbar-thumb {
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.12);
+}
+
+/* 往上弹（底栏的工具清单）/ 往下弹（输入框上方那一排） */
+.menu__pop--top { bottom: calc(100% + 6px); }
+
+.menu__pop--bottom { top: calc(100% + 6px); }
+
+.menu__pop--start { left: 0; }
+
+.menu__pop--end { right: 0; }
+
+/* 整段说明（权限菜单用：先把「无沙箱」说清楚，再让人看选项） */
+.menu__block {
+  padding: 7px 9px;
+  color: var(--ink-3);
+  font-size: 11.5px;
+  line-height: 17px;
+  white-space: normal;
+}
+
+.menu__item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 9px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--ds-transition-duration-fast) var(--ds-ease-in-out),
+    color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+/* `--cursor` 是键盘高亮：和鼠标悬停长一样，用户不用分「我现在是用哪种方式选的」 */
+.menu__item:hover:not(:disabled),
+.menu__item--cursor {
+  background: var(--hover);
+  color: var(--ink);
+}
+
+.menu__item:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.menu__item--active .menu__name { color: var(--accent-ink); }
+
+/* 当前项右侧的对勾（用伪元素，不占 JSX 结构） */
+.menu__item--active::after {
+  content: '✓';
+  flex: none;
+  margin-left: auto;
+  color: var(--ym-accent-text);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.menu__icon {
+  display: inline-flex;
+  flex: none;
+  margin-top: 2px;
+  color: var(--ink-3);
+}
+
+.menu__item:hover:not(:disabled) .menu__icon,
+.menu__item--cursor .menu__icon {
+  color: var(--ym-accent-text);
+}
+
+.menu__text {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.menu__name {
+  color: inherit;
+  font-size: 12px;
+  line-height: 17px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 一行小字说明：菜单里**不再出现变量名**，靠它讲清这个工具干什么 */
+.menu__note {
+  color: var(--ink-3);
+  font-size: 11px;
+  line-height: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── 会话统计行（输入框下方）──────────────────────────────────────── */
+
+.composer__spacer { flex: 1; }
+
+.stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 2px 0;
+  color: var(--ink-3);
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+
+
+
+.stats__spacer { flex: 1; }
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * 输入框的触发符补全（`/` 命令与技能 · `@` MCP 工具 · `#` 文件）
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+.mention {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  /* 贴在输入框上方：往下弹会盖住输入内容与工具栏 */
+  bottom: calc(100% - 6px);
+  z-index: 30;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow-raised);
+}
+
+/* 顶部说明：这一栏是哪个触发符 + 键盘怎么用 */
+.mention__title {
+  padding: 4px 8px 5px;
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--ink-3);
+  font-size: 10.5px;
+}
+
+.mention__group {
+  padding: 6px 8px 2px;
+  color: var(--ink-3);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+}
+
+.mention__item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mention__item--active { background: var(--hover); }
+
+.mention__label {
+  flex: none;
+  max-width: 46%;
+  color: var(--ink);
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * 候选的名字按类型上色，与它落到输入框里的 chip **同一个颜色**（`--ym-tok-*`）：
+ * 选之前就知道它会变成什么样子，不用选完才发现。
+ */
+.mention__item[data-kind='command'] .mention__label { color: var(--ym-tok-command-fg); }
+
+.mention__item[data-kind='tool'] .mention__label { color: var(--ym-tok-tool-fg); }
+
+.mention__item[data-kind='skill'] .mention__label { color: var(--ym-tok-skill-fg); }
+
+.mention__item[data-kind='file'] .mention__label {
+  color: var(--ym-tok-file-fg);
+  font-family: var(--ds-font-family-code);
+  font-size: 11.5px;
+}
+
+.mention__hint {
+  flex: 1;
+  min-width: 0;
+  color: var(--ink-3);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── 中途的目标调整（不是新一轮提问，所以更矮更淡、靠右）────────────────── */
+
+.msg--steer {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  align-self: flex-end;
+  max-width: 82%;
+  margin: 6px 0 6px auto;
+  padding: 5px 10px;
+  border: 0.5px dashed var(--dsw-alias-border-l3);
+  border-radius: 14px;
+  background: transparent;
+  color: var(--ink-2);
+  font-size: 13px;
+}
+
+.msg--steer__tag {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: var(--ym-accent-soft);
+  color: var(--ym-accent-text);
+  font-size: 10.5px;
+  line-height: 16px;
+}
+
+.msg--steer__text { min-width: 0; overflow-wrap: anywhere; }
+
+.rt { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.tok {
+  padding: 0 5px;
+  border-radius: 5px;
+  font-size: 0.94em;
+  /* 文件路径用等宽：和 `read` 的输出、编辑器里的样子对得上 */
+  white-space: nowrap;
+}
+
+.tok--command { background: var(--ym-tok-command-bg); color: var(--ym-tok-command-fg); font-weight: 500; }
+
+.tok--tool { background: var(--ym-tok-tool-bg); color: var(--ym-tok-tool-fg); }
+
+.tok--skill { background: var(--ym-tok-skill-bg); color: var(--ym-tok-skill-fg); }
+
+.tok--file {
+  background: var(--ym-tok-file-bg);
+  color: var(--ym-tok-file-fg);
+  font-family: var(--ds-font-family-code);
+  font-size: 0.9em;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+ * 输入框里的 chip（选中命令/工具/技能/文件之后的样子）
+ *
+ * 和上面的 `.tok--*` **共用同一组颜色令牌**（`--ym-tok-*`）：在输入框里看到的颜色，
+ * 就是它落到会话记录里的颜色。这是刻意的 —— 用户不需要学两套配色。
+ *
+ * chip 是 ProseMirror 的 inline atom（`contenteditable="false"`）：光标进不去、
+ * 退格删掉一整个、方向键一次跨过去。所以这里只需要管长相，不用管「里面的字怎么编辑」。
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+.chip {
+  padding: 1px 6px;
+  border-radius: 5px;
+  font-size: 0.94em;
+  /* 光标停在 chip 两侧时是「插入位置」，给个箭头更像一个整体 */
+  cursor: default;
+}
+
+/*
+ * ⚠️ 选择器比 `.chip` 多一个元素名是**故意的**：Tiptap 会往 <head> 注入
+ * `.ProseMirror [contenteditable="false"] { white-space: normal }`，且注入的样式表在
+ * renderer.css **之后**，同权重时它赢。加 `span` 提高权重，路径才不会在 chip 内部折行。
+ */
+.composer__input span.chip { white-space: nowrap; }
+
+.chip--command { background: var(--ym-tok-command-bg); color: var(--ym-tok-command-fg); font-weight: 500; }
+
+.chip--tool { background: var(--ym-tok-tool-bg); color: var(--ym-tok-tool-fg); }
+
+.chip--skill { background: var(--ym-tok-skill-bg); color: var(--ym-tok-skill-fg); }
+
+.chip--file {
+  background: var(--ym-tok-file-bg);
+  color: var(--ym-tok-file-fg);
+  font-family: var(--ds-font-family-code);
+  font-size: 0.9em;
+}
+
+/* 菜单开着时，正在输入的那截触发词（Tiptap suggestion 的 decoration）给一点提示：
+   否则 `#app/cli` 和普通文字长得一样，用户不知道「现在这一截是待选中的」 */
+.composer__input .suggestion {
+  border-radius: 4px;
+  background: var(--hover);
+}
+
+/* 被方向键整块选中时（NodeSelection）：一圈自己的颜色，别用系统高亮 */
+.composer__input .chip.ProseMirror-selectednode {
+  outline: 1.5px solid currentcolor;
+  outline-offset: 1px;
+}
+
+/* 指令 token 的取色变量：本轮误删时一起丢了，这里从 HEAD 取回。
+   四个颜色仍然用我们自己的分类色（命令/工具/技能/文件各一色），只把引用别名走 foundation。 */
+:root {
+  /* 命令：沿用强调色（它是「要执行的动作」，和发送按钮同族） */
+  --ym-tok-command-bg: var(--accent-tint);
+  --ym-tok-command-fg: var(--accent-ink);
+  /* 工具：青绿（外部能力，和本地的命令区分开） */
+  --ym-tok-tool-bg: rgba(86, 184, 166, 0.14);
+  --ym-tok-tool-fg: rgb(140, 214, 199);
+  /* 技能：紫（可复用的指令包） */
+  --ym-tok-skill-bg: rgba(168, 140, 214, 0.16);
+  --ym-tok-skill-fg: rgb(199, 179, 236);
+  /* 文件：中性（它只是「东西」，不该抢眼） */
+  --ym-tok-file-bg: rgba(255, 255, 255, 0.06);
+  --ym-tok-file-fg: var(--dsw-alias-label-secondary);
+}
+
+/* 统计行里剩下两处仍在用的类：`stats__dim` 是「/ 与命中率」那种弱化小字，
+   `stats__item` 是右侧的 `provider/model`。ValuePill 只接管了三个数字胶囊。 */
+.stats__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--ink-3);
+  font-size: 11px;
+}
+
+.stats__dim { color: var(--ink-3); }
+
+/* 搜索结果里的项目 chip：窄栏里要能截断，别把标题挤出去 */
+.session__project {
+  margin-right: 6px;
+  max-width: 60%;
+  overflow: hidden;
+  vertical-align: middle;
+}
+
+/* Shimmer 是 `bg-clip-text` + 渐变文字：行内使用时要跟着上下文的字号与颜色走 */
+.msg__meta .shimmer,
+.sidebar__footer .shimmer {
+  font: inherit;
+  color: inherit;
+}
+
+/* 启动中的空态：把他们的 LoadingState 摆中间 */
+.msg__boot {
+  display: flex;
+  justify-content: center;
+  padding: 48px 0;
+}
+
+/* ── 侧栏品牌图标（应用 logo）─────────────────────────────────────────
+ * 由 `assets/logo.png` 缩放而来（构建时内联为 data URL）。
+ * 尺寸照 macOS 侧栏：16px 方片、圆角 4px（≈ 边长的 25%，和系统图标
+ * 22.4% 的圆角比例同观感），正好与项目行 Monogram 的 `size-4` 等宽。
+ * `flex: none` 保证它在窄侧栏里不被压扁。
+ */
+.sidebar__logo {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  box-shadow: var(--shadow-hairline);
+  /* 图片是浅底方片，深色玻璃上给一点自身阴影，边缘不会糊成一片 */
+  background: var(--surface);
+  object-fit: cover;
 }

@@ -135,6 +135,12 @@ const jsOptions: BuildOptions = {
   legalComments: 'none',
   define: { 'process.env.NODE_ENV': watch ? '"development"' : '"production"' },
   plugins: [ignoreCssPlugin],
+  /*
+   * 图片一律内联成 data URL：应用图标只有一个（`assets/logo.png`），
+   * 而 index.html 的 CSP 是 `img-src 'self' data:` —— 内联进去既不用额外的复制步骤，
+   * 也不用担心打包后相对路径算错。
+   */
+  loader: { '.png': 'dataurl', '.svg': 'dataurl' },
   logLevel: 'info',
   metafile: true,
 }

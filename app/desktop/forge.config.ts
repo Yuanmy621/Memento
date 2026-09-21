@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url'
 /**
  * Electron Forge 配置（`app/desktop/forge.config.ts`）。
  *
@@ -45,6 +46,19 @@ export default {
 
   packagerConfig: {
     name: 'YuanMy Agent',
+    /**
+     * 应用图标（不带扩展名）：macOS 用 `assets/icon.icns`，Windows 用 `assets/icon.ico`。
+     * 路径相对 **staging 目录**（`build/app`），所以 `build-app.ts` 要把 `assets/` 复制进去。
+     */
+    /*
+     * ⚠️ 必须给**绝对路径**：`@electron/packager` 的 `normalizeIconExtension()` 把 `icon`
+     * 原样交给 `fs.pathExists`，相对路径是按**进程 cwd**（仓库根，`electron-forge package build/app`）
+     * 解析的 —— 写 `'assets/icon'` 它会去找 `<仓库根>/assets/icon.icns`，找不到就
+     * **静默回落成 Electron 默认图标**（打包一路 ✔，只有 Dock 上图标不对）。
+     * 用 `import.meta.url` 算出来：staging 里是 `build/app/assets/icon`，开发目录里是
+     * `app/desktop/assets/icon`，两边都成立。
+     */
+    icon: fileURLToPath(new URL('./assets/icon', import.meta.url)),
     appBundleId: 'net.yuanmy.agent',
     appCategoryType: 'public.app-category.developer-tools',
     /**

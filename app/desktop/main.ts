@@ -40,6 +40,14 @@ const HOST_ENTRY = fileURLToPath(new URL('./host/index.ts', import.meta.url))
 const PRELOAD_ENTRY = fileURLToPath(new URL('./preload.cjs', import.meta.url))
 /** 界面入口。 */
 const INDEX_HTML = fileURLToPath(new URL('./renderer/index.html', import.meta.url))
+/**
+ * 应用图标。
+ *
+ * - Windows / Linux：`BrowserWindow` 的 `icon` 用它（macOS 忽略这个字段，Dock 图标来自 .app 包）；
+ * - macOS 开发态：`app.dock.setIcon()` 用它 —— 否则 Dock 上挂的是 Electron 的默认图标；
+ * - 打包态：`forge.config.ts` 的 `packagerConfig.icon` 指向同一份 `assets/icon.icns`。
+ */
+const APP_ICON = fileURLToPath(new URL('./assets/icon.png', import.meta.url))
 /** 内核装配超时：超过这个时间还没 ready 就认为 host 起不来。 */
 const HOST_READY_TIMEOUT_MS = 90_000
 /** 关闭窗口时，等待 host 优雅退出的时间；超时则 SIGKILL。 */
@@ -575,6 +583,23 @@ function titleBarOptions(): BrowserWindowConstructorOptions {
 }
 
 /** 创建主窗口。 */
+/**
+ * macOS 开发态把 Dock 图标换成本项目的 logo。
+ *
+ * 为什么只在开发态做：打包后的 .app 自带 `icon.icns`，Dock 直接读包里的图标；
+ * 而 `electron app/desktop/main.ts` 这种跑法用的是 Electron.app，Dock 上会是 Electron 的图标。
+ */
+function applyDockIcon(): void {
+  if (process.platform !== 'darwin' || app.isPackaged) return
+  const dock = app.dock
+  if (dock === undefined) return
+  try {
+    dock.setIcon(APP_ICON)
+  } catch (error) {
+    console.warn(`[main] 设置 Dock 图标失败：${String(error)}`)
+  }
+}
+
 function createWindow(): void {
   const base: BrowserWindowConstructorOptions = {
     width: 1180,
@@ -582,6 +607,8 @@ function createWindow(): void {
     minWidth: 860,
     minHeight: 560,
     title: 'YuanMy Agent',
+    // macOS 不认这个字段（Dock 图标由 .app 包决定，见 APP_ICON 的注释）
+    ...(process.platform === 'darwin' ? {} : { icon: APP_ICON }),
     show: false,
     webPreferences: {
       preload: PRELOAD_ENTRY,
@@ -993,6 +1020,7 @@ function registerIpc() {
 async function onReady() {
   registerIpc()
   buildMenu()
+  applyDockIcon()
   createWindow()
 
   // 窗口先出来，内核随后就绪：冷启动时不会有空白等待。

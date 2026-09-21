@@ -19,9 +19,10 @@
 import { memo, type ReactElement } from 'react'
 import { RichText } from './rich-text.tsx'
 import { Markdown } from '../markdown.tsx'
-import { ToolCard } from './tool-card.tsx'
-import { FileCard } from './file-card.tsx'
-import { fileActionOf, type AssistantItem, type Item, type ToolBlock, type TurnMeta, type TurnOutcome } from '../use-agent.ts'
+import { ToolRun } from './tool-run.tsx'
+import ThinkingState from '../ui/beautifului/primitives/ThinkingState.tsx'
+import { Shimmer } from '../ui/beautifului/atoms/Shimmer.tsx'
+import { type AssistantItem, type Item, type ToolBlock, type TurnMeta, type TurnOutcome } from '../use-agent.ts'
 
 /** 把结束原因翻成中文。 */
 function describeOutcome(outcome: TurnOutcome): string {
@@ -42,60 +43,67 @@ function metaText(meta: TurnMeta | null): string {
   return meta.error === undefined ? `${label}${suffix}` : `${label}：${meta.error}`
 }
 
-/** 一个工具块：认得出文件就画文件卡片，否则画普通工具行。 */
-function ToolBlockView({ block, onOpenPath, onPreview }: {
-  readonly block: ToolBlock
-  readonly onOpenPath: (path: string) => void
-  readonly onPreview: (path: string) => void
-}): ReactElement {
-  const file = fileActionOf(block.name, block.args)
-  if (file === undefined) return <ToolCard block={block} />
-  return (
-    <div className="tool-file">
-      <FileCard path={file.path} action={file.action} onOpen={onOpenPath} onPreview={onPreview} />
-      {/* 文件卡片已经表达了「读了哪个文件」；只有失败时才需要把结果露出来 */}
-      {block.isError && block.result !== null && (
-        <div className="tool-card__result tool-card__result--error"><RichText text={block.result} /></div>
-      )}
-    </div>
-  )
-}
-
-const AssistantMessage = memo(function AssistantMessage({ item, onOpenPath, onPreview }: {
+/**
+ * 助手消息的渲染顺序：推理（ThinkingState）→ 正文与工具调用交替。
+ *
+ * 工具块**连续出现时合成一次 run**（`ToolRun`）—— 上游的 ToolChips 就是「一次 run 的
+ * 工具清单」，一个个单独渲染会把它的折叠页眉重复 N 遍。
+ */
+const AssistantMessage = memo(function AssistantMessage({ item, onPreview }: {
   readonly item: AssistantItem
-  readonly onOpenPath: (path: string) => void
   readonly onPreview: (path: string) => void
 }): ReactElement {
   const streaming = item.meta === null
+  /** 把 blocks 切成「正文段」与「工具 run 段」，保持原有顺序。 */
+  const segments: ({ kind: 'text'; text: string } | { kind: 'tools'; blocks: ToolBlock[] })[] = []
+  for (const block of item.blocks) {
+    if (block.type === 'text') {
+      segments.push({ kind: 'text', text: block.text })
+      continue
+    }
+    const last = segments[segments.length - 1]
+    if (last !== undefined && last.kind === 'tools') last.blocks.push(block)
+    else segments.push({ kind: 'tools', blocks: [block] })
+  }
+  // 推理按空行切段：ThinkingState 的 Reasoning 变体是「一行一段话」的排法
+  const reasoningRows = item.reasoning
+    .split(/\n{2,}/)
+    .map((line) => line.trim())
+    .filter((line) => line !== '')
+    .map((line) => ({ primary: line }))
+
   return (
     <div className="msg--assistant" data-item-id={item.id}>
       {item.reasoning !== '' && (
-        // 回合进行中加 `reasoning--running`：表示「模型还在想」，样式里挂状态色。
-        <details className={`reasoning${streaming ? ' reasoning--running' : ''}`}>
-          <summary>推理过程</summary>
-          <div className="reasoning__body">
-            {item.reasoning}
-          </div>
-        </details>
+        <ThinkingState
+          live
+          variant="Reasoning"
+          rows={reasoningRows}
+          working={streaming}
+          expanded={streaming}
+          active="正在推理…"
+          done={streaming ? '正在推理…' : `推理了 ${String(reasoningRows.length)} 段`}
+        />
       )}
 
-      {item.blocks.map((block, index) => (
-        block.type === 'tool'
+      {segments.map((segment, index) => (
+        segment.kind === 'tools'
           ? (
-            <ToolBlockView
-              key={block.callId === '' ? `tool-${String(index)}` : block.callId}
-              block={block}
-              onOpenPath={onOpenPath}
+            <ToolRun
+              key={`tools-${String(index)}`}
+              blocks={segment.blocks}
+              running={streaming}
               onPreview={onPreview}
             />
           )
-          : <Markdown key={`text-${String(index)}`}>{block.text}</Markdown>
+          : <Markdown key={`text-${String(index)}`}>{segment.text}</Markdown>
       ))}
 
       <div
         className={`msg__meta${item.meta?.outcome === 'error' ? ' msg__meta--error' : ''}`}
       >
-        {metaText(item.meta)}
+        {/* 还没跑完：用他们的 Shimmer 做「活的」文字，比一串静止的「正在生成…」更像在动 */}
+        {item.meta === null ? <Shimmer>正在生成…</Shimmer> : metaText(item.meta)}
         {streaming && item.blocks.length === 0 && item.reasoning === '' && ' …'}
       </div>
     </div>
@@ -104,13 +112,11 @@ const AssistantMessage = memo(function AssistantMessage({ item, onOpenPath, onPr
 
 export interface MessageItemProps {
   readonly item: Item
-  /** 用系统默认程序打开文件（文件卡片的「打开」）。 */
-  readonly onOpenPath: (path: string) => void
-  /** 在右侧预览面板里看文件（文件卡片主体）。 */
+  /** 在右侧预览面板里看文件（工具 run 里点 chip）。 */
   readonly onPreview: (path: string) => void
 }
 
-export const MessageItem = memo(function MessageItem({ item, onOpenPath, onPreview }: MessageItemProps): ReactElement {
+export const MessageItem = memo(function MessageItem({ item, onPreview }: MessageItemProps): ReactElement {
   if (item.kind === 'user') {
     // 用户消息里可能带 `/命令`、`@工具`、`#文件`：按类型染色，一眼看出这条消息用了什么
     return <div className="msg--user" data-item-id={item.id}><RichText text={item.text} /></div>
@@ -136,5 +142,5 @@ export const MessageItem = memo(function MessageItem({ item, onOpenPath, onPrevi
       </div>
     )
   }
-  return <AssistantMessage item={item} onOpenPath={onOpenPath} onPreview={onPreview} />
+  return <AssistantMessage item={item} onPreview={onPreview} />
 })

@@ -19,6 +19,10 @@ import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
 import { useImeGuard } from '../composition.ts'
 import { IconChat, IconPlus, IconSearch } from '../icons.tsx'
 import { SidebarBackdrop } from './sidebar-backdrop.tsx'
+// 应用图标：`assets/logo.png`（由 ip-as-logo 出的 B1 方片，构建时内联成 data URL）
+import logoUrl from '../../../assets/logo.png'
+import { EntityChip, Monogram } from '../ui/beautifului/atoms/EntityChip.tsx'
+import { Shimmer } from '../ui/beautifului/atoms/Shimmer.tsx'
 import type { AgentState, AppInfo, ProjectSummary, SessionSummary } from '../use-agent.ts'
 
 /** 相对时间：列表里「多久以前」比绝对时间更有用。 */
@@ -53,9 +57,15 @@ function SessionRow(props: {
       >
         <span className="session__icon"><IconChat size={12} /></span>
         <span className="session__body">
-          <span className="session__title">{session.title === '' ? '（暂无消息）' : session.title}</span>
+          <span className="session__title">
+            {/* 搜索结果里带上项目名（圆牌 + 名字），与树里的项目行同一套语言 */}
+            {subtitle !== undefined && (
+              <EntityChip name={subtitle} color="var(--accent)" className="session__project" />
+            )}
+            {session.title === '' ? '（暂无消息）' : session.title}
+          </span>
           <span className="session__meta">
-            {subtitle === undefined ? relativeTime(session.updatedAt, now) : `${subtitle} · ${relativeTime(session.updatedAt, now)}`}
+            {relativeTime(session.updatedAt, now)}
           </span>
         </span>
       </button>
@@ -189,7 +199,11 @@ export function Sidebar(props: SidebarProps): ReactElement {
         {/* 拖拽区：系统标题栏隐藏后，用户靠这里拖动窗口。
             macOS 上红绿灯浮在这里，所以留出高度。 */}
         <div className="sidebar__brand drag-region">
-          <span className="sidebar__title">工作区</span>
+          {/* 品牌：图标 + 名字。图标做成 16px 小方片（与项目行的 Monogram 等宽、
+              和 macOS 侧栏头部同档），不是裸图 —— 深色玻璃底上给一圈发丝描边
+              才像是「嵌在界面里」。 */}
+          <img className="sidebar__logo no-drag" src={logoUrl} alt="" width={16} height={16} />
+          <span className="sidebar__title">YuanMy</span>
           <button
             type="button"
             className="sidebar__new no-drag"
@@ -257,6 +271,8 @@ export function Sidebar(props: SidebarProps): ReactElement {
                         onClick={() => { toggleProject(project) }}
                       >
                         <span className="project-node__caret" aria-hidden>{open ? '▾' : '▸'}</span>
+                        {/* 首字母圆牌：Beautiful UI 的 workspace 行就是「圆牌 + 名字 + 计数」 */}
+                        <Monogram className="project-node__mono">{project.name.charAt(0).toUpperCase()}</Monogram>
                         <span className="project-node__text">
                           <span className="project__name">{project.name}</span>
                         </span>
@@ -302,7 +318,7 @@ export function Sidebar(props: SidebarProps): ReactElement {
         <div className="sidebar__footer">
           <span className="dot" title={state.error ?? undefined}>
             <span className={`dot__mark dot__mark--${statusKind === '' ? 'idle' : statusKind}`} />
-            {statusLabel}
+            {state.busy ? <Shimmer>{statusLabel}</Shimmer> : statusLabel}
           </span>
           <button
             type="button"

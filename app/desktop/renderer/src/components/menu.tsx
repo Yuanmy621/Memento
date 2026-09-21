@@ -25,6 +25,8 @@ import {
   type KeyboardEvent as ReactKeyboardEvent, type ReactElement,
 } from 'react'
 import { IconChevronDown } from '../icons.tsx'
+import { buttonVariants } from '../ui/beautifului/atoms/Button.tsx'
+import { cn } from '../ui/beautifului/lib/utils.ts'
 
 /** 菜单里的一行。 */
 export interface MenuEntry {
@@ -175,7 +177,7 @@ export function Menu(props: MenuProps): ReactElement {
       <button
         type="button"
         ref={triggerRef}
-        className={props.triggerClassName ?? 'menu__trigger no-drag'}
+        className={props.triggerClassName ?? cn(buttonVariants({ variant: 'quiet', size: 'xs' }), 'menu__trigger no-drag')}
         aria-haspopup="menu"
         aria-expanded={open}
         disabled={props.disabled ?? false}

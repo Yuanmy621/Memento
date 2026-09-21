@@ -26,6 +26,7 @@ import { Sidebar } from './components/sidebar.tsx'
 import { Composer } from './components/composer.tsx'
 import { MessageItem } from './components/message.tsx'
 import { MessageRail } from './components/message-rail.tsx'
+import LoadingState from './ui/beautifului/primitives/LoadingState.tsx'
 import { PreviewPanel } from './components/preview-panel.tsx'
 import { TraceView } from './components/trace.tsx'
 import { SettingsPanel } from './components/settings-panel.tsx'
@@ -186,15 +187,15 @@ export function App(): ReactElement {
             */}
             <div className="messages__inner" key={state.info?.sessionId ?? 'cold'}>
               {state.items.length === 0 && (
-                <div className="msg__note">
-                  {state.phase === 'ready' ? '描述一个任务开始对话。' : '正在启动内核…'}
-                </div>
+                state.phase === 'ready'
+                  ? <div className="msg__note">描述一个任务开始对话。</div>
+                  /* 内核还没就绪：用 Beautiful UI 的 LoadingState（点阵加载器 + 标签） */
+                  : <div className="msg__boot"><LoadingState variant="Dots" label="正在启动内核" /></div>
               )}
               {state.items.map((item) => (
                 <MessageItem
                   key={item.id}
                   item={item}
-                  onOpenPath={(path) => { void openPath(path) }}
                   onPreview={openPreview}
                 />
               ))}
@@ -203,7 +204,7 @@ export function App(): ReactElement {
         ) : (
           <div className="messages">
             <div className="messages__inner">
-              <TraceView steps={steps} empty={state.items.length === 0} />
+              <TraceView steps={steps} empty={state.items.length === 0} busy={state.busy} />
             </div>
           </div>
         )}

@@ -66,6 +66,7 @@ app/desktop/
       composer.tsx         输入区 + 触发符菜单接线 + 键盘总闸
       mention-menu.tsx     触发符候选（纯逻辑 + 列表 UI）
       menu.tsx             通用浮层菜单（键盘 / ARIA / 点外关掉；输入框三个下拉共用）
+    src/ui/beautifului/    界面底座（vendored，MIT）：foundation.css + atoms/ + primitives/
       ../tool-names.ts     工具 → 中文功能名 / 说明（纯表 + 兜底规则；`@` 菜单用）
       editor/              Tiptap：chip 节点、文档↔文本、触发符规则、suggestion 插件、扩展集
       message.tsx          一条会话条目（用户/助手/提示/纠偏；带 data-item-id）
@@ -80,6 +81,7 @@ app/desktop/
       rich-text-tokens.ts  上面那个的**纯逻辑**（tokenizer）
       settings-panel.tsx   技能/命令/MCP 的查看编辑模态
   scripts/
+    audit-css.ts           样式审计：HEAD 有、现在缺、但仍被 className 引用的类 = 误删
     build-renderer.ts      构建渲染进程（esbuild + PostCSS/Tailwind）+ 打 preload.cjs
     build-app.ts           打包用的 staging（生产依赖 hoisted + 运行时文件）
   forge.config.ts          Electron Forge 配置（asar.unpack / makers / fuses）
@@ -373,6 +375,152 @@ app.whenReady().then(() => { /* … */ })
 > （代码高亮主题）。样式注入不构成脚本执行风险，而 `script-src` 依然是收紧的。
 
 ---
+
+## 5.5 界面底座：Beautiful UI（vendored）
+
+界面构件来自 [Beautiful UI](https://www.beautifului.dev/)（作者 Shane Levine，
+**MIT License, Copyright (c) 2026 Shane Levine**）。它走的是 shadcn registry
+（`https://www.beautifului.dev/r/<名字>.json`），**不是 npm 包**，所以源码是
+**vendored** 进仓库的：`renderer/src/ui/beautifului/`（含它自己的 README，写清了来源、
+改动与升级方式）。
+
+为什么能直接用：它只 import `react` + 几个小库（`class-variance-authority` / `clsx` /
+`tailwind-merge` / `shadow-plugin`…），**没有任何 Next.js 依赖**；类名是 Tailwind v4 的，
+和我们 `styles/app.css` 的 `@import "tailwindcss"` + `@theme` 路线同一套。
+
+接入方式（三步）：
+
+1. `styles/app.css` 在 `@import "tailwindcss"` 之后 `@import "../src/ui/beautifului/foundation.css"`；
+2. `index.html` 的 `<html>` 写死 `class="dark"` —— foundation 用 `.dark` 开关它那套暗色令牌，
+   YuanMy 只有暗色一套，不做主题切换；
+3. `--font-inter` / `--font-mono-face` 指到项目现有两套字体（上游靠 Next.js 的 `next/font` 注入）。
+
+### 哪些上游构件没法直接用（记录取舍）
+
+| 构件 | 为什么没直接嵌 | 我们怎么办 |
+| --- | --- | --- |
+| `PromptBar`（712 行） | 它是**展示件**：自带 `<textarea>`、自播放 walkthrough（`demo`）、`glimm` 的 WebGL 扫光、Figma/Slack/Gmail 品牌标；嵌进来就得放弃 Tiptap（被明确要求保留） | 取它的**字段样式**（`border-line` + `bg-surface` + `shadow-card` + 14px 圆角 + `focus-within:border-line-strong`）套在我们的 `.composer__box` 上 |
+| `ChatComposer` | 它是「消息列表 + 输入框」的整块演示（`ChatMessage` 是 demo 数据） | 只用它的视觉语言；消息流仍走我们的归约器与 Streamdown |
+| `SidebarNav` | 它是固定主导航（Home/Invite/Settings）+ **扁平** recents；我们的侧栏是「项目 → 会话」两级树（跨项目、可折叠、懒加载） | 取它的侧栏外观与交互（搜索字段、行样式、折叠态），树的结构与逻辑保留（阶段 4） |
+| `ThinkingState` / `ToolChips` | 可复用，但内建**演示时序**（定时逐条放行、固定最小高、自动展开） | vendored 补丁加 `live` / `working` / `expanded` / `compact`，真实数据驱动（见 vendored README 改动表） |
+
+### ⚠️ 一次自己造成的样式事故（以及为什么现在有 `npm run audit:css`）
+
+删「轨迹时间线」那批死样式时，我按**区间**删（从轨迹分节注释到下一个分节注释为止），
+而那一大段里夹着**下拉菜单、提及菜单、统计行、纠偏气泡、指令 token、输入框 chip** 的样式 ——
+它们的类名都还在 TSX 里，属于活样式。删完编译不报错、类型检查也过，只有真看界面才发现。
+
+现在这件事有两道防线：
+
+1. **审计脚本**：`npm run audit:css` 拿「上一个提交的 CSS 选择器集合」与当前 CSS 做差集，
+   再回到 `renderer/src` 里逐个验证「还有没有 className 在用」——有就是误删，退出码 1。
+   （本次修复后它报「363 条选择器、缺 62 条、其中没有仍被引用的」，那 62 条正是故意删掉的
+   `tool-card` / `filecard` / `reasoning` / 轨迹时间线 / `setbtn` 等。）
+2. **删样式只按选择器删**，不要按行区间删；删完跑一次审计脚本再继续。
+
+误删的那批已从 `git show HEAD:...` 按选择器取回，并把能迁移的旧令牌换成 foundation 令牌
+（`app.css` 第 14 节「恢复」有说明）。
+
+### 三处必须知道的坑
+
+| 坑 | 现象 | 处理 |
+| --- | --- | --- |
+| 上游 `foundation.css` **括号不配平**（84 左 vs 85 右） | Tailwind 解析到那里**整份 foundation 被丢掉且不报错** —— 表现是「令牌与工具类全没了、界面像没上样式」 | vendored 时删掉那段孤儿块（`.records-footer-hint` + 多余右花括号），RecordsTable 自己的 CSS 里有这条规则 |
+| `--color-accent` **撞名**：上游当品牌色，Streamdown（shadcn 主题）当 hover 底色 | `bg-accent` 主按钮渲染成灰色 | 全局给品牌语义（`--color-accent: var(--accent)`），Streamdown 那份收进 `.sd { --color-accent: … }` |
+| 上游原子构件**不透传原生属性** | `title` / `aria-*` 传不进去（我们到处用 tooltip） | vendored 时给根元素加 `...props`（已在 README 的改动表里登记） |
+
+品牌色沿用 YuanMy 那支低饱和蓝紫（`--accent: oklch(0.62 0.16 285.5)` 一族），
+只换色相、不动它的阴影/描边/圆角结构 —— 这是设计系统留的口子。
+
+**历史令牌的过渡办法**：界面里还留着大量早期自研的 `--ym-*` / `--dsw-*` 变量，
+逐个替换既慢又容易漏。凡是**语义重合**的，在 `:root` 里就地改成 foundation 的别名：
+
+```css
+--ym-accent: var(--accent);            /* 品牌色一族：一处改色全站跟上 */
+--ym-accent-text: var(--accent-ink);
+--ym-nav-current-fill: var(--hover);   /* 侧栏当前项 → 他们的 hover / hover-2 */
+--ym-surface: color-mix(in srgb, var(--ink) 55%, transparent);   /* 柱面粒子 */
+```
+
+于是「换设计系统」这件事在样式层是**逐块推进**的：改过的块直接写 foundation 令牌，
+没轮到的块通过别名自动跟着走，不会出现「一半旧色一半新色」的断层。
+（阶段 7 收尾时再决定哪些 `--dsw-*` 可以彻底删掉 —— 玻璃侧栏与柱面粒子还要用其中的
+几支静态色阶。）
+
+### 迁移分阶段（未完成的记在这里）
+
+| 阶段 | 内容 | 状态 |
+| --- | --- | --- |
+| 0 | foundation 令牌 + 字体 + 暗色开关；`lib/utils.ts`（`cn`）+ atoms 落盘 | ✅ |
+| 1 | 原生构件替换：`Button`（发送/停止/设置/预览按钮）、`ValuePill`（统计行）、`EntityChip`（项目/会话徽标）、`Shimmer`（运行中） | 🔄 已接 Button + ValuePill |
+| 2 | 对话面板：`ThinkingState`（推理）、`ToolChips`（工具调用 run，行内明细 + chip 点开预览）；`tool-card.tsx` / `file-card.tsx` 与它们的 CSS 已删 | ✅ |
+| 2b | `CodeBlock`：预览面板的**纯文本 / 日志**已接入（行号 + 文件名头 + 一键复制）；工具结果暂仍在 ToolChips 行内（要全文去预览面板） | 🔄 |
+| 3 | 输入区与浮层：输入框外壳照 `PromptBar` 的字段样式（`border-line` / `bg-surface` / `shadow-card` / 14px 圆角 / 聚焦转 `line-strong`），编辑内核仍是 Tiptap；三个下拉与 `@` `/` 候选菜单统一到 `surface + line + 10px + shadow-raised`，触发按钮直接用他们 `Button` 的 `quiet/xs` 变体 | ✅ |
+| 4 | 侧栏：取 `SidebarNav` 的观感（品牌行 14px/ink-2、新会话 = 它的 CTA 规格、搜索字段 `bg-field` + `shadow-hairline`、行高亮 7px/`hover-2`、当前项 `hover`/`ink`、计数 tabular-nums、状态点用 `--green/--red`）+ 项目行首字母圆牌（`Monogram`）；**树的结构与逻辑保留**（它是扁平的 recents，装不下两级树）。柱面粒子背景保留 | ✅ |
+| 5 | 右侧：预览面板换成 foundation 层级（面板底 = `--canvas`、描边 `--line`、角标 = `accent-tint/accent-ink`、列表行 7px + `hover-2`、头部按钮改用他们的 `Button`）+ 新增「复制全文」；纯文本 / 日志走 `CodeBlock`（代码与报告仍 Streamdown）；刻度尺换成 `--accent / --ink-2 / --orange / --green` 分类色、当前刻度 = `--ink`、提示框 = `surface + line + raised` | ✅ |
+| 6 | 轨迹页改用 `TaskRows`（行 = 一步，状态 = 完成/进行中/失败，可展开明细；补丁加了 `failed` 与 `live`）；设置面板按 foundation 令牌重写（模态 + 页签 + 行 + 编辑器 + 标签），按钮改用他们的 `Button` | ✅ |
+| 7 | 收尾：`Shimmer`（生成中/运行中的文字）、`EntityChip`（搜索结果里的项目）、`LoadingState`（冷启动的「正在启动内核」）；清理 13 个确认无人引用的变量；新增 `npm run audit:css`；打包验证（`npm run package` 产物实测启动正常） | ✅ |
+
+**迁移已完成。** 现在这套界面的分工是：
+
+| 层 | 来自 |
+| --- | --- |
+| 设计令牌（颜色/描边/圆角/阴影/字体/关键帧） | Beautiful UI `foundation.css`（vendored）+ 我们对 `--accent` 一族的品牌色覆盖 |
+| 原生构件 | `atoms/`：`Button` / `EntityChip`(+`Monogram`) / `ValuePill` / `Shimmer` / `StreamText` |
+| 区块构件 | `primitives/`：`ThinkingState`（推理）/ `ToolChips`（工具 run）/ `TaskRows`（轨迹）/ `CodeBlock`（文本预览与日志）/ `LoadingState`（冷启动） |
+| 继续自研 | 会话刻度尺、通用浮层菜单（`menu.tsx`）、侧栏柱面粒子背景、`MessageRail` 的几何 |
+| 明确不换 | Tiptap 编辑器内核、Streamdown markdown 渲染 |
+
+验证入口：`npm run typecheck`、`npm run build:renderer`、`npm run audit:css`、
+`npm run package`（打包产物实测：桥 18 个方法、`html.dark`、`--surface/--ink/--accent` 都在、
+玻璃侧栏与输入框 14px 圆角照旧）。
+
+**不换的两样**（用户明确要求）：Tiptap 编辑器内核、Streamdown markdown 渲染 ——
+只换它们外面的壳。**上游没有对应物、继续自研**的：右侧会话刻度尺、通用浮层菜单
+（`menu.tsx`）、侧栏柱面粒子背景。
+
+## 5.6 应用图标（logo）
+
+图标是 `app/desktop/assets/` 下的三份文件，同一张图的三种用途 —— 但**尺寸规范分两档**，
+别拿一份去顶另一份：
+
+| 文件 | 用途 | 尺寸规范 |
+| --- | --- | --- |
+| `logo.png`（128²） | 侧栏品牌行那枚方片，构建时由 esbuild 内联成 data URL（`loader: { '.png': 'dataurl' }`） | **铺满画布**，CSS 画成 16px 方片、圆角 4px |
+| `icon.png`（1024²） | 开发态 macOS Dock 图标（`app.dock.setIcon`，仅 `!app.isPackaged`）、Windows/Linux 的窗口图标（`BrowserWindow.icon`） | **Apple 图标网格**，见下 |
+| `icon.icns` | 打包产物：`forge.config.ts` 的 `packagerConfig.icon` 指向 `assets/icon`，`build-app.ts` 把整个 `assets/` 复制进 staging | 同 `icon.png` |
+
+来源：`~/.YuanMy/ip-as-logo/<日期>-ghost/B1.jpg`（ip-as-logo 技能出的「圆头小幽灵」方片，
+白 + 淡紫、浅底）。派生脚本：`python3 app/desktop/scripts/make-icons.py`
+（要 Pillow，**不参与每次构建**，换图时才跑；源图可用 `YUANMY_ICON_SRC=<路径>` 覆盖）。
+
+### 两档尺寸规范，别搞混
+
+**系统图标要按 Apple 的网格留白。** 画布 1024²，方片本体只有 **824² 居中**（80.47%），
+本体圆角取自身的 **22.45%**（824 → 185），本体外面**透明**。
+`macOS` 上所有 App 图标都是这个留白比例；铺满画布的图标在 Dock 里会比邻居「胖一圈」，
+一眼就不像系统应用。注意透明的只是**方片外面** —— 方片本体仍是不透明的浅紫底，
+别把背景抠掉（那样图案会在浅色桌面上「浮」着）。实测：`icon.png` 的不透明 bbox
+正好是 `100,100 → 923,923`，四角 alpha = 0。
+
+**侧栏 logo 反过来，要铺满画布。** 它是界面里 16px 的一个「表面」，尺寸和圆角由 CSS
+（`.sidebar__logo { width:16px; height:16px; border-radius:4px }`）决定；图里再留白的话，
+16px 盒子里实际图案只剩 ~13px，和旁边的 13px 标题、项目行的 `Monogram`（`size-4` = 16px）
+都对不齐。
+
+### 两个静默失效点（都踩过）
+
+1. **`packagerConfig.icon` 必须给绝对路径**。`@electron/packager` 的
+   `normalizeIconExtension()` 把 `icon` 原样交给 `fs.pathExists`，相对路径是按**进程 cwd**
+   （仓库根）解析的 —— 写 `'assets/icon'` 它会去找 `<仓库根>/assets/icon.icns`，
+   找不到就**静默回落成 Electron 默认图标**：打包一路 ✔，只有 Dock 上图标不对。
+   现在用 `fileURLToPath(new URL('./assets/icon', import.meta.url))`，staging 与开发目录都成立。
+2. **图标要进 staging 的自检清单**。`build-app.ts` 的 `mustHave` 里加了 `assets/icon.icns` ——
+   否则哪天复制规则一改，产物又悄悄变回默认图标。
+
+> 拷进 `.app` 后文件名仍是 `electron.icns`（packager 的 `CFBundleIconFile` 默认值就是它），
+> 但**内容是我们的 icns**（sha256 与 `app/desktop/assets/icon.icns` 一致），
+> plist 指向的也是这个文件，所以 Dock / Finder 显示的是我们的图标。
 
 ## 6. 界面是怎么长出来的
 
@@ -1011,7 +1159,7 @@ cacheWriteTokens 写入缓存的输入
 | --- | --- |
 | 搜索框 | 前端过滤会话标题 / id；命中后切成跨项目平铺结果（找会话时层级是干扰） |
 | 标签栏「对话 / 轨迹」 | 同一个 `state.items`，轨迹走 `traceSteps()` 摊平（纯函数） |
-| 文件卡片 + 预览 / 打开 | `fileActionOf()` 认出 read/write/edit 的路径；**预览**走 `IPC.previewRead`，**打开**走主进程 `shell.openPath` |
+| 工具调用 run（ToolChips） | `fileActionOf()` 认出 read/write/edit 的路径；点 chip **预览**（`IPC.previewRead`），「用系统程序打开」在预览面板里（主进程 `shell.openPath`） |
 | 会话刻度尺（最右） | `railMarks()` 一条条目一道刻度；「当前读到第几条」由真实 DOM 位置算（`indexAt`） |
 | 预览面板（右侧列） | 「最近文件」= `recentFiles()`（倒着捞会话里碰过的文件，路径去重）；内容按扩展名分流渲染 |
 | 权限下拉 | **如实显示现状**：本地 provider 无沙箱无审批，所以只有「完全访问」一项 |
@@ -1065,6 +1213,10 @@ host 侧（`host/index.ts` 的 `listModels`）的规则：
 | 悬停 | 浮出提示框：角色角标 + 摘要（最多 5 行）+「N 次工具」；正在跑的那条带「运行中」。**移开即渐隐**（160ms 淡出并轻推 6px 收回） |
 | 滚消息 | 尺子自动跟着走：**屏幕上最后那条可见的条目 = 当前刻度**（判定线在视口底边往上 8px），滑到中间 |
 
+> 尺子本体只有「刻度 + 提示框」两层：没有独立的轨道/滑块 —— **当前那道刻度本身就是指示器**
+> （它最长、最亮，且会随选中项滑到窗口中间）。所以美化它时改的是三类刻度色与提示框，
+> 不是去补一个滑块。
+>
 > 有尺子时**消息区不再画系统滚动条**（`.main-column--rail .messages { scrollbar-width: none }`）：
 > 两个指示器同时出现纯属噪音，位置与跳转都交给尺子。滚动本身一点没动
 > （滚轮 / 触控板 / 键盘 / 程序化 `scrollTop` 照旧），去掉的只是那根可见的条。

@@ -18,7 +18,8 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p app/desktop/renderer/tsconfig.json && tsc --noEmit -p tsconfig.js.json",
     "mcp:butian": "node app/mcp/butian/server.ts",
     "desktop:butian": "YuanMy_MCP=butian npm run desktop",
-    "opencli:install": "node app/opencli/install.js"
+    "opencli:install": "node app/opencli/install.js",
+    "audit:css": "node app/desktop/scripts/audit-css.ts"
   },
   "keywords": [],
   "license": "MIT",
@@ -87,13 +88,17 @@
     "@types/node": "^24.0.0",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
     "electron": "44.4.1",
     "esbuild": "^0.28.2",
     "lucide-react": "^1.47.0",
     "postcss": "^8.5.28",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
+    "shadow-plugin": "^2.1.1",
     "streamdown": "^2.6.0",
+    "tailwind-merge": "^3.7.0",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.6.0"
   },

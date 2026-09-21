@@ -47,6 +47,8 @@ import { SuggestController, type SuggestSource, type SuggestView } from './edito
 import { TRIGGER_TITLE } from './editor/triggers.ts'
 import { billedInputTokens, cacheHitRate, type AgentState } from '../use-agent.ts'
 import { Menu, type MenuEntry } from './menu.tsx'
+import { Button } from '../ui/beautifului/atoms/Button.tsx'
+import { ValuePill } from '../ui/beautifului/atoms/ValuePill.tsx'
 import { IconClock, IconPlus, IconSend, IconShield, IconToken, IconTurns } from '../icons.tsx'
 
 /** 空输入框里的提示语 **/
@@ -77,8 +79,8 @@ function StatsBar({ state }: { readonly state: AgentState }): ReactElement {
   const model = state.info === null ? '' : state.info.model
   return (
     <div className="stats">
-      <span
-        className="stats__item"
+      <ValuePill
+        className="stats__pill"
         title={`未命中 ${String(usage.inputTokens)} · 命中缓存 ${String(usage.cacheReadTokens)} · 计费输入 ${String(billedInputTokens(usage))}`}
       >
         <IconToken size={13} />
@@ -86,17 +88,15 @@ function StatsBar({ state }: { readonly state: AgentState }): ReactElement {
         <span className="stats__dim">/</span>
         {formatTokens(usage.outputTokens)} out
         {rate !== null && <span className="stats__dim">· 命中 {(rate * 100).toFixed(0)}%</span>}
-      </span>
-      <span className="stats__sep">|</span>
-      <span className="stats__item" title="上一回合的墙钟耗时">
+      </ValuePill>
+      <ValuePill className="stats__pill" title="上一回合的墙钟耗时">
         <IconClock size={13} />
         {formatDuration(state.lastTurnMs)}
-      </span>
-      <span className="stats__sep">|</span>
-      <span className="stats__item" title="本会话已完成的回合数">
+      </ValuePill>
+      <ValuePill className="stats__pill" title="本会话已完成的回合数">
         <IconTurns size={13} />
         {String(state.turns)} 轮
-      </span>
+      </ValuePill>
       <span className="stats__spacer" />
       <span className="stats__item stats__dim">{`${provider}/${model}`}</span>
     </div>
@@ -349,23 +349,22 @@ export function Composer(props: ComposerProps): ReactElement {
             <span className="composer__spacer" />
 
             <span className="composer__state">{hint}</span>
-            <button
-              type="button"
-              className="btn btn--stop"
-              hidden={!state.busy}
-              onClick={onCancel}
-            >
-              停止
-            </button>
-            <button
-              type="button"
-              className="btn btn--primary btn--send"
+            {/* 停止 / 发送：Beautiful UI 的 Button（accent = 主操作，secondary = 次操作） */}
+            {state.busy && (
+              <Button variant="secondary" size="sm" className="composer__stop" onClick={onCancel}>
+                停止
+              </Button>
+            )}
+            <Button
+              variant="accent"
+              size="sm"
+              className="composer__send"
               disabled={!ready || state.switching || plain.trim() === ''}
               title={state.switching ? '正在切换会话…' : (state.busy ? '中途调整目标（Enter）' : '发送（Enter）')}
               onClick={submit}
             >
               <IconSend size={14} />
-            </button>
+            </Button>
           </div>
         </div>
 
