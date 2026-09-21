@@ -142,6 +142,35 @@ export function toolDisplay(name: string, description?: string): ToolDisplay {
 }
 
 /**
+ * 取一段文本的**首行**（界面上到处都是「一行预览」：工具行尾的灰字、轨迹行的摘要）。
+ *
+ * 刻意不用 `split('\n')`：工具输出动辄几十 KB，切一遍就是一次整串复制，
+ * 而消息流每来一个 delta 都要重算一次预览 —— 用 `indexOf` + 一次 `slice` 是 O(首行)。
+ * @param text - 原文（可能多行）。
+ * @param max - 首行最长多少字（超了加省略号）。
+ * @returns 首行（已去首尾空白）。
+ */
+export function firstLine(text: string, max = 200): string {
+  const end = text.indexOf('\n')
+  const line = (end === -1 ? text : text.slice(0, end)).trim()
+  return line.length > max ? `${line.slice(0, max)}…` : line
+}
+
+/**
+ * 工具参数在明细里该叫什么。
+ *
+ * 「参数：ls -la」这种写法在 bash 上很别扭（那是**命令**不是参数），
+ * 所以按工具类别给一个准确的抬头；认不出来的一律叫「参数」，不硬编。
+ * @param name - 工具全名。
+ * @returns 明细里参数行的抬头（不含冒号）。
+ */
+export function argsLabel(name: string): string {
+  if (name === 'bash' || name.startsWith('job_')) return '命令'
+  if (name === 'read' || name === 'write' || name === 'edit' || name === 'read_image') return '路径'
+  return '参数'
+}
+
+/**
  * 一个工具在同类里的展示顺序（`@` 候选菜单按它排）。
  *
  * 表里排过序的用表里的 order；没排过的（用户自己挂的 server）统一给 500，

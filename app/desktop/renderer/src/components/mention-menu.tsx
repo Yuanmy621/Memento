@@ -102,7 +102,7 @@ export function buildMentions(
       .map((item) => ({ item, display: toolDisplay(item.name, item.description) }))
       // 匹配三种写法：原名（`butian`）、中文名（`排行`）、说明里的词
       .filter(({ item, display }) => hit(item.name) || hit(display.label) || hit(display.note))
-      // 与侧栏工具清单同一套顺序（否则同一条工具在两处的名次不一样）
+      // 按 `toolOrder()` 的固定名次排（项目大厅 → 排行 → …），否则会退化成英文字母序
       .sort((a, b) => toolOrder(a.item.name) - toolOrder(b.item.name) || a.item.name.localeCompare(b.item.name))
       .map(({ item, display }) => ({
         key: `tool:${item.name}`,

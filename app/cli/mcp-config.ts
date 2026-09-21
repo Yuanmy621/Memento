@@ -137,12 +137,3 @@ export function readMcpConfig(cwd: string): McpConfig {
   }
   return { entries, path, exists: true }
 }
-
-/**
- * 把一份条目表写成配置文件内容（设置界面保存时用）。
- * @param entries - 条目。
- * @returns 带缩进的 JSON 文本 + 结尾换行。
- */
-export function serializeMcpConfig(entries: readonly McpConfigEntry[]): string {
-  return `${JSON.stringify({ servers: entries }, null, 2)}\n`
-}

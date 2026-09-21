@@ -97,12 +97,24 @@ export function summarizeCall(rawArguments: string): string {
   return `${truncate(detail ?? '', 110)}${suffix}`
 }
 
-/** 从工具结果消息里抽一行摘要（同样导出给桌面端 host 复用）。 */
-export function summarizeResult(blocks: readonly ContentBlock[], isError: boolean): string {
-  const text = blocks
+/**
+ * 工具结果的**完整**文本（保留换行，不压空格）。
+ *
+ * 与 {@link summarizeResult} 的区别：那个是给终端扫读的**一行**摘要，这个是给人
+ * **展开细看**的原文。桌面端的 host 两个都要（折叠显示摘要、点开显示原文）。
+ * @param blocks - 工具结果消息的内容块。
+ * @returns 纯文本（可能多行；空结果返回空串）。
+ */
+export function toolResultText(blocks: readonly ContentBlock[]): string {
+  return blocks
     .map(block => (block.type === 'text' ? block.text : block.type === 'tool-result' ? textOf(block.content) : ''))
     .join('\n')
     .trim()
+}
+
+/** 从工具结果消息里抽一行摘要（同样导出给桌面端 host 复用）。 */
+export function summarizeResult(blocks: readonly ContentBlock[], isError: boolean): string {
+  const text = toolResultText(blocks)
   if (text.length === 0) return isError ? 'error' : 'ok'
   const firstLine = text.split('\n').find(line => line.trim().length > 0) ?? ''
   const exit = /\[exit code: (\d+)\]/.exec(text)

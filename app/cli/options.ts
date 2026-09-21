@@ -62,11 +62,6 @@ export const SUPPORTED_MODELS = [
 /** 默认模型：清单里的第一款。 */
 export const DEFAULT_MODEL: string = SUPPORTED_MODELS[0].id
 
-/** 判断一个模型 id 是否在 {@link SUPPORTED_MODELS} 里。 */
-export function isSupportedModel(id: string): boolean {
-  return SUPPORTED_MODELS.some((model) => model.id === id)
-}
-
 /** 允许缺省的配置输入（桌面端等非 CLI 调用方从这里进入）。 */
 export interface OptionsInput extends Partial<Options> {}
 

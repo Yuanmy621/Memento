@@ -17,8 +17,8 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { AssistantStreamFrame } from '@deepseek-ai/dsh-agent'
 // 复用 CLI 的工具摘要格式化，避免终端与 GUI 的展示逻辑各写一份。
-import { summarizeCall, summarizeResult } from '../../cli/ui.ts'
-import { toOutcome, type HostEvent, type TurnOutcome } from './protocol.ts'
+import { summarizeCall, summarizeResult, toolResultText } from '../../cli/ui.ts'
+import { clampToolOutput, toOutcome, type HostEvent, type TurnOutcome } from './protocol.ts'
 
 /** 一次回合的统计结果。 */
 export interface TurnStats {
@@ -104,6 +104,8 @@ export class DesktopBridge {
             callId,
             name: this.callNames.get(callId) ?? '',
             summary: summarizeResult(event.data.message.content, isError),
+            // 摘要给折叠状态，原文给展开状态 —— 两个都发，界面点开就有东西看
+            output: clampToolOutput(toolResultText(event.data.message.content)),
             isError,
           })
           break

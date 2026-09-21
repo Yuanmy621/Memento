@@ -37,6 +37,8 @@ import type {
 } from '../../host/protocol.ts'
 /** 预览面板的类型面同样只有一份：主进程 `readForPreview` 决定 kind，界面照着画。 */
 import type { PreviewPayload } from '../../ipc.ts'
+/** 显示用的小工具（首行预览）；纯函数，界面与轨迹共用一套口径。 */
+import { firstLine } from './tool-names.ts'
 
 /** 重新导出协议里的类型，让组件只依赖本模块这一处「界面类型面」。 */
 export type {
@@ -261,8 +263,15 @@ export interface TraceStep {
   readonly kind: 'user' | 'reasoning' | 'text' | 'tool' | 'note' | 'steer'
   /** 一行标题（工具名 / 用户 / 推理 等）。 */
   readonly label: string
-  /** 细节：工具参数、结果摘要、正文片段。 */
+  /**
+   * 展开后显示的**完整**文本：工具步骤是完整输出（bash 那几十行），
+   * 其余步骤是正文/推理/提示原文。
+   */
   readonly detail: string
+  /** 行内一行预览（工具=输出首行，其余=正文首行）—— 折叠时看的就是它。 */
+  readonly preview: string
+  /** 工具步骤的参数摘要（chip 里显示整条命令 / 路径），其余步骤为空串。 */
+  readonly token: string
   /** 这一步是否失败（结果带错误）。 */
   readonly isError: boolean
 }
@@ -272,42 +281,66 @@ export interface TraceStep {
  *
  * 这是调试视角：不追求好看，追求**顺序与结果一目了然**。
  * 纯函数：给定同样的条目，永远得到同样的步骤列表。
+ *
+ * 性能上有一个刻意的讲究：工具步骤的 `detail` 直接**引用** `block.output`（不复制），
+ * 只有 `preview`/`token` 是小字符串。流式正文每来一个 delta 都会重算这条列表，
+ * 若在这里把几十 KB 的输出拼一遍，就等于每个 delta 复制几 MB。
  * @param items - 会话条目。
  * @returns 轨迹步骤。
  */
 export function traceSteps(items: readonly Item[]): TraceStep[] {
   const steps: TraceStep[] = []
+  /** 通用步骤（非工具）：正文即明细，首行即预览。 */
+  const plain = (
+    id: string,
+    kind: TraceStep['kind'],
+    label: string,
+    text: string,
+    isError = false,
+  ): void => {
+    steps.push({ id, kind, label, detail: text, preview: firstLine(text), token: '', isError })
+  }
   for (const item of items) {
     if (item.kind === 'user') {
-      steps.push({ id: item.id, kind: 'user', label: '用户', detail: item.text, isError: false })
+      plain(item.id, 'user', '用户', item.text)
       continue
     }
     if (item.kind === 'note') {
-      steps.push({ id: item.id, kind: 'note', label: `提示(${item.level})`, detail: item.text, isError: item.level === 'error' })
+      plain(item.id, 'note', `提示(${item.level})`, item.text, item.level === 'error')
       continue
     }
     if (item.kind === 'steer') {
-      steps.push({ id: item.id, kind: 'steer', label: '目标调整', detail: item.text, isError: false })
+      plain(item.id, 'steer', '目标调整', item.text)
       continue
     }
-    if (item.reasoning !== '') {
-      steps.push({ id: `${item.id}-r`, kind: 'reasoning', label: '推理', detail: item.reasoning, isError: false })
-    }
+    /**
+     * 推理不再单独抽一条放在最前面：它已经是 `blocks` 里的一块，
+     * 跟着下面的循环按真实顺序出现（想一段 → 做一步 → 再想一段）。
+     * 老代码用 `item.reasoning` 在这里插一条，于是轨迹里思考也全堆在开头。
+     */
     item.blocks.forEach((block, index) => {
-      if (block.type === 'text') {
-        steps.push({ id: `${item.id}-t${String(index)}`, kind: 'text', label: '回复', detail: block.text, isError: false })
+      if (block.type === 'reasoning') {
+        plain(`${item.id}-r${String(index)}`, 'reasoning', '推理', block.text)
         return
       }
+      if (block.type === 'text') {
+        plain(`${item.id}-t${String(index)}`, 'text', '回复', block.text)
+        return
+      }
+      const output = (block.output ?? '').trim()
+      const detail = block.result === null ? '（运行中…）' : (output === '' ? block.result : output)
       steps.push({
         id: `${item.id}-c${String(index)}`,
         kind: 'tool',
         label: block.name,
-        detail: block.result === null ? `${block.args}（运行中）` : `${block.args}\n→ ${block.result}`,
+        detail,
+        preview: block.result === null ? '运行中…' : firstLine(detail),
+        token: block.args,
         isError: block.isError,
       })
     })
     if (item.meta !== null && item.meta.outcome !== 'completed') {
-      steps.push({ id: `${item.id}-m`, kind: 'note', label: '结束', detail: item.meta.error ?? item.meta.outcome, isError: item.meta.outcome === 'error' })
+      plain(`${item.id}-m`, 'note', '结束', item.meta.error ?? item.meta.outcome, item.meta.outcome === 'error')
     }
   }
   return steps
@@ -551,6 +584,20 @@ function appendText(blocks: readonly Block[], delta: string): Block[] {
   return [...blocks, { type: 'text', text: delta }]
 }
 
+/**
+ * 追加一段推理增量到「最后一个推理块」，没有就**新起一块**。
+ *
+ * 这一行就是「思考 → 行动 → 再思考」的落点：中间只要夹了正文或工具调用，
+ * 末尾就不是推理块，下一段推理自然成为新的一块、排在它真实发生的位置上。
+ */
+function appendReasoning(blocks: readonly Block[], delta: string): Block[] {
+  const tail = blocks[blocks.length - 1]
+  if (tail !== undefined && tail.type === 'reasoning') {
+    return [...blocks.slice(0, -1), { ...tail, text: tail.text + delta }]
+  }
+  return [...blocks, { type: 'reasoning', text: delta }]
+}
+
 /** 替换第 index 条。 */
 function replaceItem(items: readonly Item[], index: number, next: Item): Item[] {
   return [...items.slice(0, index), next, ...items.slice(index + 1)]
@@ -749,7 +796,17 @@ export function reducer(state: AgentState, action: Action): AgentState {
       const [items, index] = ensureAssistant(state.items, action.turnId)
       const current = asAssistant(items[index])
       if (current === null) return state
-      const next: AssistantItem = { ...current, reasoning: current.reasoning + action.text }
+      /**
+       * 两处都写，但用途不同：
+       *   - `blocks` 里按位置存（界面渲染用，见 `appendReasoning`）；
+       *   - `reasoning` 是整回合的拼接（刻度尺提示框、轨迹兜底用）。
+       * 只留后者就会退回「所有思考堆在消息最上方」的老样子。
+       */
+      const next: AssistantItem = {
+        ...current,
+        reasoning: current.reasoning + action.text,
+        blocks: appendReasoning(current.blocks, action.text),
+      }
       return { ...state, items: replaceItem(items, index, next) }
     }
 
@@ -764,6 +821,7 @@ export function reducer(state: AgentState, action: Action): AgentState {
         name: action.name,
         args: action.summary,
         result: null,
+        output: null,
         isError: false,
       }
       const next: AssistantItem = { ...current, blocks: [...current.blocks, block] }
@@ -778,7 +836,8 @@ export function reducer(state: AgentState, action: Action): AgentState {
       const blocks: Block[] = current.blocks.map((block) => {
         if (block.type !== 'tool' || block.callId !== action.callId) return block
         matched = true
-        return { ...block, result: action.summary, isError: action.isError === true }
+        // 摘要给折叠行、`output` 给展开明细：两个都收，点开就有完整内容
+        return { ...block, result: action.summary, output: action.output, isError: action.isError === true }
       })
       // 结果先于调用到达（或缺了调用帧）：补一张卡片，信息别丢。
       if (!matched) {
@@ -788,6 +847,7 @@ export function reducer(state: AgentState, action: Action): AgentState {
           name: action.name,
           args: '',
           result: action.summary,
+          output: action.output,
           isError: action.isError === true,
         })
       }

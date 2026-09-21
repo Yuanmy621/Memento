@@ -36,7 +36,10 @@
 
 import { open, readdir, readFile, stat } from 'node:fs/promises'
 import { join } from 'node:path'
-import { toOutcome, type AssistantItem, type Block, type Item, type NoteItem, type SessionUsage, type ToolBlock } from './protocol.ts'
+import {
+  clampToolOutput, toOutcome,
+  type AssistantItem, type Block, type Item, type NoteItem, type SessionUsage, type ToolBlock,
+} from './protocol.ts'
 
 /** 单个日志最多整体读多少字节；超过只读头部（与 sessions.ts 同一策略）。 */
 const MAX_LOG_BYTES = 8 * 1024 * 1024
@@ -136,14 +139,20 @@ function summarizeArgs(raw: unknown): string {
   }
 }
 
-/** 从工具结果事件里抽一行摘要（与 `app/cli/ui.ts` 的 summarizeResult 同口径）。 */
-function summarizeResult(content: unknown, isError: boolean): string {
-  if (!Array.isArray(content)) return isError ? 'error' : 'ok'
+/**
+ * 从工具结果事件里抽**完整**文本（保留换行）。
+ *
+ * 回放路径拿到的是落盘日志里的原始 JSON，不是 `ContentBlock[]`，所以这里自己走一遍
+ * 结构（与 `app/cli/ui.ts` 的 `toolResultText` 同口径）：摘要和展开原文都由它派生，
+ * 一份数据两个视图，不会出现「摘要说有 57 行、点开只有 1 行」。
+ */
+function resultText(content: unknown): string {
+  if (!Array.isArray(content)) return ''
   const first = content[0]
   const blocks = (typeof first === 'object' && first !== null
     ? (first as { content?: unknown }).content
     : undefined) ?? content
-  const text = (Array.isArray(blocks) ? blocks : [])
+  return (Array.isArray(blocks) ? blocks : [])
     .map((block) => {
       if (typeof block !== 'object' || block === null) return ''
       const candidate = block as { type?: unknown; text?: unknown }
@@ -151,6 +160,10 @@ function summarizeResult(content: unknown, isError: boolean): string {
     })
     .join('\n')
     .trim()
+}
+
+/** 从工具结果事件里抽一行摘要（与 `app/cli/ui.ts` 的 summarizeResult 同口径）。 */
+function summarizeResult(text: string, isError: boolean): string {
   if (text === '') return isError ? 'error' : 'ok'
   const firstLine = text.split('\n').find((line) => line.trim() !== '') ?? ''
   const lines = text.split('\n').length
@@ -294,11 +307,19 @@ export async function readSessionHistory(options: {
       const reasoning = assistantText(message.content, 'reasoning')
       const prose = assistantText(message.content, 'text')
       const item = ensureAssistant(draft)
-      const blocks: Block[] = prose === '' ? [...item.blocks] : [...item.blocks, { type: 'text', text: prose }]
+      /**
+       * 推理与正文**按位置**落进 blocks（顺序 = 日志里的块顺序，通常是
+       * 「推理 → 正文 → 工具」）。老实现只把正文塞进 blocks、把推理拼进
+       * `item.reasoning`，回放出来的会话里所有思考都会堆在消息最上方。
+       */
+      const appended: Block[] = []
+      if (reasoning !== '') appended.push({ type: 'reasoning', text: reasoning })
+      if (prose !== '') appended.push({ type: 'text', text: prose })
+      const blocks: Block[] = [...item.blocks, ...appended]
       // 兜底：消息里带的工具调用块先占位，`tool/call` 事件到了就地更新（不重复追加）。
       for (const call of assistantToolCalls(message.content)) {
         if (blocks.some(block => block.type === 'tool' && block.callId === call.callId)) continue
-        blocks.push({ type: 'tool', callId: call.callId, name: call.name, args: call.args, result: null, isError: false })
+        blocks.push({ type: 'tool', callId: call.callId, name: call.name, args: call.args, result: null, output: null, isError: false })
         draft.toolCalls += 1
       }
       updateAssistant(draft, { ...item, reasoning: item.reasoning + reasoning, blocks })
@@ -330,7 +351,7 @@ export async function readSessionHistory(options: {
         updateAssistant(draft, { ...item, blocks })
       } else {
         draft.toolCalls += 1
-        const block: ToolBlock = { type: 'tool', callId, name, args, result: null, isError: false }
+        const block: ToolBlock = { type: 'tool', callId, name, args, result: null, output: null, isError: false }
         updateAssistant(draft, { ...item, blocks: [...item.blocks, block] })
       }
       continue
@@ -346,16 +367,18 @@ export async function readSessionHistory(options: {
       const callId = typeof (first as { toolCallId?: unknown } | undefined)?.toolCallId === 'string'
         ? String((first as { toolCallId: string }).toolCallId)
         : ''
-      const summary = summarizeResult(message.content, isError)
+      const text = resultText(message.content)
+      const summary = summarizeResult(text, isError)
+      const output = clampToolOutput(text)
       let matched = false
       const blocks: Block[] = item.blocks.map((block) => {
         if (block.type !== 'tool' || block.callId !== callId) return block
         matched = true
-        return { ...block, result: summary, isError }
+        return { ...block, result: summary, output, isError }
       })
       // 结果先于调用（或调用事件缺失）：补一张卡片，信息别丢
       if (!matched) {
-        blocks.push({ type: 'tool', callId, name: '', args: '', result: summary, isError })
+        blocks.push({ type: 'tool', callId, name: '', args: '', result: summary, output, isError })
       }
       updateAssistant(draft, { ...item, blocks })
       continue

@@ -130,10 +130,8 @@
   --dsw-alias-interactive-bg-hover: rgba(255, 255, 255, 0.08);
   --dsw-alias-interactive-bg-active: rgba(255, 255, 255, 0.14);
 
-  /* 主按钮 = 强调色填充 + 白字（本版按 UI 规格把主色定为蓝紫） */
+  /* 品牌主色 = 蓝紫（喂给 Tailwind/shadcn 的 `--color-primary`） */
   --dsw-alias-brand-primary: var(--ym-accent);
-  --dsw-alias-button-primary-fill: var(--ym-accent);
-  --dsw-alias-button-primary-hover: rgb(140, 148, 236);
   --dsw-alias-link: var(--ym-accent-text);
 
   --dsw-alias-state-error-primary: var(--dsw-static-red-400);
@@ -471,12 +469,6 @@ html[data-platform="darwin"] .topbar {
 /* Windows 的 titleBarOverlay 占住右上角，给窗口控件留位 */
 html[data-platform="win32"] .topbar {
   padding-right: 148px;
-}
-
-.topbar__title {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--dsw-alias-label-primary);
 }
 
 .topbar__sub {
@@ -913,26 +905,6 @@ html[data-platform="darwin"] .sidebar__brand {
   background: var(--dsw-alias-interactive-bg-active);
 }
 
-/* primary：近白填充 + 深色字（这套 UI 的主按钮没有彩色） */
-.btn--primary {
-  background: var(--dsw-alias-button-primary-fill);
-  color: var(--dsw-alias-label-primary-foreground);
-  font-weight: 500;
-}
-
-.btn--primary:hover:not(:disabled) {
-  background: var(--dsw-alias-button-primary-hover);
-}
-
-.btn--stop {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-state-error-primary);
-}
-
-.btn--stop:hover:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-active);
-}
-
 .link {
   padding: 2px 6px;
   border: none;
@@ -1076,6 +1048,127 @@ html[data-platform="darwin"] .sidebar__brand {
 }
 
 .msg__meta--error { color: var(--dsw-alias-state-error-primary); }
+
+/* ── 一段思考（推理）────────────────────────────────────────────────────
+ *
+ * 语汇与工具行一致：一行「头 + 摘要」，点开才是正文。区别是正文**限高**：
+ *   · 流式期间 132px 并自动滚到底（只看最近几行，不把版面顶下去）；
+ *   · 展开历史思考 320px，超出自己滚。
+ * 宽度**吃满内容区**（老实现被上游写死 380px，推理只在左半边换行，右边一片空白）。
+ * ───────────────────────────────────────────────────────────────────── */
+
+.reasoning {
+  display: flex;
+  flex-direction: column;
+}
+
+.reasoning__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  padding: 0 6px 0 2px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.reasoning__head:hover { background: var(--hover-2); }
+
+.reasoning__icon {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  color: var(--ink-3);
+}
+
+/* 还在想：图标轻轻呼吸，和「正在生成…」的闪字同一种「活着」的感觉 */
+.reasoning__icon--live {
+  color: var(--ink-2);
+  animation: ym-reasoning-breathe 1.6s ease-in-out infinite;
+}
+
+@keyframes ym-reasoning-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reasoning__icon--live { animation: none; }
+}
+
+/* ⚠️ 这里**不要**写 color：流式期间标题是 `Shimmer`（渐变字，靠
+   `text-transparent` + `bg-clip-text`），而无层级的 app.css 规则会盖掉
+   Tailwind 分层里的 `text-transparent`，闪字就变成一坨实心字。
+   颜色只给「已经想完」的那档（`--done` 是普通 span）。 */
+.reasoning__title {
+  flex: none;
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.reasoning__title--done { color: var(--ink-3); }
+
+/* 折叠时露的那半句：占满剩余宽度，超出省略 */
+.reasoning__preview {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-3);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reasoning__chevron {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  margin-left: auto;
+  color: var(--ink-3);
+  opacity: 0;
+  transition: opacity 100ms var(--ds-ease-in-out), transform 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.reasoning__head:hover .reasoning__chevron { opacity: 1; }
+
+.reasoning__chevron--open {
+  opacity: 1;
+  transform: rotate(180deg);
+}
+
+.reasoning__grid {
+  display: grid;
+  transition: grid-template-rows 300ms cubic-bezier(0.23, 1, 0.32, 1), opacity 300ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.reasoning__clip { min-height: 0; overflow: hidden; }
+
+/* 正文：12.5px / 1.65，原样换行（推理里常有缩进与列表），左侧一条细轨 */
+.reasoning__body {
+  overflow-y: auto;
+  margin: 0 0 2px 7px;
+  padding: 2px 8px 2px 11px;
+  border-left: 1px solid var(--line);
+  color: var(--ink-2);
+  font-size: 12.5px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 
 /* ══════════════════════════════════════════════════════════════════════════
    8. 输入区（对齐 InputBar 卡片 + 官方 token 胶囊）
@@ -1434,16 +1527,25 @@ html[data-platform="darwin"] .sidebar__brand {
 }
 
 
-/* ── 轨迹视图：容器 + 空态 ─────────────────────────────────────────────
+/* ── 轨迹视图：自绘时间线 ─────────────────────────────────────────────
  *
- * 真正的时间线构件是 Beautiful UI 的 `TaskRows`（见 `components/trace.tsx`），
- * 这里只留容器与空态。
+ * 语汇与消息流里完全一致：左侧一条竖轨 + 6px 圆点表状态，行高 28px、
+ * 字号 12.5px、圆角 `--radius-control`（和工具行一模一样）。
+ *
+ * 为什么不用官方 `TaskRows` 了（用它时的三条毛病，改之前先看一眼）：
+ *   · 绿色对勾徽章 + 绿色「完成」药丸是 TODO 清单的语汇，而这个界面里绿色
+ *     只表示「diff 新增行」—— 突然冒出绿勾像是别的 App 塞进来的；
+ *   · 44px 的 surface 卡片行 + 徽章 + 药丸 + 数字挤在一起，和消息流的 24/28px
+ *     行高差一倍，一屏看不了几步；
+ *   · 具体内容的列宽不固定，长短一变整行就跳。
+ * 现在：状态用**圆点颜色**（灰=已完成 / 紫=进行中 / 红=失败），不要徽章不要药丸；
+ * 角色、名称、参数、结果各占固定一列，上下对齐。
  * ───────────────────────────────────────────────────────────────────── */
 
 .trace {
   display: flex;
   flex-direction: column;
-  gap: 0;
+  gap: 1px;
 }
 
 .trace__empty {
@@ -1452,9 +1554,166 @@ html[data-platform="darwin"] .sidebar__brand {
   font-size: 12.5px;
 }
 
-/* TaskRows 的 List 变体自带 surface 卡 + 分隔线，这里只压一下圆角 */
-.trace__tasks {
-  border-radius: var(--radius-card);
+.trace__row {
+  position: relative;
+}
+
+/* 一行：角色 / 名称 / 参数 / 结果 / 箭头。高度与消息流里的工具行一致 */
+.trace__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 28px;
+  padding: 0 6px 0 2px;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.trace__head:hover { background: var(--hover-2); }
+
+/* 竖轨：整行贯穿，首尾两行各收一半，让线从第一个点长到最后一个点 */
+.trace__rail {
+  position: relative;
+  align-self: stretch;
+  flex: none;
+  width: 14px;
+}
+
+.trace__rail::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  background: var(--line);
+  transform: translateX(-50%);
+}
+
+.trace__row:first-child .trace__rail::before { top: 50%; }
+.trace__row:last-child .trace__rail::before { bottom: 50%; }
+
+/* 状态点：已完成最淡（它只是「这里有过一步」），进行中紫色呼吸，失败红色 */
+.trace__dot {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  border-radius: 999px;
+  background: var(--line-strong);
+}
+
+.trace__dot--running {
+  background: var(--accent);
+  animation: ym-trace-pulse 1.4s ease-in-out infinite;
+}
+
+.trace__dot--failed { background: var(--red); }
+
+@keyframes ym-trace-pulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 var(--accent-tint); }
+  50% { opacity: 0.55; box-shadow: 0 0 0 3px var(--accent-tint); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .trace__dot--running { animation: none; }
+}
+
+/* 角色列：定宽，保证所有行的名称列左边缘对齐。
+   48px 是按最长的那个角色（「目标调整」4 个汉字 @11px ≈ 44px）量出来的，
+   再窄就会顶到下一列。 */
+.trace__kind {
+  flex: none;
+  width: 48px;
+  color: var(--ink-3);
+  font-size: 11px;
+}
+
+.trace__label {
+  flex: none;
+  max-width: 34%;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 参数列：等宽小药丸（bash 就是那条命令），超宽省略、hover 有 title */
+.trace__chip {
+  flex: none;
+  max-width: 42%;
+  overflow: hidden;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--radius-chip);
+  background: var(--field);
+  box-shadow: var(--shadow-hairline);
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 结果列：输出首行，占满剩余宽度 */
+.trace__summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-3);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trace__summary--failed { color: var(--red); }
+
+.trace__chevron {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  color: var(--ink-3);
+  opacity: 0;
+  transition: opacity 100ms var(--ds-ease-in-out), transform 200ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.trace__head:hover .trace__chevron,
+.trace__head[aria-expanded='true'] .trace__chevron { opacity: 1; }
+
+/* 明细：与对话里工具行的明细同一套语法（左竖线 + 等宽 + 原文换行），超长自己滚 */
+.trace__detail-grid {
+  display: grid;
+  transition: grid-template-rows 300ms cubic-bezier(0.23, 1, 0.32, 1), opacity 300ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.trace__detail-clip { min-height: 0; overflow: hidden; }
+
+.trace__detail {
+  max-height: 320px;
+  margin: 0 0 4px 16px;
+  padding: 2px 0 2px 12px;
+  overflow-y: auto;
+  border-left: 1px solid var(--line);
+  color: var(--ink-2);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 
@@ -1739,15 +1998,6 @@ html[data-platform="darwin"] .sidebar__brand {
 /* 预览里的 markdown 比对话正文小一档：面板窄，字号跟着收 */
 .preview__content .sd { font-size: 12.5px; }
 .preview__content .sd pre { font-size: 11.5px; }
-
-.preview__pre {
-  margin: 0;
-  color: var(--dsw-alias-label-secondary);
-  font-size: 11.5px;
-  line-height: 17px;
-  white-space: pre-wrap;
-  word-break: break-word;
-}
 
 .preview__img {
   display: block;
@@ -2555,13 +2805,6 @@ html[data-platform="darwin"] .sidebar__brand {
   max-width: 60%;
   overflow: hidden;
   vertical-align: middle;
-}
-
-/* Shimmer 是 `bg-clip-text` + 渐变文字：行内使用时要跟着上下文的字号与颜色走 */
-.msg__meta .shimmer,
-.sidebar__footer .shimmer {
-  font: inherit;
-  color: inherit;
 }
 
 /* 启动中的空态：把他们的 LoadingState 摆中间 */

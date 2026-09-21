@@ -70,9 +70,8 @@ app/desktop/
       ../tool-names.ts     工具 → 中文功能名 / 说明（纯表 + 兜底规则；`@` 菜单用）
       editor/              Tiptap：chip 节点、文档↔文本、触发符规则、suggestion 插件、扩展集
       message.tsx          一条会话条目（用户/助手/提示/纠偏；带 data-item-id）
-      tool-card.tsx        工具调用卡片
-      file-card.tsx        文件卡片（主体=预览，右侧「打开」走 shell.openPath）
-      trace.tsx            轨迹视图：按角色分色的时间线（可折叠长步骤）
+      tool-run.tsx         一段连续工具调用（ToolChips 的数据装配 + chip 点开预览）
+      trace.tsx            轨迹视图：按圆点分状态的时间线（可折叠长步骤）
       message-rail.tsx     右侧会话刻度尺（等距短横线 + 白色长横条 + 滚轮/点击/拖动）
       message-rail-model.ts 上面那把尺子的**纯逻辑**（indexAt / rulerShift，可 Node 里跑）
       preview-panel.tsx    右侧预览面板（报告 / 代码 / 图片 / 文本 / 最近文件）
@@ -96,6 +95,18 @@ app/desktop/
 与 `isHostEvent`（后者写 TS 时又**真的需要**了，于是带着真实调用点回来了）、CSS 里 7 条
 `.tokenbar*`（旧版统计条）与 `.sidebar__label*` / `.project-tree` / `.project__path` / `.stack`
 （旧侧栏结构）以及没人用的 `--ds-transition-duration-slow`。
+
+**再清理掉的一批**（同样逐个查过引用）：`atoms/StreamText.tsx`（整份 —— 上游的流式文字
+构件没接进界面）、`icons.tsx` 里「轨迹按角色分色」时代的 8 个图标（`IconUser` / `IconReasoning`
+/ `IconReply` / `IconTool` / `IconBug` / `IconNote` / `IconShell` / `IconGoal`，轨迹改成圆点配
+色后就没有宿主了）、`options.ts` 的 `isSupportedModel`、`mcp-config.ts` 的 `serializeMcpConfig`、
+`Button.tsx` 的 `ButtonVariant` 类型、`menu.tsx` 没人传的 `triggerClassName` / `className`；
+CSS 侧删掉 `.topbar__title`、`.btn--primary` / `.btn--stop`（连同只为它们存在的
+`--dsw-alias-button-primary-fill` / `-hover` 两支令牌）、`.preview__pre`（纯文本预览改走
+`CodeBlock` 后失效）、`.msg__meta .shimmer`（`Shimmer` 用的是内联渐变，`shimmer` 这个类名
+从来没落到元素上），以及 `foundation.css` 里所有**没有落盘构件**的 COMPONENT-SPECIFIC 块
+（StreamingText / FilterTable / InsightCards / RecordsTable / component nav / `primitive-*`
+间距 / `theme-switching` / `.home-reveal` / `eq-bounce`）—— 见 vendored README 的改动表。
 
 > 唯一保留的 `.js` 是 `app/opencli/**`：opencli 只发现 `~/.opencli/clis/<site>/<命令>.js`，
 > **不认 `.ts`**（见 `app/opencli/README.md`），所以它们的归属单独放在 `tsconfig.js.json`。
@@ -192,7 +203,7 @@ app/desktop/
 | `sidebar-cylinder.ts` 柱面粒子 | `tsParticles` / `particles.js` / `three.js` | 粒子库都是「发射器 + 生命周期」模型，做不出「整段柱面按角度投影、切成网格、随鼓面滚动」这种**几何驱动**的效果。引 three.js 能画，但为了一层背景多 600KB 与一整套 3D 概念不划算 |
 | `mention-menu.tsx` 的候选列表 | `cmdk` / `downshift` | 触发匹配与键盘（↑↓/Enter/Tab/Esc）**已经由 Tiptap 的 suggestion 插件负责**，菜单只是一个列表。引入 combobox 库会和编辑器抢焦点与按键，反而要写更多胶水 |
 | `use-agent.ts` 的 reducer | `zustand` / `jotai` / Redux | 状态只有「一条事件流 → 一棵状态树」，`useReducer` 是 React 原生解法；换状态库只增加概念，不减少代码 |
-| `message.tsx` / `tool-card.tsx` / `file-card.tsx` / `trace.tsx` | 无 | 它们是**这个产品的语义**（回合、工具调用、文件卡片、轨迹），没有通用组件可替 |
+| `message.tsx` / `tool-run.tsx` / `trace.tsx` | 无 | 它们是**这个产品的语义**（回合、工具调用 run、轨迹），没有通用组件可替 |
 | `message-rail.tsx` 会话刻度尺 | 没有对口货（`react-scrollspy` / `rc-slider` / 各种 minimap） | scrollspy 只给「当前在哪一节」，不给「点刻度跳过去 + 尺子自己滑」；`rc-slider` 是**表单控件**（取值 0~100），语义完全不对。这里要的是「一把可滚动的尺子」，几何与选中规则都是自己的 |
 | `main.ts` 的窗口材质 / 菜单 / 单实例 | 无 | 都是 Electron 原生 API 的直接用法，没有中间层可省 |
 
@@ -402,7 +413,8 @@ app.whenReady().then(() => { /* … */ })
 | `PromptBar`（712 行） | 它是**展示件**：自带 `<textarea>`、自播放 walkthrough（`demo`）、`glimm` 的 WebGL 扫光、Figma/Slack/Gmail 品牌标；嵌进来就得放弃 Tiptap（被明确要求保留） | 取它的**字段样式**（`border-line` + `bg-surface` + `shadow-card` + 14px 圆角 + `focus-within:border-line-strong`）套在我们的 `.composer__box` 上 |
 | `ChatComposer` | 它是「消息列表 + 输入框」的整块演示（`ChatMessage` 是 demo 数据） | 只用它的视觉语言；消息流仍走我们的归约器与 Streamdown |
 | `SidebarNav` | 它是固定主导航（Home/Invite/Settings）+ **扁平** recents；我们的侧栏是「项目 → 会话」两级树（跨项目、可折叠、懒加载） | 取它的侧栏外观与交互（搜索字段、行样式、折叠态），树的结构与逻辑保留（阶段 4） |
-| `ThinkingState` / `ToolChips` | 可复用，但内建**演示时序**（定时逐条放行、固定最小高、自动展开） | vendored 补丁加 `live` / `working` / `expanded` / `compact`，真实数据驱动（见 vendored README 改动表） |
+| `ToolChips` | 可复用，但内建**演示时序**（定时逐条放行、固定最小高、自动展开） | vendored 补丁加 `live` / `compact` / `preview`，真实数据驱动（见 vendored README 改动表） |
+| `ThinkingState` | 补不动了：宽度写死 380px、行 key 用文本本身（流式时每个 delta 重建元素，`fade-up` 从 opacity 0 重播 → 整块看着是**空白**，也就是「没有流式输出」的真相）、整段推理挤成一行 | **自研** `components/reasoning.tsx`：吃满内容区、流式限高 132px 并自动滚到底、结束自动收起成一行「思考了 N 字」、点开看全文；上游那份已删除 |
 
 ### ⚠️ 一次自己造成的样式事故（以及为什么现在有 `npm run audit:css`）
 
@@ -453,12 +465,12 @@ app.whenReady().then(() => { /* … */ })
 | --- | --- | --- |
 | 0 | foundation 令牌 + 字体 + 暗色开关；`lib/utils.ts`（`cn`）+ atoms 落盘 | ✅ |
 | 1 | 原生构件替换：`Button`（发送/停止/设置/预览按钮）、`ValuePill`（统计行）、`EntityChip`（项目/会话徽标）、`Shimmer`（运行中） | 🔄 已接 Button + ValuePill |
-| 2 | 对话面板：`ThinkingState`（推理）、`ToolChips`（工具调用 run，行内明细 + chip 点开预览）；`tool-card.tsx` / `file-card.tsx` 与它们的 CSS 已删 | ✅ |
+| 2 | 对话面板：~~`ThinkingState`（推理）~~ → 改为自绘 `components/reasoning.tsx`（吃满宽度、流式限高、结束自动收起，见 §6）、`ToolChips`（工具调用 run，行内明细 + chip 点开预览）；`tool-card.tsx` / `file-card.tsx` 与它们的 CSS 已删 | ✅ |
 | 2b | `CodeBlock`：预览面板的**纯文本 / 日志**已接入（行号 + 文件名头 + 一键复制）；工具结果暂仍在 ToolChips 行内（要全文去预览面板） | 🔄 |
 | 3 | 输入区与浮层：输入框外壳照 `PromptBar` 的字段样式（`border-line` / `bg-surface` / `shadow-card` / 14px 圆角 / 聚焦转 `line-strong`），编辑内核仍是 Tiptap；三个下拉与 `@` `/` 候选菜单统一到 `surface + line + 10px + shadow-raised`，触发按钮直接用他们 `Button` 的 `quiet/xs` 变体 | ✅ |
 | 4 | 侧栏：取 `SidebarNav` 的观感（品牌行 14px/ink-2、新会话 = 它的 CTA 规格、搜索字段 `bg-field` + `shadow-hairline`、行高亮 7px/`hover-2`、当前项 `hover`/`ink`、计数 tabular-nums、状态点用 `--green/--red`）+ 项目行首字母圆牌（`Monogram`）；**树的结构与逻辑保留**（它是扁平的 recents，装不下两级树）。柱面粒子背景保留 | ✅ |
 | 5 | 右侧：预览面板换成 foundation 层级（面板底 = `--canvas`、描边 `--line`、角标 = `accent-tint/accent-ink`、列表行 7px + `hover-2`、头部按钮改用他们的 `Button`）+ 新增「复制全文」；纯文本 / 日志走 `CodeBlock`（代码与报告仍 Streamdown）；刻度尺换成 `--accent / --ink-2 / --orange / --green` 分类色、当前刻度 = `--ink`、提示框 = `surface + line + raised` | ✅ |
-| 6 | 轨迹页改用 `TaskRows`（行 = 一步，状态 = 完成/进行中/失败，可展开明细；补丁加了 `failed` 与 `live`）；设置面板按 foundation 令牌重写（模态 + 页签 + 行 + 编辑器 + 标签），按钮改用他们的 `Button` | ✅ |
+| 6 | 轨迹页：**自绘时间线**（行 = 一步，状态用 6px 圆点的颜色表完成/进行中/失败，可展开完整明细）。~~先用上游 `TaskRows`~~ —— 它的绿勾徽章 / 绿药丸 / 44px 卡片行是 TODO 清单的语汇，与消息流格式对不上，已被用户否掉并删除该文件；设置面板按 foundation 令牌重写（模态 + 页签 + 行 + 编辑器 + 标签），按钮改用他们的 `Button` | ✅ |
 | 7 | 收尾：`Shimmer`（生成中/运行中的文字）、`EntityChip`（搜索结果里的项目）、`LoadingState`（冷启动的「正在启动内核」）；清理 13 个确认无人引用的变量；新增 `npm run audit:css`；打包验证（`npm run package` 产物实测启动正常） | ✅ |
 
 **迁移已完成。** 现在这套界面的分工是：
@@ -466,9 +478,9 @@ app.whenReady().then(() => { /* … */ })
 | 层 | 来自 |
 | --- | --- |
 | 设计令牌（颜色/描边/圆角/阴影/字体/关键帧） | Beautiful UI `foundation.css`（vendored）+ 我们对 `--accent` 一族的品牌色覆盖 |
-| 原生构件 | `atoms/`：`Button` / `EntityChip`(+`Monogram`) / `ValuePill` / `Shimmer` / `StreamText` |
-| 区块构件 | `primitives/`：`ThinkingState`（推理）/ `ToolChips`（工具 run）/ `TaskRows`（轨迹）/ `CodeBlock`（文本预览与日志）/ `LoadingState`（冷启动） |
-| 继续自研 | 会话刻度尺、通用浮层菜单（`menu.tsx`）、侧栏柱面粒子背景、`MessageRail` 的几何 |
+| 原生构件 | `atoms/`：`Button` / `EntityChip`(+`Monogram`) / `ValuePill` / `Shimmer` |
+| 区块构件 | `primitives/`：`ToolChips`（工具 run）/ `CodeBlock`（文本预览与日志）/ `LoadingState`（冷启动） |
+| 继续自研 | 思考块（`reasoning.tsx`）、轨迹时间线（`trace.tsx`）（这两处上游的 `ThinkingState` / `TaskRows` 都已删除）、会话刻度尺、通用浮层菜单（`menu.tsx`）、侧栏柱面粒子背景、`MessageRail` 的几何 |
 | 明确不换 | Tiptap 编辑器内核、Streamdown markdown 渲染 |
 
 验证入口：`npm run typecheck`、`npm run build:renderer`、`npm run audit:css`、
@@ -535,6 +547,10 @@ app.whenReady().then(() => { /* … */ })
 { kind: 'assistant', turnId, reasoning, blocks[], meta }
 ```
 
+助手条目的 `blocks` 里现在有**三种**块：`reasoning`（一段思考）、`text`（正文）、`tool`（工具调用）。
+推理按位置排在 blocks 里，所以「思考 → 动作 → 再思考」是照着真实顺序画的；
+`item.reasoning` 只是整回合推理的拼接，**渲染不要用它**（用就会把所有思考堆回消息最上方）。
+
 助手条目的 `blocks` 是**有序**的，于是「先说话 → 调工具 → 再说话」被如实还原：
 
 ```
@@ -548,9 +564,9 @@ blocks: [ {type:'text', text:'我先看目录。'}
 | `ready` | 状态置 ready，侧栏拿到模型 / 会话 / 目录 / 凭据 / 工具 |
 | `restarting` | 清空会话，状态回到启动中 |
 | `text-delta` | 追加到**最后一个** text 块；上一个动作是工具就新起一块 |
-| `reasoning-delta` | 追加到 `reasoning` |
+| `reasoning-delta` | 追加到 `blocks` 末尾的**推理块**（末尾不是推理块就新起一块 → 「想一段 → 做一步 → 再想一段」按真实位置排布）；同时拼进 `reasoning`（只给刻度尺摘要用） |
 | `tool-call` | push 一个 `tool` 块（`result: null` = 运行中） |
-| `tool-result` | 按 `callId` 回填；找不到对应调用就补一张卡片，不丢信息 |
+| `tool-result` | 按 `callId` 回填 `result`（一行摘要）与 `output`（**完整输出**，上限 `TOOL_OUTPUT_LIMIT`）；找不到对应调用就补一张卡片，不丢信息 |
 | `turn-end` | 写 `meta`（结论 + 工具次数），解除忙碌 |
 | `notice` / `fatal` / `host-error` | 追加系统提示；致命错误把状态切成不可用 |
 | `workspace` | 刷新侧栏的项目 / 会话清单（就绪后、每轮结束、以及界面主动请求时各来一次） |

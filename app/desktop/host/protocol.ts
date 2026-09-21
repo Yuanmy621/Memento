@@ -37,17 +37,64 @@ export interface TextBlock {
   readonly text: string
 }
 
+/**
+ * 助手思考（推理）块 —— **按位置排在 `blocks` 里**，不是整回合的一坨。
+ *
+ * 为什么要有这个类型：真实回合是「想一段 → 说一句/调个工具 → 再想一段」，
+ * 推理与动作**交替**发生。早先把整回合的推理拼成一个字符串、统一画在消息最上方，
+ * 于是所有思考堆在开头，看不出「哪段思考导致了哪一步动作」，长回合里还会在顶部
+ * 压出一大块。现在推理像正文一样按到达顺序落成块，位置天然正确。
+ *
+ * 流式期间同一个块的 `text` 会持续增长（归约器把增量接在最后一段推理后面）。
+ */
+export interface ReasoningBlock {
+  readonly type: 'reasoning'
+  readonly text: string
+}
+
 /** 一次工具调用（`result === null` 表示还在跑）。 */
 export interface ToolBlock {
   readonly type: 'tool'
   readonly callId: string
   readonly name: string
   readonly args: string
+  /**
+   * 一行摘要（`summarizeResult` 的口径）：首行 + `(N 行)` + `exit N`。
+   * 折叠状态下就显示这一行 —— 所以它必须短。
+   */
   readonly result: string | null
+  /**
+   * 完整输出（保留换行），点击展开时看的就是它。
+   *
+   * 为什么要单独一份：`result` 是给人扫读的**一行**摘要，原来的实现只有它，
+   * 于是 bash 那几十行输出在界面上**无处可看**（用户报的「展示残缺」就是这个）。
+   * 长度由 host 侧 {@link TOOL_OUTPUT_LIMIT} 兜底，超了会在末尾补一行说明。
+   */
+  readonly output: string | null
   readonly isError: boolean
 }
 
-export type Block = TextBlock | ToolBlock
+/**
+ * 单次工具输出传给界面的上限（字符）。
+ *
+ * 内核自己也会截（bash 是每路 64 KB，截尾并给 spill 文件路径），所以正常情况根本到不了；
+ * 这一层只是防止某个工具一口气吐回几十万字符把渲染进程撑爆 —— 超了就截断并**明说**截了。
+ */
+export const TOOL_OUTPUT_LIMIT = 100_000
+
+/**
+ * 把工具输出裁到 {@link TOOL_OUTPUT_LIMIT}。
+ *
+ * 截断必须**看得见**：末尾补一行说明，否则界面上「点开只有一半」会被当成 bug。
+ * @param text - 原始输出（已保留换行）。
+ * @returns 可直接存进 {@link ToolBlock.output} 的文本。
+ */
+export function clampToolOutput(text: string): string {
+  if (text.length <= TOOL_OUTPUT_LIMIT) return text
+  return `${text.slice(0, TOOL_OUTPUT_LIMIT)}\n…（输出过长，已截断：完整 ${String(text.length)} 字符，只传了前 ${String(TOOL_OUTPUT_LIMIT)}）`
+}
+
+export type Block = TextBlock | ReasoningBlock | ToolBlock
 
 /** 回合结论。 */
 export interface TurnMeta {
@@ -77,6 +124,12 @@ export interface AssistantItem {
   readonly kind: 'assistant'
   /** 尚未认领主进程的 turnId 时为 null。 */
   readonly turnId: string | null
+  /**
+   * 整回合推理的**拼接**（只有摘要用途：右侧刻度尺的提示框、轨迹的兜底）。
+   *
+   * 界面渲染**不要**用它 —— 推理按位置存在 `blocks` 里的 {@link ReasoningBlock} 中，
+   * 用这个字段画就会把所有思考又堆回消息最上方。
+   */
   readonly reasoning: string
   readonly blocks: readonly Block[]
   /** null 表示这一回合还在进行。 */
@@ -407,7 +460,10 @@ export type HostEvent =
     readonly turnId: string
     readonly callId: string
     readonly name: string
+    /** 一行摘要（折叠时显示）。 */
     readonly summary: string
+    /** 完整输出（点击展开时显示），上限见 {@link TOOL_OUTPUT_LIMIT}。 */
+    readonly output: string
     readonly isError: boolean
   }
   /** 回合结束；`text` 是流式增量的权威汇总，界面可用它校正正文。 */

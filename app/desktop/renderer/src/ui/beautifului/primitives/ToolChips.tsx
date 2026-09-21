@@ -5,7 +5,15 @@
  *   · `live`    —— 行立刻全出来（上游按 700ms 一条演示浮现，真实会话里数据已经在了）；
  *   · `compact` —— 去掉 220px 的演示最小高度（消息流里会撑出空白）；
  *   · 没有 diff 时不再渲染「文件 diff 页脚 + `+N more`」那一块；
- *   · 行 key 用下标（真实数据里同一次 run 可能连续调同一个工具，label 会重复）。
+ *   · 行 key 用下标（真实数据里同一次 run 可能连续调同一个工具，label 会重复），
+ *     展开状态也改成**按下标**记 —— 上游按 label 记，两次 bash 会一起展开；
+ *   · `preview` —— 行尾一行灰字（工具输出的首行）。折叠时就看这一行，
+ *     点开才给全文：一次 `npm run build` 的输出是几十行，全铺在消息流里没法看；
+ *   · 明细**不再 `truncate`**：按原文换行（`whitespace-pre-wrap break-words`）、
+ *     超长自己滚（`max-h-[320px] overflow-y-auto`）。上游是「一行一条 + 省略号」，
+ *     真实输出一多就全是省略号，等于没给（用户报的「展示残缺」就是这个）；
+ *   · 明细内容**首次展开才挂载**（`everOpen`）：一次 run 里十几个工具、每个几十 KB，
+ *     全量挂进 DOM 会拖慢消息流。
  */
 
 import { useEffect, useState } from "react";
@@ -37,6 +45,8 @@ export type ToolStep = {
   mono: boolean;
   detailMono: boolean;
   detail: ToolDetailLine[];
+  /** VENDORED PATCH：行尾的一行预览（工具输出的首行，折叠时就看它）。 */
+  preview?: string;
 };
 
 export type ToolDiff = { file: string; add: number; del: number };
@@ -149,7 +159,10 @@ export default function ToolChips({
   const copy = { ...DEFAULT_LABELS, ...labels };
   const [step, setStep] = useState(0);
   const [open, setOpen] = useState(true);
-  const [openRows, setOpenRows] = useState<Set<string>>(new Set());
+  /* VENDORED PATCH：展开状态按下标记（同一次 run 里两次 bash 的 label 一样，
+     按 label 记会一点开全开）；`everOpen` 记「展开过一次」的行，明细首次展开才挂载。 */
+  const [openRows, setOpenRows] = useState<Set<number>>(new Set());
+  const [everOpen, setEverOpen] = useState<Set<number>>(new Set());
   /* Rendered in a body portal so animated/translated reply wrappers cannot
    * redefine the fixed-position coordinate system. */
   const [preview, setPreview] = useState<{
@@ -183,13 +196,17 @@ export default function ToolChips({
   /** VENDORED PATCH：实时模式下「已经显示几行」就是全部行。 */
   const shown = live ? steps.length : step;
 
-  const toggleRow = (label: string) =>
+  /** VENDORED PATCH：按行下标切换展开（并记下「展开过」，明细据此懒挂载）。 */
+  const toggleRow = (index: number, label: string) => {
     setOpenRows((current) => {
       const next = new Set(current);
-      next.has(label) ? next.delete(label) : next.add(label);
-      onToggleRow?.(label, next.has(label));
+      const willOpen = !next.has(index);
+      willOpen ? next.add(index) : next.delete(index);
+      onToggleRow?.(label, willOpen);
       return next;
     });
+    setEverOpen((current) => (current.has(index) ? current : new Set(current).add(index)));
+  };
 
   return (
     <div className={`w-full pb-1 ${compact ? "" : "min-h-[220px] max-w-80"}${className ? ` ${className}` : ""}`}>
@@ -218,7 +235,7 @@ export default function ToolChips({
         <div className="-mx-1 overflow-hidden px-1.5 pb-1">
         <div className="mt-1.5 flex flex-col gap-1">
           {steps.slice(0, shown).map((row, rowIndex) => {
-            const rowOpen = openRows.has(row.label);
+            const rowOpen = openRows.has(rowIndex);
             return (
             <div key={`${row.label}#${String(rowIndex)}`} style={{ animation: "fade-up 300ms cubic-bezier(0.23,1,0.32,1) both" }}>
               <div
@@ -228,8 +245,8 @@ export default function ToolChips({
                   type="button"
                   aria-expanded={rowOpen}
                   aria-label={rowOpen ? `收起 ${row.label} 的明细` : `展开 ${row.label} 的明细`}
-                  onClick={() => toggleRow(row.label)}
-                  className="flex min-w-0 items-center gap-2 rounded-control text-left"
+                  onClick={() => toggleRow(rowIndex, row.label)}
+                  className="flex min-w-0 shrink-0 items-center gap-2 rounded-control text-left"
                 >
                 <span className="relative flex size-4 shrink-0 items-center justify-center text-ink-3">
                   <svg
@@ -252,12 +269,20 @@ export default function ToolChips({
                   type="button"
                   onClick={() => onChipActivate?.(rowIndex, row)}
                   title={onChipActivate === undefined ? row.chip : `${row.chip}（点击打开）`}
-                  className={`inline-flex h-5.5 min-w-0 flex-1 items-center truncate rounded-chip bg-field px-1.5
+                  className={`inline-flex h-5.5 min-w-0 max-w-[52%] shrink items-center rounded-chip bg-field px-1.5
                     text-left text-[11.5px] text-ink-2 shadow-hairline transition-colors duration-100 hover:bg-hover-2
                     ${row.mono ? "font-mono" : ""}`}
                 >
                   <span className="truncate">{row.chip}</span>
                 </button>
+                {/* VENDORED PATCH：输出首行预览。折叠时它是这一行唯一的「结果」，
+                    点开行才换成一整块可滚的原文；用 span 占满剩余宽度，右侧对齐不跳。 */}
+                <span
+                  className={`min-w-0 flex-1 truncate text-[11.5px] ${row.preview === undefined || row.preview === "" ? "" : row.detailMono ? "font-mono" : ""} text-ink-3`}
+                  title={row.preview}
+                >
+                  {row.preview}
+                </span>
               </div>
 
               {/* expanded detail */}
@@ -266,14 +291,15 @@ export default function ToolChips({
                 style={{ gridTemplateRows: rowOpen ? "1fr" : "0fr", opacity: rowOpen ? 1 : 0, transitionTimingFunction: "cubic-bezier(0.23, 1, 0.32, 1)" }}
               >
                 <div className="min-h-0 overflow-hidden">
-                  <div className="mt-0.5 mb-1 ml-2 flex flex-col gap-0.5 border-l border-line py-0.5 pl-3.5">
-                    {row.detail.map((line) => (
-                      <span
-                        key={line.text}
-                        className={`truncate text-[11.5px] leading-[1.6] ${row.detailMono ? "font-mono" : ""} ${line.tone === "add" ? "text-green" : "text-ink-2"}`}
+                  {/* VENDORED PATCH：不截断、按原文换行、超长自己滚 */}
+                  <div className="mt-0.5 mb-1 ml-2 flex max-h-[320px] flex-col gap-1 overflow-y-auto border-l border-line py-0.5 pl-3.5">
+                    {(rowOpen || everOpen.has(rowIndex) ? row.detail : []).map((line, lineIndex) => (
+                      <div
+                        key={`${line.text.slice(0, 32)}#${String(lineIndex)}`}
+                        className={`whitespace-pre-wrap break-words text-[11.5px] leading-[1.6] ${row.detailMono ? "font-mono" : ""} ${line.tone === "add" ? "text-green" : "text-ink-2"}`}
                       >
                         {line.text}
-                      </span>
+                      </div>
                     ))}
                   </div>
                 </div>

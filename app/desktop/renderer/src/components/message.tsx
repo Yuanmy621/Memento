@@ -20,7 +20,7 @@ import { memo, type ReactElement } from 'react'
 import { RichText } from './rich-text.tsx'
 import { Markdown } from '../markdown.tsx'
 import { ToolRun } from './tool-run.tsx'
-import ThinkingState from '../ui/beautifului/primitives/ThinkingState.tsx'
+import { Reasoning } from './reasoning.tsx'
 import { Shimmer } from '../ui/beautifului/atoms/Shimmer.tsx'
 import { type AssistantItem, type Item, type ToolBlock, type TurnMeta, type TurnOutcome } from '../use-agent.ts'
 
@@ -44,19 +44,30 @@ function metaText(meta: TurnMeta | null): string {
 }
 
 /**
- * 助手消息的渲染顺序：推理（ThinkingState）→ 正文与工具调用交替。
+ * 助手消息的渲染顺序：**严格按 blocks 的顺序**（推理 → 正文 → 工具 → 再推理…）。
  *
- * 工具块**连续出现时合成一次 run**（`ToolRun`）—— 上游的 ToolChips 就是「一次 run 的
- * 工具清单」，一个个单独渲染会把它的折叠页眉重复 N 遍。
+ * 两个刻意的设计：
+ *   1. 工具块**连续出现时合成一次 run**（`ToolRun`）—— 上游的 ToolChips 就是「一次 run 的
+ *      工具清单」，一个个单独渲染会把它的折叠页眉重复 N 遍；
+ *   2. 推理**不再统一拎到消息最上方**（老实现如此）：它是 blocks 里的一种块，按真实位置
+ *      渲染，于是「想一段 → 做一步 → 再想一段」的结构被如实还原，而不是顶部堆一大坨。
  */
 const AssistantMessage = memo(function AssistantMessage({ item, onPreview }: {
   readonly item: AssistantItem
   readonly onPreview: (path: string) => void
 }): ReactElement {
   const streaming = item.meta === null
-  /** 把 blocks 切成「正文段」与「工具 run 段」，保持原有顺序。 */
-  const segments: ({ kind: 'text'; text: string } | { kind: 'tools'; blocks: ToolBlock[] })[] = []
+  /** 把 blocks 切成「推理段 / 正文段 / 工具 run 段」，保持原有顺序。 */
+  type Segment =
+    | { kind: 'reasoning'; text: string }
+    | { kind: 'text'; text: string }
+    | { kind: 'tools'; blocks: ToolBlock[] }
+  const segments: Segment[] = []
   for (const block of item.blocks) {
+    if (block.type === 'reasoning') {
+      segments.push({ kind: 'reasoning', text: block.text })
+      continue
+    }
     if (block.type === 'text') {
       segments.push({ kind: 'text', text: block.text })
       continue
@@ -65,30 +76,20 @@ const AssistantMessage = memo(function AssistantMessage({ item, onPreview }: {
     if (last !== undefined && last.kind === 'tools') last.blocks.push(block)
     else segments.push({ kind: 'tools', blocks: [block] })
   }
-  // 推理按空行切段：ThinkingState 的 Reasoning 变体是「一行一段话」的排法
-  const reasoningRows = item.reasoning
-    .split(/\n{2,}/)
-    .map((line) => line.trim())
-    .filter((line) => line !== '')
-    .map((line) => ({ primary: line }))
 
   return (
     <div className="msg--assistant" data-item-id={item.id}>
-      {item.reasoning !== '' && (
-        <ThinkingState
-          live
-          variant="Reasoning"
-          rows={reasoningRows}
-          working={streaming}
-          expanded={streaming}
-          active="正在推理…"
-          done={streaming ? '正在推理…' : `推理了 ${String(reasoningRows.length)} 段`}
-        />
-      )}
-
-      {segments.map((segment, index) => (
-        segment.kind === 'tools'
-          ? (
+      {segments.map((segment, index) => {
+        if (segment.kind === 'reasoning') {
+          /**
+           * 只有**最后一段**且回合还在跑时才算「正在思考」—— 否则一个回合里
+           * 历史上每一段思考都会显示成正在流式。
+           */
+          const live = streaming && index === segments.length - 1
+          return <Reasoning key={`reasoning-${String(index)}`} text={segment.text} live={live} />
+        }
+        if (segment.kind === 'tools') {
+          return (
             <ToolRun
               key={`tools-${String(index)}`}
               blocks={segment.blocks}
@@ -96,15 +97,16 @@ const AssistantMessage = memo(function AssistantMessage({ item, onPreview }: {
               onPreview={onPreview}
             />
           )
-          : <Markdown key={`text-${String(index)}`}>{segment.text}</Markdown>
-      ))}
+        }
+        return <Markdown key={`text-${String(index)}`}>{segment.text}</Markdown>
+      })}
 
       <div
         className={`msg__meta${item.meta?.outcome === 'error' ? ' msg__meta--error' : ''}`}
       >
         {/* 还没跑完：用他们的 Shimmer 做「活的」文字，比一串静止的「正在生成…」更像在动 */}
         {item.meta === null ? <Shimmer>正在生成…</Shimmer> : metaText(item.meta)}
-        {streaming && item.blocks.length === 0 && item.reasoning === '' && ' …'}
+        {streaming && item.blocks.length === 0 && ' …'}
       </div>
     </div>
   )

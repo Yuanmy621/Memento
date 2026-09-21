@@ -10,10 +10,10 @@
  * | Enter / Space 选中、Esc 关闭 | Esc 关掉后**焦点回到触发器**，接着按方向键还能再打开 |
  * | `role="menu"` / `menuitem` + `aria-haspopup` / `aria-expanded` | 读屏软件靠它知道「这是一个菜单、现在开着」 |
  * | 点外面关掉（`pointerdown` 监听，不用整屏遮罩） | 遮罩会挡住底下的一切交互，而且它本身只是个「点了就关」的 hack |
- * | 向上 / 向下弹、贴哪一边、限高滚动 | 底栏的菜单必须往上弹；工具清单一屏放不下要能滚 |
+ * | 向上 / 向下弹、贴哪一边、限高滚动 | 输入区那三个下拉在底部，必须往上弹；条目多了一屏放不下要能滚 |
  *
  * 为什么不用 Radix / headless 那类库：**输入框那一侧不能用**（`@` 候选菜单必须由编辑器
- * 持有焦点与按键，库会和 ProseMirror 抢）；而为了侧栏一个菜单单独引一套依赖不划算。
+ * 持有焦点与按键，库会和 ProseMirror 抢）；为输入区三个下拉单独引一套依赖也不划算。
  * 这份实现只有两百来行，行为边界清楚。真要继续加菜单（右键菜单、子菜单）时，
  * 再按 README「自研 vs 成熟组件」里那条建议整体换 Radix 更划算。
  *
@@ -70,10 +70,6 @@ export interface MenuProps {
   readonly align?: 'start' | 'end'
   /** 菜单宽度（像素）。 */
   readonly width?: number
-  /** 整份替换触发器的 class（例如侧栏底栏要的不是药丸按钮而是 `.link`）。 */
-  readonly triggerClassName?: string
-  /** 追加在触发器上的 class。 */
-  readonly className?: string
 }
 
 /** 菜单里可以落焦点的行（跳过整段说明那种不可点的行）。 */
@@ -177,7 +173,7 @@ export function Menu(props: MenuProps): ReactElement {
       <button
         type="button"
         ref={triggerRef}
-        className={props.triggerClassName ?? cn(buttonVariants({ variant: 'quiet', size: 'xs' }), 'menu__trigger no-drag')}
+        className={cn(buttonVariants({ variant: 'quiet', size: 'xs' }), 'menu__trigger no-drag')}
         aria-haspopup="menu"
         aria-expanded={open}
         disabled={props.disabled ?? false}

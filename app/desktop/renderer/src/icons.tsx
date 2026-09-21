@@ -19,11 +19,10 @@
  */
 
 import {
-  ArrowLeft, Brain, ChevronDown, CircleAlert, Clock, Coins, Copy, ExternalLink,
-  FileCode, FileImage, FileQuestionMark, FileText, FolderOpen, Info, ListTree,
-  LoaderCircle, MessageSquare, MessagesSquare, PanelRightClose, PanelRightOpen, Plus,
-  Repeat, Search, SendHorizontal, ShieldCheck, SquareTerminal, Target,
-  User, Wrench, X,
+  ArrowLeft, ChevronDown, Clock, Coins, Copy, ExternalLink,
+  FileCode, FileImage, FileQuestionMark, FileText, FolderOpen, ListTree,
+  LoaderCircle, MessageSquare, PanelRightClose, PanelRightOpen, Plus,
+  Repeat, Search, SendHorizontal, ShieldCheck, Sparkles, X,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import type { ReactElement } from 'react'
@@ -60,22 +59,14 @@ export const IconTurns = icon(Repeat)
 export const IconClose = icon(X)
 export const IconCopy = icon(Copy)
 export const IconSpinner = icon(LoaderCircle)
+/** 思考（推理）的头图标：和输入框里的 `@` 提示语同一套「闪一下」的语汇。 */
+export const IconSparkle = icon(Sparkles)
 
 // ── 标签栏 / 面板 ───────────────────────────────────────────────────────────
 export const IconChat = icon(MessageSquare)
 export const IconTrace = icon(ListTree)
 export const IconPanelOpen = icon(PanelRightOpen)
 export const IconPanelClose = icon(PanelRightClose)
-
-// ── 轨迹（按角色区分）────────────────────────────────────────────────────────
-export const IconUser = icon(User)
-export const IconReasoning = icon(Brain)
-export const IconReply = icon(MessagesSquare)
-export const IconTool = icon(Wrench)
-export const IconBug = icon(CircleAlert)
-export const IconNote = icon(Info)
-export const IconShell = icon(SquareTerminal)
-export const IconGoal = icon(Target)
 
 // ── 预览面板（按文件类型区分）───────────────────────────────────────────────
 export const IconCodeFile = icon(FileCode)

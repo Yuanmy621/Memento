@@ -27,8 +27,8 @@ CJS 加载器，不认识 TS —— 它**静默失败**，界面只会说「prel
 
 **当前状态（已迁移完成）**：令牌全部来自 foundation；构件用它的
 `Button/EntityChip/ValuePill/Shimmer`（atoms）与
-`ThinkingState/ToolChips/TaskRows/CodeBlock/LoadingState`（primitives）；
-Tiptap 与 Streamdown 只换外壳；刻度尺 / 浮层菜单 / 柱面粒子仍是自研。
+`ToolChips/CodeBlock/LoadingState`（primitives）；
+Tiptap 与 Streamdown 只换外壳；思考块 / 轨迹时间线 / 刻度尺 / 浮层菜单 / 柱面粒子是自研。
 下面四条是改这块时必须记住的：
 
 界面构件来自 <https://www.beautifului.dev/>（MIT）：源码在
@@ -46,10 +46,11 @@ Tiptap 与 Streamdown 只换外壳；刻度尺 / 浮层菜单 / 柱面粒子仍�
    ⚠️ **删 CSS 只按选择器删，别按行区间删**，删完必须跑 `npm run audit:css`：
    这个仓库踩过一次「按区间删轨迹样式，连带删掉菜单/提及/统计/token/chip 的活样式」——
    编译与类型检查都不报错，只有界面没样式。
-5. **上游有四个构件是「展示件」不是可嵌组件**（`PromptBar` 自带 textarea + 自播放 walkthrough + glimm 扫光；
-   `ChatComposer` 是整块消息列表 demo；`SidebarNav` 是扁平 recents；`ThinkingState`/`ToolChips` 内建演示时序）。
-   前三个只取**样式/结构**，第四个用 vendored 补丁的 `live`/`working`/`expanded`/`compact` 改成数据驱动 —— 取舍表在
-   README「5.5 界面底座」里。
+5. **上游有一批构件是「展示件」不是可嵌组件**（`PromptBar` 自带 textarea + 自播放 walkthrough + glimm 扫光；
+   `ChatComposer` 是整块消息列表 demo；`SidebarNav` 是扁平 recents；`ToolChips` 内建演示时序）。
+   前三个只取**样式/结构**，`ToolChips` 用 vendored 补丁的 `live`/`compact`/`preview` 改成数据驱动；
+   `ThinkingState`（推理）与 `TaskRows`（轨迹）**已经删掉换成自研**（`components/reasoning.tsx` /
+   `components/trace.tsx`）—— 取舍表与原因在 README「5.5 界面底座」里。
 
 ## 先记住：渲染进程需要构建
 
@@ -97,7 +98,7 @@ Tailwind **只为已定义的 token 生成工具类**，缺了会被静默丢掉
 把这一整套别名都映射到了项目色板。**改配色时别删这些别名。**
 
 组件里不要堆 Tailwind 工具类：Tailwind 是给 Streamdown 用的，自己的组件用语义类
-（`.sidebar` / `.tool-card` / `.tokenbar` …）。要加类就写在 `styles/app.css`。
+（`.sidebar` / `.composer__box` / `.session` …）。要加类就写在 `styles/app.css`。
 
 ## 工作台布局与「哪些控件是真的」
 
@@ -116,9 +117,10 @@ Tailwind **只为已定义的 token 生成工具类**，缺了会被静默丢掉
 
 文件卡片由 `fileActionOf()` 从工具名 + 参数认出：**点卡片主体 = 右侧预览面板看内容**
 （`IPC.previewRead`），点「打开」= 主进程 `shell.openPath`。轨迹视图走 `traceSteps()`
-纯函数把 `state.items` 摊平，按角色分色（`--trace-tone` / `--trace-fill` 两个变量下发）。
-这几处都是纯函数，改动后自己走一遍：打开一个带工具调用的回合，确认文件卡片、
-预览面板、轨迹三步都对得上。
+纯函数把 `state.items` 摊平（每步给 `label` / `token` / `preview` / `detail` 四样），
+`components/trace.tsx` 画成时间线：状态靠**圆点颜色**（`.trace__dot--done/--running/--failed`），
+不要徽章与药丸。这几处都是纯函数，改动后自己走一遍：打开一个带工具调用的回合，
+确认工具行、预览面板、轨迹三步都对得上。
 
 ### `@` 菜单：中文功能名 + 通用菜单组件
 
@@ -250,6 +252,35 @@ if (view.composing || ime.isImeKeyNative(event)) return false
 给会话记录加新条目类型时（`SteerItem` 就是这么加的）：协议里加进 `Item` 联合类型 →
 `use-agent.ts` 的 `traceSteps()` 加分支（否则轨迹里会漏）→ `components/trace.tsx` 的
 `KIND_LABEL` 补标签（那个 Record 是穷尽的，漏了会编译报错，是好事）→ `message.tsx` 渲染。
+
+## 推理（思考）：按位置排、流式限高、结束自动收起
+
+三条硬约束，改这块时别破坏（都是用户点名的问题）：
+
+1. **推理是 `blocks` 里的一种块**（`ReasoningBlock`），不是整回合拼成一个字符串。
+   归约器的 `appendReasoning()` 只把增量接到**末尾那块推理**上；中间夹了正文/工具就新起一块。
+   用 `item.reasoning`（整回合拼接，只给刻度尺摘要）渲染 = 所有思考又堆回消息最上方。
+   回放路径（`history.ts`）同样按日志里的块顺序落 reasoning / text / tool。
+2. **宽度吃满内容区**。上游 `ThinkingState` 写死 `max-w-95`（380px），推理只在左半边换行，
+   右边一片空白、块还被拉得特别长。
+3. **流式期间限高 + 自动滚底**，结束自动收起成一行「思考了 N 字」（点开看全文，限高 320px）。
+   上游的行 key 用的是**文本本身**，流式时每个 delta 都换 key → React 重建元素 →
+   `fade-up` 从 `opacity: 0` 重播 → 整块看着是空白（用户报的「没有流式输出」就是这个）。
+   文本节点的 key 必须稳定（按块的位置），增量只让文本变长。
+
+自检口径（真窗口）：流式期间 `.reasoning__body` 的 `opacity` 应为 1、`maxHeight` 132px、
+`scrollTop` 贴着底、`textContent.length` 持续变大；回合结束后 `aria-expanded="false"`、
+`gridTemplateRows` 为 `0px`；一段推理的行高是 28px。
+
+## 工具输出：折叠看首行，点开看全文
+
+`tool-result` 帧同时带两样东西：`summary`（一行摘要，`summarizeResult` 的口径）和
+`output`（**完整输出**，`clampToolOutput` 兜底到 `TOOL_OUTPUT_LIMIT`）。折叠的工具行
+显示 `output` 的**首行**（`ToolChips` 的 `preview`）+ 完整参数 chip；点行展开的是
+**不截断**的原文（`whitespace-pre-wrap` + `max-h-[320px] overflow-y-auto`），
+明细首次展开才挂载。改这块时别退回「8 行 + 省略号」：真实 bash 输出几十行，
+那样等于什么都没给（用户报的「展示残缺」）。回放路径（`history.ts`）必须一起给
+`output`，否则切会话以后点开是空的 —— 两条路径共用 `clampToolOutput()`。
 
 ## 指令 token 的样式：纯文本要染色，Markdown 不要碰
 
