@@ -3,11 +3,12 @@
 `app/mcp/` 放的是**本项目自己带的 MCP 服务器** —— 它们不依赖 YuanMy 的 TS 类型，
 只是普通的标准输入输出 JSON-RPC 进程，谁都能拉起（Claude Desktop、官方 DSH CLI 都行）。
 
-当前有一个：
+当前有两个（都是**只读**的 SRC 侦察工具）：
 
 | 名字 | 目录 | 说明 |
 | --- | --- | --- |
-| `butian` | [`butian/`](./butian/README.md) | 补天（butian.net）只读接口：项目大厅、排行榜、平台数字、个人中心 |
+| `butian` | [`butian/`](./butian/README.md) | 补天（butian.net）：项目大厅、排行榜、平台数字、个人中心 |
+| `vulbox` | [`vulbox/`](./vulbox/README.md) | 漏洞盒子（vulbox.com）12 个只读工具：企业 SRC 大厅、门户资产范围/规则/公告、排行榜、帮助中心、账号自检。**注意**：某个 SRC 的资产范围要先在门户「加入项目」才可见 |
 
 ## 怎么接到 YuanMy 上
 
@@ -19,7 +20,9 @@
 
 ```bash
 YuanMy_MCP=butian npm start              # CLI 挂补天
-npm run desktop:butian                   # 桌面端挂补天
+YuanMy_MCP=vulbox npm start              # CLI 挂漏洞盒子
+YuanMy_MCP=butian:vulbox npm start       # 两个一起挂
+npm run desktop:vulbox                   # 桌面端挂漏洞盒子（desktop:src = 两个都挂）
 YuanMy_MCP=butian:my-thing npm start     # 再挂一个工作目录里的自定义 server
 ```
 
@@ -42,8 +45,10 @@ MCP 客户端会用**清洗过的父环境**起子进程：`KEY` / `PASSWORD` / 
 （`mcpSpecs()` 的 `forwardEnv` 就是干这个的）—— 这也是为什么 `BUTIAN_COOKIE`
 被显式列进去，而不是指望它自己继承。
 
-> `BUTIAN_COOKIE` 恰好不在清洗规则里（规则不匹配 `COOKIE`），但**别依赖这个巧合**：
-> 哪天规则加一个 `COOKIE`，登录会悄无声息地失效。
+> `BUTIAN_COOKIE` / `VULBOX_COOKIE` 恰好不在清洗规则里（规则不匹配 `COOKIE`），
+> 但**别依赖这个巧合**：哪天规则加一个 `COOKIE`，登录会悄无声息地失效。
+> 两个 server 的凭据文件名也不一样：`~/.YuanMy/butian-cookie.txt` 与
+> `~/.YuanMy/vulbox-cookie.txt`（都能用 `*_COOKIE_FILE` 换路径）。
 
 ## 依赖：这个插件的版本线是错位的
 

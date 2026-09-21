@@ -164,6 +164,21 @@ export function availableMcpSpecs(cwd: string): Record<string, McpSpec> {
       title: '补天 butian.net（只读）',
       origin: 'builtin',
     },
+    vulbox: {
+      serverName: 'vulbox',
+      transport: 'stdio',
+      command: process.execPath,
+      args: [
+        '--experimental-strip-types',
+        '--disable-warning=ExperimentalWarning',
+        join(here, '..', 'mcp', 'vulbox', 'server.ts'),
+      ],
+      // 同 butian：MCP 客户端用清洗过的环境起子进程，凭据必须显式转发。
+      // `VULBOX_COOKIE_FILE` 是给「凭据不放在默认路径」的人用的（冒烟测试也用它）。
+      forwardEnv: ['VULBOX_COOKIE', 'VULBOX_COOKIE_FILE', 'VULBOX_PORTAL'],
+      title: '漏洞盒子 vulbox.com（只读）',
+      origin: 'builtin',
+    },
     // 工作目录里的自定义 MCP server：`<cwd>/.YuanMy/mcp/<名字>.ts`
     ...customMcpSpecs(cwd),
   }

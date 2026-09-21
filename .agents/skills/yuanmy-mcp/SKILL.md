@@ -14,10 +14,20 @@ description: 往 YuanMy 上接 MCP 服务器的固定套路 —— 内核怎么�
 
 ```bash
 YuanMy_MCP=butian npm start          # CLI
-npm run desktop:butian               # 桌面端（= YuanMy_MCP=butian npm run desktop）
+YuanMy_MCP=vulbox npm start          # CLI（漏洞盒子，第二个内置 server）
+npm run desktop:vulbox               # 桌面端；desktop:src = 补天 + 漏洞盒子一起
 ```
 
-名字写错只警告不报错。
+名字写错只警告不报错。仓库自带两个：`app/mcp/butian` 与 `app/mcp/vulbox`，
+各自的 README 里有「接口是怎么挖出来的」与实测表。
+
+## 企业 SRC 的「登录了但读不到范围」不是 bug
+
+漏洞盒子这一档踩到的坑，值得记住这个模式：门户接口对**未加入项目**的账号会
+`code: 301001 暂无权限`，范围字段 `assets.content` 是空串且 `accessible = 4`，
+而 `user-info` 甚至回 `logged: false`（**主站明明登录着** —— 门户侧是另一套判定）。
+所以错误分类要多一档 `forbidden`，提示落到「去门户点加入项目」，而不是让模型以为
+Cookie 过期了、反复重配凭据。判据：`/暂无权限|无权限/` → `forbidden`。
 
 ## 加一个服务器：两条路，都不用改代码（第二条）
 
@@ -41,8 +51,10 @@ butian: {
 }
 ```
 
-`BUTIAN_COOKIE` 恰好不匹配那条正则（不含 KEY/PASSWORD/SECRET/TOKEN），
+`BUTIAN_COOKIE` / `VULBOX_COOKIE` 恰好不匹配那条正则（不含 KEY/PASSWORD/SECRET/TOKEN），
 但**别依赖这个巧合**：哪天 DSH 把 `COOKIE` 加进规则，就会静默失效。
+转发列表里连 `*_COOKIE_FILE` / `*_PORTAL` 这类**非凭据但影响行为**的变量也一起写上
+（漏洞盒子用 `VULBOX_PORTAL` 选门户），否则用户在 shell 里设了却不生效，很难查。
 
 给凭据留后路：让服务器**自己也读一个文件**（如 `~/.YuanMy/butian-cookie.txt`），
 这样用户不用把密钥塞进 shell 环境、也能手工调试。同时提供
