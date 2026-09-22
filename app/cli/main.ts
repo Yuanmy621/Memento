@@ -9,7 +9,7 @@
  * @module Memento/main
  */
 
-import { installApiKey, fingerprint } from './credentials.ts'
+import { installApiKey, installCredentials, PLUGIN_CREDENTIAL_REFS, fingerprint } from './credentials.ts'
 import { helpText, parseOptions, UsageError, type Options } from './options.ts'
 
 /** 退出码约定：0 成功，1 回合失败，2 用法错误，130 被信号中断。 */
@@ -37,6 +37,11 @@ async function main(): Promise<number> {
 
   // 1) 先安装凭据：内核里的 DeepSeek adapter 会在请求时从启动环境快照读取它。
   const credential = installApiKey()
+
+  // 1b) 插件要的额外 key（system-one 的 TYPESAFE_API_KEY）：消费方同样是
+  //     `process.env[名字]`，所以在载入内核之前一起装好。缺了不算错误 ——
+  //     对应工具被调用时才报错，插件挂载时会自己打一行警告。
+  installCredentials(PLUGIN_CREDENTIAL_REFS)
 
   // 2) 再延迟加载内核（此时环境已经就绪），所有工具的相对路径都以 --cwd 为基准。
   const [{ bootKernel, listTools }, { runOneShot, runRepl, printMissingCredential }, { printBanner }] = await Promise.all([

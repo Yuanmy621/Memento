@@ -21,7 +21,7 @@
 
 import { readFile, readdir, stat } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
-import { installApiKey, fingerprint } from '../../cli/credentials.ts'
+import { installApiKey, installCredentials, PLUGIN_CREDENTIAL_REFS, fingerprint } from '../../cli/credentials.ts'
 import { parseOptions, EFFORTS, SUPPORTED_MODELS, UsageError, type Effort, type Options } from '../../cli/options.ts'
 import { readSessionHistory } from './history.ts'
 import { expandCommand, listCommands, matchCommand } from '../../cli/commands.ts'
@@ -173,6 +173,12 @@ async function main(): Promise<void> {
 
   // ── 2. 先装凭据：DeepSeek adapter 从启动环境快照里按变量名取 key ────────
   const credential = installApiKey()
+
+  // ── 2b. 插件要的额外 key（system-one 的 TYPESAFE_API_KEY）──────────────
+  // 桌面端**从 Finder/Dock 启动时拿不到 shell 的 export**，所以这一步尤其重要：
+  // 它让 `~/.dsh/.credentials.yaml` 成为打包形态下唯一还能生效的配置来源。
+  // 缺了不算错误：插件挂载时会自己打警告，工具被调用时才报错。
+  installCredentials(PLUGIN_CREDENTIAL_REFS)
 
   // ── 3. 再延迟载入内核（此时环境已就绪）─────────────────────────────────
   const [kernelModule, { DesktopBridge }, { createUserMessage, ReasoningEffortId }] = await Promise.all([

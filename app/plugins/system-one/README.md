@@ -11,6 +11,21 @@ TYPESAFE_API_KEY=apikey_xxx npm start                       # 必配，否则 sy
 TYPESAFE_BASE_URL=... TYPESAFE_MODEL=jev-latest npm start   # 可选，默认官方地址/jev-latest
 ```
 
+### key 配在哪：两个来源，先到先用
+
+| 来源 | 怎么填 | 什么时候用 |
+| --- | --- | --- |
+| 环境变量 | `export TYPESAFE_API_KEY=apikey_xxx` | 从终端启动（`npm start` / `npm run desktop`），最直接 |
+| DSH 凭据库 | `~/.dsh/.credentials.yaml` 的 `refs:` 段加一行 `TYPESAFE_API_KEY: apikey_xxx` | **从 Finder / Dock 双击 .app 启动时唯一还能生效的方式** —— macOS GUI 应用的环境来自 launchd，读不到你 shell 的 `export` |
+
+两个启动入口（`app/cli/main.ts` 与 `app/desktop/host/index.ts`）都会在**内核起来之前**
+调 `installCredentials()`，把能解析到的 ref 写回 `process.env`。名字清单只有一处
+（`app/cli/credentials.ts` 的 `PLUGIN_CREDENTIAL_REFS`），所以插件本身只认变量名，
+不需要知道 key 是从哪儿来的。
+
+⚠️ `TYPESAFE_BASE_URL` / `TYPESAFE_MODEL` **只认环境变量**，不走凭据库
+（凭据库是给 secret 用的，这两个不是）。
+
 挂上之后工具表里多两个：`sysone_ask` / `sysone_compose`。
 
 ## 为什么接它（上游的设计逻辑，不是 API 包装）
@@ -48,7 +63,8 @@ Jev 把「判断」做成一等公民：给一份 **state** 和一组**带类型
 
 - 调用形态：`POST {baseUrl}/v1/systemone`，一次请求答全部问题（上游：加问题几乎不增耗时）；
 - 概率含义：**标定过**（calibration 是训练目标），所以输出恒为 `calibrated=true`；
-- 配置：`TYPESAFE_API_KEY` 必配；`TYPESAFE_BASE_URL` / `TYPESAFE_MODEL` 可选；
+- 配置：`TYPESAFE_API_KEY` 必配（环境变量，或 `~/.dsh/.credentials.yaml` 的 `refs:` 段，
+  见上文）；`TYPESAFE_BASE_URL` / `TYPESAFE_MODEL` 可选且**只认环境变量**；
 - 失败语义：没配 key、401/403、429、网络错误、上游结构异常 → 工具**直接报错**，
   并把原因和下一步提示原样给模型；没有重试、没有降级、没有本地兜底。
 

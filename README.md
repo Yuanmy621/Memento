@@ -331,7 +331,9 @@ ctx.tools.register(defineTool({
 的分工搬进来：**模型给判断（带概率与置信度），代码做决策**。
 
 - `sysone_ask` —— 一份 state + 一组原子问题（`choice` / `score` / `noul`），一次请求
-  全部评估，直接走官方 Jev；`TYPESAFE_API_KEY` 没配或调用失败就明确报错，**没有本地兜底**；
+  全部评估，直接走官方 Jev；`TYPESAFE_API_KEY` 没配或调用失败就明确报错，**没有本地兜底**
+  （key 可给环境变量，或写进 `~/.dsh/.credentials.yaml` 的 `refs:` 段 —— 后者是双击 .app
+  启动时唯一生效的方式，见 `app/plugins/system-one/README.md`）；
 - `sysone_compose` —— 确定性组合：加权总分（Composite scoring）或置信度门控路由
   （`act` / `review` / `escalate`），**不再花 token**。
 
