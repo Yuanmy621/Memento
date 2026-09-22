@@ -24,7 +24,7 @@
  * 2. **不碰 Markdown**：助手正文走 Markdown 渲染（模型自己会用 `` ` `` 包住工具名）。
  *    这里只处理**纯文本**的地方：用户消息、目标调整、工具参数摘要、轨迹明细。
  *
- * @module YuanMy/desktop/renderer/src/components/rich-text-tokens
+ * @module Memento/desktop/renderer/src/components/rich-text-tokens
  */
 
 /** 一个片段的类型。 */

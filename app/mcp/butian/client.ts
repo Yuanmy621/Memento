@@ -44,7 +44,7 @@
  * `token` 会随会话轮换：真过期时接口仍回 `no token`，此时 {@link callApi} 会清掉
  * 缓存并归类成 `auth` 错误，下一次调用就会自动重新抓一个。
  *
- * @module YuanMy/mcp/butian/client
+ * @module Memento/mcp/butian/client
  */
 
 /** 站点根。所有接口路径都相对它。 */
@@ -54,7 +54,7 @@ const BASE = 'https://www.butian.net'
 const TIMEOUT_MS = 20_000
 
 /** 统一 UA。补天对空 UA / 明显脚本 UA 偶发拦截，带一个正常的。 */
-const USER_AGENT = 'YuanMy-Agent/0.1 (+https://github.com/) butian-mcp'
+const USER_AGENT = 'Memento-Agent/0.1 (+https://github.com/) butian-mcp'
 
 /** 失败的种类，决定给模型/用户的提示怎么写。 */
 export type ButianErrorKind =

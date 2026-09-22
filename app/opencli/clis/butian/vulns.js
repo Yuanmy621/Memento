@@ -9,7 +9,7 @@
  * 做 SRC 时的典型用法：`opencli butian vulns --status 4`（看已完结的）、
  * `--status 1`（看还在审核的）、`--title 某厂商`（按厂商筛）。
  *
- * @module YuanMy/opencli/clis/butian/vulns
+ * @module Memento/opencli/clis/butian/vulns
  */
 
 import { cli, Strategy } from '@jackwener/opencli/registry'

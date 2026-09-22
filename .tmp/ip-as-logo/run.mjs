@@ -32,17 +32,17 @@ const CONCURRENCY = 3;
 /** 同步接口一次 40–50 秒；给 5 分钟上限，免得某一枪挂住把整批拖死。 */
 const PER_REQUEST_MS = 300_000;
 
-/** 读 API key：环境变量 → ~/.YuanMy/senseaudio.key → 本目录 .key（兜底）。 */
+/** 读 API key：环境变量 → ~/.Memento/senseaudio.key → 本目录 .key（兜底）。 */
 function readKey() {
   const fromEnv = process.env.SENSEAUDIO_API_KEY;
   if (fromEnv !== undefined && fromEnv.trim() !== '') return fromEnv.trim();
-  for (const file of [path.join(os.homedir(), '.YuanMy', 'senseaudio.key'), path.join(DIR, '.key')]) {
+  for (const file of [path.join(os.homedir(), '.Memento', 'senseaudio.key'), path.join(DIR, '.key')]) {
     try {
       const value = fs.readFileSync(file, 'utf8').trim();
       if (value !== '') return value;
     } catch { /* 换下一个位置 */ }
   }
-  console.error('找不到 API key：设 SENSEAUDIO_API_KEY，或写 ~/.YuanMy/senseaudio.key（chmod 600）');
+  console.error('找不到 API key：设 SENSEAUDIO_API_KEY，或写 ~/.Memento/senseaudio.key（chmod 600）');
   process.exit(2);
 }
 

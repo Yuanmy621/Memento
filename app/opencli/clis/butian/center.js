@@ -5,7 +5,7 @@
  * 这条接口是个人中心的「一次性汇总」，等级、积分、荣誉币、漏洞数、认证状态都在里面，
  * 所以一个命令就能看清账号现状。
  *
- * @module YuanMy/opencli/clis/butian/center
+ * @module Memento/opencli/clis/butian/center
  */
 
 import { cli, Strategy } from '@jackwener/opencli/registry'

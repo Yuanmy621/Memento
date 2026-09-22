@@ -3,15 +3,15 @@
  *
  * 这个文件只被 **主进程**（`main.ts`）引用。渲染进程拿不到它 ——
  * 渲染进程与主进程之间的唯一通道是 `preload.cjs`（由 `preload.ts` 构建而来）
- * 通过 `contextBridge` 暴露的 `window.YuanMy`，那是刻意设计的单向收口：
+ * 通过 `contextBridge` 暴露的 `window.Memento`，那是刻意设计的单向收口：
  *
- *   渲染进程（网页）── window.YuanMy ──▶ preload ──IPC──▶ 主进程 ──▶ agent host
+ *   渲染进程（网页）── window.Memento ──▶ preload ──IPC──▶ 主进程 ──▶ agent host
  *
  * ⚠️ 频道名同时出现在三处：本文件、`preload.ts`（构建成**沙箱 preload**，
  * 不能 require 本地文件，只能自带字面量）、以及渲染进程调用的方法名。
  * 改名字要一起改；漏改的表现是渲染进程 invoke 报 "No handler registered"。
  *
- * @module YuanMy/desktop/ipc
+ * @module Memento/desktop/ipc
  */
 
 import type { HostEvent, HostReadyInfo } from './host/protocol.ts'
@@ -19,47 +19,47 @@ import type { HostEvent, HostReadyInfo } from './host/protocol.ts'
 /** 全部 IPC 频道名（`invoke/handle` 用请求-响应，`send` 用单向事件）。 */
 export const IPC = Object.freeze({
   /** 渲染进程 → 主进程：取当前 shell / agent 状态。 */
-  state: 'YuanMy:state',
+  state: 'Memento:state',
   /** 主进程 → 渲染进程：agent host 推来的事件（单向）。 */
-  hostEvent: 'YuanMy:host-event',
+  hostEvent: 'Memento:host-event',
   /** 渲染进程 → 主进程：发起一个回合。 */
-  prompt: 'YuanMy:prompt',
+  prompt: 'Memento:prompt',
   /** 渲染进程 → 主进程：中断当前回合。 */
-  cancel: 'YuanMy:cancel',
+  cancel: 'Memento:cancel',
   /** 渲染进程 → 主进程：运行中切换模型。 */
-  setModel: 'YuanMy:set-model',
+  setModel: 'Memento:set-model',
   /** 渲染进程 → 主进程：运行中切换推理强度。 */
-  setEffort: 'YuanMy:set-effort',
+  setEffort: 'Memento:set-effort',
   /** 渲染进程 → 主进程：打开原生目录选择框。 */
-  pickDirectory: 'YuanMy:pick-directory',
+  pickDirectory: 'Memento:pick-directory',
   /** 渲染进程 → 主进程：切到某个会话（可能直接挂回活着的 host，也可能起一个新的）。 */
-  attach: 'YuanMy:attach',
+  attach: 'Memento:attach',
   /** 渲染进程 → 主进程：用新的配置重启**当前会话**的内核。 */
-  restart: 'YuanMy:restart',
+  restart: 'Memento:restart',
   /** 渲染进程 → 主进程：新建一个空会话（重启 host，不恢复旧会话）。 */
-  newSession: 'YuanMy:new-session',
+  newSession: 'Memento:new-session',
   /** 渲染进程 → 主进程：让 host 重新扫描落盘会话。 */
-  listSessions: 'YuanMy:list-sessions',
+  listSessions: 'Memento:list-sessions',
   /** 渲染进程 → 主进程：让当前会话重放一次历史（界面重载后补内容）。 */
-  replayHistory: 'YuanMy:replay-history',
+  replayHistory: 'Memento:replay-history',
   /** 渲染进程 → 主进程：用系统默认程序打开一个文件。 */
-  openPath: 'YuanMy:open-path',
+  openPath: 'Memento:open-path',
   /** 渲染进程 → 主进程：读某个项目的会话明细（侧栏里点开折叠的项目）。 */
-  listProjectSessions: 'YuanMy:list-project-sessions',
+  listProjectSessions: 'Memento:list-project-sessions',
   /** 渲染进程 → 主进程：中途调整目标（插给正在跑的回合，不排队）。 */
-  steer: 'YuanMy:steer',
+  steer: 'Memento:steer',
   /** 渲染进程 → 主进程：要一批 `#` 候选文件（结果以 `files` 事件回来）。 */
-  listFiles: 'YuanMy:list-files',
+  listFiles: 'Memento:list-files',
   /** 渲染进程 → 主进程：要一次设置数据（skill / 命令 / MCP，结果以 `settings` 事件回来）。 */
-  settingsList: 'YuanMy:settings-list',
+  settingsList: 'Memento:settings-list',
   /** 渲染进程 → 主进程：读一个配置文件（设置界面的编辑器用；只允许白名单目录）。 */
-  settingsRead: 'YuanMy:settings-read',
+  settingsRead: 'Memento:settings-read',
   /** 渲染进程 → 主进程：写一个配置文件（同上）。 */
-  settingsWrite: 'YuanMy:settings-write',
+  settingsWrite: 'Memento:settings-write',
   /** 渲染进程 → 主进程：Electron / Node / 应用版本信息。 */
-  appInfo: 'YuanMy:app-info',
+  appInfo: 'Memento:app-info',
   /** 渲染进程 → 主进程：读一个文件用于**右侧预览面板**（有类型判断与体积上限）。 */
-  previewRead: 'YuanMy:preview-read',
+  previewRead: 'Memento:preview-read',
 })
 
 /**
@@ -99,7 +99,7 @@ export interface ShellState {
 }
 
 /**
- * 「切到某个会话」的请求（`YuanMy:attach`）。
+ * 「切到某个会话」的请求（`Memento:attach`）。
  *
  * 为什么需要它，而不是一个「重启」：用户在一个会话跑着任务时切走，
  * 那个任务**不该被停掉**。所以主进程按会话持有 host，切走只是换前台；

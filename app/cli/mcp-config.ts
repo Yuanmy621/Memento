@@ -6,10 +6,10 @@
  * | 来源 | 位置 | 说明 |
  * | --- | --- | --- |
  * | 内置 | `app/cli/kernel.ts` 的 `mcpSpecs()` | 仓库自带的（补天） |
- * | 项目目录 | `<cwd>/.YuanMy/mcp/<名字>.{ts,js}` | 丢个文件进去就是一个 server |
- * | **配置文件** | `<cwd>/.YuanMy/mcp.json` | 本模块管的：显式开关（`enabled: true` 才挂）+ 可用内联定义覆盖 |
+ * | 项目目录 | `<cwd>/.Memento/mcp/<名字>.{ts,js}` | 丢个文件进去就是一个 server |
+ * | **配置文件** | `<cwd>/.Memento/mcp.json` | 本模块管的：显式开关（`enabled: true` 才挂）+ 可用内联定义覆盖 |
  *
- * 优先级：配置文件 > 项目目录 > 内置。`$YuanMy_MCP`（冒号分隔的名字）仍然有效，
+ * 优先级：配置文件 > 项目目录 > 内置。`$Memento_MCP`（冒号分隔的名字）仍然有效，
  * 它是「临时开一个」的快捷方式；配置里显式 `enabled: true` 才是持久开关。
  *
  * ## 配置文件长什么样
@@ -36,7 +36,7 @@
  * ⚠️ 写坏了（JSON 语法错）不能把内核搞崩：{@link readMcpConfig} 只记录错误并返回空表，
  * 由调用方决定要不要提示。设置界面会把这个错误显示出来。
  *
- * @module YuanMy/cli/mcp-config
+ * @module Memento/cli/mcp-config
  */
 
 import { existsSync, readFileSync } from 'node:fs'
@@ -76,7 +76,7 @@ export interface McpConfig {
 
 /** 配置文件相对工作目录的位置。 */
 export function mcpConfigPath(cwd: string): string {
-  return join(cwd, '.YuanMy', 'mcp.json')
+  return join(cwd, '.Memento', 'mcp.json')
 }
 
 /** 把未知值收紧成字符串数组。 */

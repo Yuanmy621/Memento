@@ -9,7 +9,7 @@
  * | --- | --- | --- |
  * | 技能 | `.agents/skills/<名字>/SKILL.md` | 正文与 frontmatter（含调用政策） |
  * | 命令 | `.agents/commands/<名字>.md` | 指令正文、`include` 内联哪些文件 |
- * | MCP | `<cwd>/.YuanMy/mcp.json` | 开关、启动参数（改完要重启内核） |
+ * | MCP | `<cwd>/.Memento/mcp.json` | 开关、启动参数（改完要重启内核） |
  *
  * 所以这里不做「表单化的字段编辑」，而是老老实实给一个文本框 —— 反正这些东西
  * 本来就该写 Markdown / JSON，表单反而会挡住 frontmatter 和注释。
@@ -22,7 +22,7 @@
  * 2. **解析失败要显形**：`SKILL.md` 的 frontmatter 写坏时内核只 warn 一句就忽略，
  *    表现是「文件明明在、技能却不生效」。列表里那条 ⚠ 就是拦这个的。
  *
- * @module YuanMy/desktop/renderer/src/components/settings-panel
+ * @module Memento/desktop/renderer/src/components/settings-panel
  */
 
 import { useEffect, useState, type ReactElement } from 'react'
@@ -294,7 +294,7 @@ export function SettingsPanel(props: SettingsPanelProps): ReactElement {
 
         <footer className="setmodal__foot">
           <span className="sethint">
-            技能放 .agents/skills/，命令放 .agents/commands/，MCP 配置在 .YuanMy/mcp.json
+            技能放 .agents/skills/，命令放 .agents/commands/，MCP 配置在 .Memento/mcp.json
             —— 都是纯文本，界面里改完即写盘。
           </span>
           <Button type="button" variant="secondary" size="xs" onClick={props.onRestart}>重启内核</Button>

@@ -16,7 +16,7 @@
  * 「读文件」这件事完全交给主进程（`IPC.previewRead`）：扩展名判断、体积上限、
  * 相对路径解析都在那边，渲染进程只按 `kind` 画。所以这里没有 fs、没有路径拼接。
  *
- * @module YuanMy/desktop/renderer/components/preview-panel
+ * @module Memento/desktop/renderer/components/preview-panel
  */
 
 import { memo, useCallback, useEffect, useRef, useState, type ReactElement } from 'react'
@@ -91,7 +91,7 @@ export interface PreviewPanelProps {
   readonly onOpenPath: (path: string) => void
   /** 收起面板。 */
   readonly onClose: () => void
-  /** 读文件（`window.YuanMy.previewRead`）。 */
+  /** 读文件（`window.Memento.previewRead`）。 */
   readonly read: (path: string) => Promise<PreviewPayload>
 }
 

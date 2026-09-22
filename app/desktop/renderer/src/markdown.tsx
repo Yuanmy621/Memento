@@ -10,7 +10,7 @@
  *      link safety 机制），点击走 `window.open`，由主进程的
  *      `setWindowOpenHandler` 转到系统浏览器 —— 这里不用额外处理。
  *
- * @module YuanMy/desktop/renderer/markdown
+ * @module Memento/desktop/renderer/markdown
  */
 
 import { memo, type ReactElement } from 'react'

@@ -18,7 +18,7 @@
  * 覆盖式同步：仓库里删掉的文件，这里也会从 `~/.opencli/clis/<site>/` 里删掉
  * （只动本仓库管理的 site 目录，不碰 opencli 自带或你手写的其他适配器）。
  *
- * @module YuanMy/opencli/install
+ * @module Memento/opencli/install
  */
 
 import { cp, mkdir, readdir, rm, stat } from 'node:fs/promises'

@@ -1,7 +1,7 @@
 /**
  * 交互式 REPL 与一次性执行。
  *
- * @module YuanMy/repl
+ * @module Memento/repl
  */
 
 import { createInterface, type Interface } from 'node:readline/promises'
@@ -74,7 +74,7 @@ async function runTurn(kernel: Kernel, renderer: Renderer, input: string): Promi
 }
 
 /**
- * 一次性执行：`YuanMy -p "..."`。
+ * 一次性执行：`Memento -p "..."`。
  * @returns 进程退出码。
  */
 export async function runOneShot(kernel: Kernel, options: Options, prompt: string): Promise<number> {
@@ -240,7 +240,7 @@ export function printMissingCredential(): void {
     yellow('未找到 DeepSeek API key —— agent 已启动，但第一次请求会失败。'),
     gray('任选一种方式提供：'),
     gray('  1. export DEEPSEEK_API_KEY=sk-…'),
-    gray('  2. export YuanMy_API_KEY=sk-…（优先）'),
+    gray('  2. export Memento_API_KEY=sk-…（优先）'),
     gray('  3. 用 DSH 自己写入的凭据库 ~/.dsh/.credentials.yaml'),
     '',
   ].join('\n'))

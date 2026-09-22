@@ -1,5 +1,5 @@
 /*
- * YuanMy Agent 桌面端样式。
+ * Memento Agent 桌面端样式。
  *
  * ## 这一版做了什么
  *
@@ -21,7 +21,7 @@
  *   ui-chat/src/client/chat/GenericCommandCard.module.css 工具行 + 运行中扫光
  *   ui-chat/src/client/chat/ReasoningRow.module.css       推理行（24px + 扫光）
  *
- * 只借**风格**，不借架构：YuanMy 仍是自己那套最小实现（React + 一个归约器 +
+ * 只借**风格**，不借架构：Memento 仍是自己那套最小实现（React + 一个归约器 +
  * 手工装配的 host 子进程），组件结构没变。
  *
  * 构建方式见 `scripts/build-renderer.js`：`@source` 由构建脚本注入
@@ -53,7 +53,7 @@
 
   /*
    * 品牌强调色：Beautiful UI 默认是蓝（`--accent: oklch(0.68 0.173 253.301)`），
-   * YuanMy 沿用自己那支低饱和蓝紫 —— 这是设计系统留的口子，只换色相不动结构。
+   * Memento 沿用自己那支低饱和蓝紫 —— 这是设计系统留的口子，只换色相不动结构。
    * 三个变量要一起换：`--accent` 是填充色，`--accent-ink` 是文字色（暗色下更亮），
    * `--accent-tint` 是它 16% 的底。
    */
@@ -294,7 +294,7 @@ html[data-vibrancy="native"] .app-shell {
 
 .app-shell {
   display: grid;
-  /* 侧栏固定宽度（官方是可拖拽列；YuanMy 保持固定，简单够用） */
+  /* 侧栏固定宽度（官方是可拖拽列；Memento 保持固定，简单够用） */
   grid-template-columns: 264px minmax(0, 1fr);
   /*
    * ⚠️ 这一行不能删。只写 `height: 100%` 时行是隐式 auto，会被内容撑高：

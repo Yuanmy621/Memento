@@ -1,7 +1,7 @@
 "use client";
 
 /*
- * ⚠️ VENDORED PATCH（YuanMy）：`videoSrc` 去掉了远程默认值（CSP 不放外链媒体）。
+ * ⚠️ VENDORED PATCH（Memento）：`videoSrc` 去掉了远程默认值（CSP 不放外链媒体）。
  */
 
 import { useEffect, useState } from "react";
@@ -80,7 +80,7 @@ export default function LoadingState({
   variant = "Drive",
   /** the meme feed for the Surfer variant; hosted on Vercel Blob so it plays in
    *  production (the local /public/subway-surfers.mp4 stays gitignored) */
-  /** VENDORED PATCH（YuanMy）：上游默认指向一个远程 meme 视频；我们的 CSP 是 `default-src 'none'`，
+  /** VENDORED PATCH（Memento）：上游默认指向一个远程 meme 视频；我们的 CSP 是 `default-src 'none'`，
    *  外链媒体根本放不出来，所以只保留参数、不给默认值（要用 Surfer 变体必须显式传本地资源）。 */
   videoSrc,
 }: {

@@ -12,7 +12,7 @@
  *
  * 顶部一段是窗口**拖拽区**：系统标题栏已隐藏，靠它拖动窗口。
  *
- * @module YuanMy/desktop/renderer/components/sidebar
+ * @module Memento/desktop/renderer/components/sidebar
  */
 
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
@@ -213,7 +213,7 @@ export function Sidebar(props: SidebarProps): ReactElement {
               和 macOS 侧栏头部同档），不是裸图 —— 深色玻璃底上给一圈发丝描边
               才像是「嵌在界面里」。 */}
           <img className="sidebar__logo no-drag" src={logoUrl} alt="" width={16} height={16} />
-          <span className="sidebar__title">YuanMy</span>
+          <span className="sidebar__title">Memento</span>
           <button
             type="button"
             className="sidebar__new no-drag"

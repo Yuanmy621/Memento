@@ -9,7 +9,7 @@
  *   - {@link rulerShift}：尺子该往上移多少，才能让当前刻度落在窗口中间；
  *   - {@link jumpTop}：点某道刻度时，视口顶边该滚到哪（保证跳完当前刻度就是它）。
  *
- * @module YuanMy/desktop/renderer/components/message-rail-model
+ * @module Memento/desktop/renderer/components/message-rail-model
  */
 
 /** 刻度间距（像素）：一道 2px 短横 + 8px 空隙。 */

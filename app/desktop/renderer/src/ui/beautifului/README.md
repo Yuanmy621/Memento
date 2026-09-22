@@ -1,6 +1,6 @@
 # Beautiful UI（vendored）
 
-YuanMy 桌面端的界面底座来自 [Beautiful UI](https://www.beautifului.dev/)
+Memento 桌面端的界面底座来自 [Beautiful UI](https://www.beautifului.dev/)
 （作者 Shane Levine，**MIT License, Copyright (c) 2026 Shane Levine**，
 全文见 <https://www.beautifului.dev/license>）。这里保存的是**从它公开的 shadcn registry
 原样取回**的源码，只做了下面两类必要改动。

@@ -8,7 +8,7 @@
  * 任务的 `status` 是补天自己的一套码，这里**原样显示**（不猜）—— 想按状态筛
  * 就看输出里的数字，或去页面上对照。
  *
- * @module YuanMy/opencli/clis/butian/missions
+ * @module Memento/opencli/clis/butian/missions
  */
 
 import { cli, Strategy } from '@jackwener/opencli/registry'

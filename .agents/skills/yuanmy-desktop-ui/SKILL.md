@@ -1,11 +1,11 @@
 ---
-name: yuanmy-desktop-ui
-description: 改 YuanMy 桌面端界面时的固定套路 —— 渲染进程为什么要重新构建、加一个界面动作/UI 帧要动哪几个文件、Streamdown 的 Tailwind token 为什么必须补、布局失控与输入法组字这两个已修 bug 的复现条件。当你要改 app/desktop/renderer 下的界面、加按钮/面板/消息类型、调主题配色、或者排查界面样式错乱与卡顿时使用。
+name: Memento-desktop-ui
+description: 改 Memento 桌面端界面时的固定套路 —— 渲染进程为什么要重新构建、加一个界面动作/UI 帧要动哪几个文件、Streamdown 的 Tailwind token 为什么必须补、布局失控与输入法组字这两个已修 bug 的复现条件。当你要改 app/desktop/renderer 下的界面、加按钮/面板/消息类型、调主题配色、或者排查界面样式错乱与卡顿时使用。
 # 默认保持 Agent 纯净：命令专用，不进模型的会话技能目录；用 /名字 显式加载。
 disable-model-invocation: true
 ---
 
-# 改 YuanMy 桌面端界面
+# 改 Memento 桌面端界面
 
 ## 客户端全是 TypeScript，但 preload 必须构建
 
@@ -76,7 +76,7 @@ npm run desktop:watch      # 改界面时开着它
 2. `app/desktop/main.ts` —— 加 `ipcMain.handle(IPC.xxx, (event) => { assertSender(event); … })`；
 3. `app/desktop/preload.cjs` —— 在 `CHANNEL` 与 `api` 里**各加一条**
    （沙箱化 preload 不能 require 本地文件，频道字面量只能重复一份）；
-4. `renderer/src/` —— 通过 `window.YuanMy.xxx()` 调用。
+4. `renderer/src/` —— 通过 `window.Memento.xxx()` 调用。
 
 这三处的频道名/方法名必须逐字一致：`ipc.ts` ↔ `preload.cjs` ↔ 渲染进程的调用。
 改漏了不会报错，只会**静默失效**（界面点了没反应），所以要逐个核对。
@@ -107,7 +107,7 @@ Tailwind **只为已定义的 token 生成工具类**，缺了会被静默丢掉
 主区顶部是**标签栏**（`对话` / `轨迹`），侧栏是「工作区 + 搜索 + 项目树」，
 输入区有一排控件 + 下方会话统计。改这块时注意三件事：
 
-1. **权限下拉是如实显示，不是可选项**。YuanMy 的本地 provider 无沙箱无审批，
+1. **权限下拉是如实显示，不是可选项**。Memento 的本地 provider 无沙箱无审批，
    给一个假的「只读/可写/完全访问」选择器会让人以为有沙箱 —— **别把它做成能选的**。
 2. **模型下拉 = 内核目录 ∩ 本地白名单**。选项来自 `ready.info.models`
    （host 侧 `listModels()` 读 `ctx.llm.listModels` 后按 `SUPPORTED_MODELS` 过滤），
@@ -404,7 +404,7 @@ const img = ctx.getImageData(0, 0, fx.width, fx.height)   // 按 2×6 设备像�
 配套的两个数值口径：`alpha > 2` 的像素占比（覆盖率）与最大 alpha（亮度），
 以及**上/中/下三段各自的有像素数**（用来验证「上强下弱」，实测 52125 : 24867 : 0）。
 
-⚠️ 量之前先确认 `document.visibilityState === 'visible'`：**开着 `YuanMy_DEV=1` 时
+⚠️ 量之前先确认 `document.visibilityState === 'visible'`：**开着 `Memento_DEV=1` 时
 DevTools 是独立窗口，会把应用窗口遮住 → Chromium 暂停 rAF → 效果冻住**，
 这时量出来是「0 像素、0% CPU」，很容易误判成效果坏了。
 
@@ -416,7 +416,7 @@ DevTools 是独立窗口，会把应用窗口遮住 → Chromium 暂停 rAF → 
 - **数据来自 host**：`settings:list` → `settings` 帧 → `use-agent.ts` 的
   `state.settings`；打开面板时 `loadSettings()` 拉一次，**写完文件会自动重拉**
   （列表里的大小/告警要跟着变）。
-- **文件读写走主进程**（`window.YuanMy.settingsRead/settingsWrite`），主进程有白名单
+- **文件读写走主进程**（`window.Memento.settingsRead/settingsWrite`），主进程有白名单
   （只允许配置与技能/命令目录）。**别在渲染进程里想办法绕过它** —— 那是安全边界。
 - **编辑的是纯文本**：技能是 Markdown（含 frontmatter）、MCP 是 JSON。所以用 textarea，
   不要改成结构化表单。
@@ -542,21 +542,21 @@ document.querySelector('.session__title').getBoundingClientRect().left
 
 ### 跨项目列表：会话库每项目一份，所以要扫多个根
 
-⚠️ 内核 `stateDir` 默认 `<cwd>/.YuanMy` → **每个项目一份会话库**，项目之间互相看不见。
+⚠️ 内核 `stateDir` 默认 `<cwd>/.Memento` → **每个项目一份会话库**，项目之间互相看不见。
 只扫当前项目那一个根，侧栏的树里就永远只有**一个**项目（换项目后上一个直接消失）。
 现在靠一份线索补齐，**数据位置不动**：
 
-- `main.ts` 维护 `<userData>/projects.json`（`YuanMy_PROJECTS_FILE` 可覆盖），
+- `main.ts` 维护 `<userData>/projects.json`（`Memento_PROJECTS_FILE` 可覆盖），
   host 成功启动后登记当前项目；
-- 启动 host 时用环境变量 `YuanMy_PROJECT_ROOTS`（冒号分隔）把清单交过去；
-- `sessions.ts` 的 `rootsOf()` 把「当前项目的库 + 每个项目的 `<path>/.YuanMy/sessions`」
+- 启动 host 时用环境变量 `Memento_PROJECT_ROOTS`（冒号分隔）把清单交过去；
+- `sessions.ts` 的 `rootsOf()` 把「当前项目的库 + 每个项目的 `<path>/.Memento/sessions`」
   拼成要扫的根，`locateProjects()` 逐根扫并**按 cwd 去重、先扫的根优先**；
 - `rootsOf` 同时供 `listWorkspaceSessions` 与 `listProjectSessions` 使用 ——
   **两处必须一致**，否则会出现「列出来的项目点开是读不到」。
 
 边界：登记最多 20 条、单次最多多扫 8 个根（`DEFAULT_MAX_EXTRA_PROJECTS`）；
 路径被删、库不存在都只是跳过，**读写失败绝不影响启动**（顶多少列一个项目）。
-没被 YuanMy 打开过的项目不会出现在树里。
+没被 Memento 打开过的项目不会出现在树里。
 
 ## 三个已修的 bug —— 改布局/输入框前先看
 
@@ -599,7 +599,7 @@ npm run typecheck          # 三个项目：Node 侧 TS + 渲染进程 TSX + Nod
 npm run desktop            # 真开窗口，把改的地方操作一遍
 ```
 
-打包成 .app / .dmg 是另一条链路，见技能 **`yuanmy-package`**（`npm run package` / `npm run make`）。
+打包成 .app / .dmg 是另一条链路，见技能 **`Memento-package`**（`npm run package` / `npm run make`）。
 
 **没有自动化测试**，所以「操作一遍」要具体：改侧栏就跑一次会话切换、
 改输入框就用中文输入法打一个词、改布局就展开一段长推理。
@@ -607,7 +607,7 @@ npm run desktop            # 真开窗口，把改的地方操作一遍
 输入框这块可以只靠 CDP 验到底（窗口被遮住也能跑，`Input` 域照样投递真按键）：
 
 ```bash
-YuanMy_DEV=1 ./node_modules/.bin/electron app/desktop/main.ts --remote-debugging-port=9225
+Memento_DEV=1 ./node_modules/.bin/electron app/desktop/main.ts --remote-debugging-port=9225
 # 然后：Input.dispatchKeyEvent 打字 / Page.captureScreenshot / Runtime.evaluate 量 getComputedStyle
 ```
 
@@ -627,7 +627,7 @@ YuanMy_DEV=1 ./node_modules/.bin/electron app/desktop/main.ts --remote-debugging
 - 量「chip 到底长什么样」用 `getComputedStyle` 的**实际值**（背景/字色/字重/字族），
   别只看 CSS 源码 —— 未定义的 CSS 变量会静默退化成继承（`--ds-font-family-mono` 就是这么
   空转了不知道多久）；
-- 端到端最强的一条证据是**会话日志**：`<项目>/.YuanMy/sessions/*/*/session.v3.jsonl`，
+- 端到端最强的一条证据是**会话日志**：`<项目>/.Memento/sessions/*/*/session.v3.jsonl`，
   发一条 `用 /report 写稿` 就能看到 `user/message` 里是**展开后**的命令正文（说明 chip 序列化
   成 `/report …` 且 host 认出来了）；
 - 中文/日文输入法没法用 CDP 完全模拟：`Input.imeSetComposition` 能造出真组字，但**不会发

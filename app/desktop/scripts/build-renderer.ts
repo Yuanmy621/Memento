@@ -15,13 +15,13 @@
  *
  * preload 也要构建的原因见 `preload.ts` 的模块注释：主进程能直接跑 `.ts`
  * （Electron 自带的 Node 默认开类型擦除），但**沙箱化 preload 不行** ——
- * 它走 Electron 自己的 CJS 加载器，指到 `.ts` 会静默失败（`window.YuanMy` 不存在）。
+ * 它走 Electron 自己的 CJS 加载器，指到 `.ts` 会静默失败（`window.Memento` 不存在）。
  *
  * 用法:
  *   node app/desktop/scripts/build-renderer.ts            # 构建
  *   node app/desktop/scripts/build-renderer.ts --watch    # 监听重建
  *
- * @module YuanMy/desktop/scripts/build-renderer
+ * @module Memento/desktop/scripts/build-renderer
  */
 
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'

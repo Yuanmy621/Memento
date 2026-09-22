@@ -4,7 +4,7 @@
     {
       // 主入口：交互式 REPL。
       // console 必须用 integratedTerminal，否则 stdin 不是 TTY，REPL 读不到输入。
-      "name": "YuanMy: REPL（交互）",
+      "name": "Memento: REPL（交互）",
       "type": "node",
       "request": "launch",
       "program": "${workspaceFolder}/app/cli/main.ts",
@@ -14,12 +14,12 @@
       "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
       // API key 默认走 ~/.dsh/.credentials.yaml，无需在此配置。
       // 要覆盖时用下面任一种（注意：写进 launch.json 的明文 key 别提交）：
-      //   "env":       { "YuanMy_API_KEY": "sk-...", "YuanMy_MODEL": "deepseek-flash" }
+      //   "env":       { "Memento_API_KEY": "sk-...", "Memento_MODEL": "deepseek-flash" }
       //   "envFile":   "${workspaceFolder}/.env"   // 文件须已存在，否则 VSCode 报错
     },
     {
       // 一次性任务，非交互。参数在下方 args 里改。
-      "name": "YuanMy: 一次性任务（-p）",
+      "name": "Memento: 一次性任务（-p）",
       "type": "node",
       "request": "launch",
       "program": "${workspaceFolder}/app/cli/main.ts",
@@ -31,7 +31,7 @@
     },
     {
       // 启动自检：只打印内核注册的工具，不需要 API key，适合验证改动没把内核搞挂。
-      "name": "YuanMy: 列出工具（自检）",
+      "name": "Memento: 列出工具（自检）",
       "type": "node",
       "request": "launch",
       "program": "${workspaceFolder}/app/cli/main.ts",
@@ -42,7 +42,7 @@
     },
     {
       // 在编辑器里打开任意 app/**/*.ts 后直接 F5，调试该文件的顶层逻辑。
-      "name": "YuanMy: 调试当前文件",
+      "name": "Memento: 调试当前文件",
       "type": "node",
       "request": "launch",
       "program": "${file}",
@@ -52,15 +52,15 @@
       "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
     },
     {
-      // 桌面端：启动 Electron 主进程。YuanMy_DEV=1 会顺带打开 DevTools。
+      // 桌面端：启动 Electron 主进程。Memento_DEV=1 会顺带打开 DevTools。
       // 必须在有图形会话的桌面上运行，否则 app.whenReady() 不会返回。
-      "name": "YuanMy: 桌面端（Electron）",
+      "name": "Memento: 桌面端（Electron）",
       "type": "node",
       "request": "launch",
       "runtimeExecutable": "${workspaceFolder}/node_modules/.bin/electron",
       "program": "${workspaceFolder}/app/desktop/main.js",
       "cwd": "${workspaceFolder}",
-      "env": { "YuanMy_DEV": "1" },
+      "env": { "Memento_DEV": "1" },
       "console": "integratedTerminal",
       "internalConsoleOptions": "neverOpen",
       "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
@@ -68,7 +68,7 @@
     {
       // 桌面端的内核侧调试：直接在 Node 里跑 agent host，
       // 断点打在 app/desktop/host/*.ts 里即可，不需要窗口。
-      "name": "YuanMy: 桌面端 host（子进程）",
+      "name": "Memento: 桌面端 host（子进程）",
       "type": "node",
       "request": "launch",
       "program": "${workspaceFolder}/app/desktop/host/index.ts",
@@ -80,7 +80,7 @@
     },
     {
       // 附加到 `node --inspect=9229 app/cli/main.ts ...` 手动起的进程。
-      "name": "YuanMy: 附加（attach 9229）",
+      "name": "Memento: 附加（attach 9229）",
       "type": "node",
       "request": "attach",
       "port": 9229,

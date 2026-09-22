@@ -7,7 +7,7 @@
  * 只读：**不**调用签到接口本身（`/WhiteHat/Sign/userCheckin`）——
  * 那会真实改变账号数据，要加的话请自己确认清楚再加。
  *
- * @module YuanMy/opencli/clis/butian/sign
+ * @module Memento/opencli/clis/butian/sign
  */
 
 import { cli, Strategy } from '@jackwener/opencli/registry'

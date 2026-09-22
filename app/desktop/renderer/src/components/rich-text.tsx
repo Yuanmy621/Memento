@@ -4,7 +4,7 @@
  * 分开两个文件是为了让 {@link tokenizeRichText} 能在 Node 里直接 import 跑真值表
  * （`.tsx` 带 JSX，纯 Node 加载不了）。识别规则与取舍见 `rich-text-tokens.ts`。
  *
- * @module YuanMy/desktop/renderer/src/components/rich-text
+ * @module Memento/desktop/renderer/src/components/rich-text
  */
 
 import type { ReactElement, ReactNode } from 'react'

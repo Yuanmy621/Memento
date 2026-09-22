@@ -4,7 +4,7 @@
  * 构建时由 esbuild 的 `loader: { '.png': 'dataurl' }` 内联成 data URL，
  * 所以 import 进来的是**字符串**（不是文件路径）—— 这里把这个契约告诉 TS。
  *
- * @module YuanMy/desktop/renderer/src/assets
+ * @module Memento/desktop/renderer/src/assets
  */
 
 declare module '*.png' {

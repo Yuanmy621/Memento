@@ -1,10 +1,10 @@
 # 补天 MCP 服务器（只读）
 
-把[补天漏洞响应平台](https://www.butian.net)的接口包成 MCP 工具，接到 YuanMy 上之后
+把[补天漏洞响应平台](https://www.butian.net)的接口包成 MCP 工具，接到 Memento 上之后
 模型可以直接查项目大厅、排行榜、个人中心 —— 配合 `.agents/skills/src-hunter` 用。
 
 ```bash
-YuanMy_MCP=butian npm start            # CLI
+Memento_MCP=butian npm start            # CLI
 npm run desktop:butian                 # 桌面端
 ```
 
@@ -16,13 +16,13 @@ npm run desktop:butian                 # 桌面端
 要读个人中心 / 任务 / 关注列表，把 Cookie 写进这个文件就行：
 
 ```
-~/.YuanMy/butian-cookie.txt        ← 把浏览器里 butian.net 的 Cookie 整串粘进去
+~/.Memento/butian-cookie.txt        ← 把浏览器里 butian.net 的 Cookie 整串粘进去
 ```
 
 ```bash
-mkdir -p ~/.YuanMy
-pbpaste > ~/.YuanMy/butian-cookie.txt     # 已复制的话直接这样写进去
-chmod 600 ~/.YuanMy/butian-cookie.txt     # 只有自己可读
+mkdir -p ~/.Memento
+pbpaste > ~/.Memento/butian-cookie.txt     # 已复制的话直接这样写进去
+chmod 600 ~/.Memento/butian-cookie.txt     # 只有自己可读
 
 # 想放别处：BUTIAN_COOKIE_FILE=/别的/路径
 # 或者干脆用环境变量：export BUTIAN_COOKIE='...'
@@ -35,7 +35,7 @@ chmod 600 ~/.YuanMy/butian-cookie.txt     # 只有自己可读
 
 文件里粘整行没关系：`Cookie:` 前缀、多余换行、首尾空格都会被自动清掉。
 改完**不用重启**（每次调用工具都会重新读一次文件），但要让内核挂上 MCP：
-`YuanMy_MCP=butian npm start` 或 `npm run desktop:butian`。
+`Memento_MCP=butian npm start` 或 `npm run desktop:butian`。
 
 填完让模型跑一次 `butian_doctor`，它会逐个接口报告「通了 / 需要登录 / 失败」。
 

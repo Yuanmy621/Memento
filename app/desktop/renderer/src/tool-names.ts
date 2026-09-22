@@ -15,7 +15,7 @@
  *
  * 纯逻辑：没有 JSX、没有 DOM，Node 里能直接 import 跑真值表。
  *
- * @module YuanMy/desktop/renderer/src/tool-names
+ * @module Memento/desktop/renderer/src/tool-names
  */
 
 /** 一个工具在界面上的样子。 */

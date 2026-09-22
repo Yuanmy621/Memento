@@ -34,7 +34,7 @@
  * node app/desktop/scripts/build-app.ts --refresh  # 强制重装依赖
  * ```
  *
- * @module YuanMy/desktop/scripts/build-app
+ * @module Memento/desktop/scripts/build-app
  */
 
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
@@ -139,7 +139,7 @@ if (refresh || !lockUnchanged || !haveModules) {
 //     staging 目录一开始一个都不占，于是它一路向上找到**仓库根**（那里有
 //     `@electron-forge/cli`），把仓库当成了要打包的项目 —— 现象是 prune 去遍历仓库
 //     那份 pnpm 符号链接布局的 node_modules，报
-//     `Failed to locate module "@standard-schema/spec" from .../YuanMy/node_modules/...`
+//     `Failed to locate module "@standard-schema/spec" from .../Memento/node_modules/...`
 //     （真踩过，而且报错信息完全不提「项目目录认错了」）。
 //     所以这里显式写上 `config.forge` 指到复制过来的配置文件。
 //     `devDependencies.electron` 是另一条要求：`getElectronVersion()` 读它决定打包哪版
@@ -165,12 +165,12 @@ function exactElectronVersion(spec: string): string {
 }
 const electronVersion = exactElectronVersion(electronSpec)
 writeFileSync(stagedManifest, `${JSON.stringify({
-  name: 'yuanmy-agent',
-  productName: 'YuanMy Agent',
+  name: 'Memento-agent',
+  productName: 'Memento Agent',
   version: repoPkg.version,
   description: repoPkg.description,
   license: repoPkg.license,
-  author: 'YuanMy',
+  author: 'Memento',
   type: 'module',
   main: 'desktop/main.ts',
   config: { forge: './forge.config.ts' },

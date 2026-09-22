@@ -22,7 +22,7 @@
  * 纯逻辑，不 import 任何东西（连 ProseMirror 类型都不 import）：这样它可以被
  * `node --experimental-strip-types` 直接跑真值表（仓库里不放测试文件）。
  *
- * @module YuanMy/desktop/renderer/src/components/editor/doc-text
+ * @module Memento/desktop/renderer/src/components/editor/doc-text
  */
 
 /** 段落之间的分隔符：内核收到的是纯文本，一个段落就是一行。 */

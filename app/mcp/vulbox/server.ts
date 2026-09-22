@@ -2,7 +2,7 @@
 /**
  * 漏洞盒子（vulbox.com）MCP server —— **只读**。
  *
- * 把漏洞盒子的私有接口包装成 MCP 工具，由 YuanMy 内核里的 `@deepseek-ai/dsh-mcp-client`
+ * 把漏洞盒子的私有接口包装成 MCP 工具，由 Memento 内核里的 `@deepseek-ai/dsh-mcp-client`
  * 挂载后，模型就能像调用原生工具一样调用它们（工具名形如
  * `mcp__vulbox__vulbox_projects`）。
  *
@@ -27,7 +27,7 @@
  *
  * 按顺序取：
  *   1. 环境变量 `VULBOX_COOKIE`（内核会显式转发）；
- *   2. 文件 `~/.YuanMy/vulbox-cookie.txt` ← 推荐：把浏览器里 vulbox.com 的 Cookie
+ *   2. 文件 `~/.Memento/vulbox-cookie.txt` ← 推荐：把浏览器里 vulbox.com 的 Cookie
  *      整串粘进去即可（`Cookie:` 前缀、换行都会自动清掉）。
  *      换路径用 `VULBOX_COOKIE_FILE`。
  *
@@ -41,7 +41,7 @@
  * 退出登录（`/openapi/account/logout`）都不在表里。要加写操作请先想清楚：
  * 它们会真实改变你账号的数据（比如「加入项目」之后范围才可见，但那也该由人点）。
  *
- * @module YuanMy/mcp/vulbox/server
+ * @module Memento/mcp/vulbox/server
  */
 
 import { readFile } from 'node:fs/promises'
@@ -65,7 +65,7 @@ const VERSION = '0.1.0'
  *
  * 换位置用环境变量 `VULBOX_COOKIE_FILE`（冒烟测试必须用它，别读用户真实凭据）。
  */
-const COOKIE_FILE = process.env['VULBOX_COOKIE_FILE'] ?? join(homedir(), '.YuanMy', 'vulbox-cookie.txt')
+const COOKIE_FILE = process.env['VULBOX_COOKIE_FILE'] ?? join(homedir(), '.Memento', 'vulbox-cookie.txt')
 
 /** 读登录 Cookie：环境变量优先，其次文件。 */
 async function readCookie(): Promise<string> {
@@ -127,7 +127,7 @@ function describe(error: unknown): string {
       return `需要登录凭据：${error.message}\n\n`
         + `配置方式（二选一）：\n`
         + `1. 写文件 ${COOKIE_FILE}（内容就是浏览器里 vulbox.com 的 Cookie 整串）；\n`
-        + `2. 设置环境变量 VULBOX_COOKIE 后重启 YuanMy。\n`
+        + `2. 设置环境变量 VULBOX_COOKIE 后重启 Memento。\n`
         + `免登录也能用的工具：vulbox_projects / vulbox_rank / vulbox_platform_stats / vulbox_help。`
     }
     if (error.kind === 'auth') {

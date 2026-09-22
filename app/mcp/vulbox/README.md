@@ -1,13 +1,13 @@
 # 漏洞盒子 MCP 服务器（只读）
 
-把[漏洞盒子](https://www.vulbox.com)的企业 SRC / 门户接口包成 MCP 工具，接到 YuanMy 上之后
+把[漏洞盒子](https://www.vulbox.com)的企业 SRC / 门户接口包成 MCP 工具，接到 Memento 上之后
 模型可以直接查**有哪些 SRC 项目能打、某个项目的资产范围与规则、公告、排行榜、平台规范** ——
 配合 `.agents/skills/src-hunter` 用。
 
 ```bash
-YuanMy_MCP=vulbox npm start            # CLI
+Memento_MCP=vulbox npm start            # CLI
 npm run desktop:vulbox                 # 桌面端
-YuanMy_MCP=butian:vulbox npm start     # 补天 + 漏洞盒子一起挂
+Memento_MCP=butian:vulbox npm start     # 补天 + 漏洞盒子一起挂
 ```
 
 挂上之后模型看到的工具名形如 `mcp__vulbox__vulbox_projects`（共 12 个）。
@@ -18,13 +18,13 @@ YuanMy_MCP=butian:vulbox npm start     # 补天 + 漏洞盒子一起挂
 要看某个门户的范围、公告、榜，把 Cookie 写进这个文件：
 
 ```
-~/.YuanMy/vulbox-cookie.txt        ← 把浏览器里 vulbox.com 的 Cookie 整串粘进去
+~/.Memento/vulbox-cookie.txt        ← 把浏览器里 vulbox.com 的 Cookie 整串粘进去
 ```
 
 ```bash
-mkdir -p ~/.YuanMy
-pbpaste > ~/.YuanMy/vulbox-cookie.txt     # 已复制的话直接这样写进去
-chmod 600 ~/.YuanMy/vulbox-cookie.txt     # 只有自己可读
+mkdir -p ~/.Memento
+pbpaste > ~/.Memento/vulbox-cookie.txt     # 已复制的话直接这样写进去
+chmod 600 ~/.Memento/vulbox-cookie.txt     # 只有自己可读
 
 # 想放别处：VULBOX_COOKIE_FILE=/别的/路径
 # 或者干脆用环境变量：export VULBOX_COOKIE='...'
@@ -41,7 +41,7 @@ chmod 600 ~/.YuanMy/vulbox-cookie.txt     # 只有自己可读
 留着也无妨。**Cookie 从哪复制**：浏览器登录 vulbox.com → F12 → Network → 刷新 → 点任意请求
 → Request Headers 里的 `Cookie:` 整行复制（别用 `document.cookie`，会话 Cookie 多半是 HttpOnly）。
 
-改完**不用重启**（每次调用都会重新读文件），但要让内核挂上 MCP：`YuanMy_MCP=vulbox npm start`。
+改完**不用重启**（每次调用都会重新读文件），但要让内核挂上 MCP：`Memento_MCP=vulbox npm start`。
 填完让模型跑一次 `vulbox_doctor`，它会逐个接口报告「通了 / 需要登录 / 暂无权限 / 失败」。
 
 ## 「暂无权限」不是 bug：企业 SRC 的范围要**先加入项目**
@@ -127,4 +127,4 @@ envelope 长这样：
 | 门户白帽榜、主站总榜、平台数字、帮助中心目录与全文（`?id=5` 返回富文本） |
 | `logged: false` 与「暂无权限」的真实成因（见上文），以及未加入时 `assets.accessible = 4` |
 | `accessible` 五个取值在门户前端的**原文案**（0 有权限 / 1 完成认证加入 / 2 内测联系管理员 / 3 无权限 / 4 未加入），已写进 `vulbox_src_scope` 的输出 |
-| `window.__NUXT__` 的受限解析（形参→实参 + 前缀赋值；**不 eval** 远端脚本），拿到 uid 576955 / YuanMy / 已实名 |
+| `window.__NUXT__` 的受限解析（形参→实参 + 前缀赋值；**不 eval** 远端脚本），拿到 uid 576955 / Memento / 已实名 |

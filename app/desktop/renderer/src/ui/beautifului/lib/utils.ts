@@ -5,7 +5,7 @@
  * 后者才是关键：组件给了默认 `px-3`、调用方又传 `px-5` 时，没有它两个类都会留在
  * class 里，谁生效取决于 CSS 生成顺序（看起来像「传了没用」）。
  *
- * @module YuanMy/desktop/renderer/src/ui/beautifului/lib/utils
+ * @module Memento/desktop/renderer/src/ui/beautifului/lib/utils
  */
 
 import { clsx, type ClassValue } from 'clsx'

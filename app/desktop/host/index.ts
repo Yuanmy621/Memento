@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * YuanMy 桌面端 —— **agent host** 子进程入口。
+ * Memento 桌面端 —— **agent host** 子进程入口。
  *
  * 这个进程由 Electron 主进程用**系统 node** 拉起（不是 Electron 自带的 Node，
  * 原因见 `./protocol.ts` 的模块注释：原生模块 ABI 不同），通过 child_process 的
@@ -16,7 +16,7 @@
  * 注意 import 顺序：`./credentials` 必须在 `@deepseek-ai/dsh-llm-deepseek` 之前
  * 把 key 写进 `process.env`，所以内核与事件桥都用动态 `import()` 延迟载入。
  *
- * @module YuanMy/desktop/host
+ * @module Memento/desktop/host
  */
 
 import { readFile, readdir, stat } from 'node:fs/promises'
@@ -63,7 +63,7 @@ const EMPTY_USAGE: SessionUsage = {
 const FILE_INDEX_MAX = 4000
 const FILE_INDEX_TTL_MS = 30_000
 /** 索引时跳过的目录名（依赖、版本库、构建产物）。 */
-const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', 'out', 'target', 'coverage', '.next', '.cache', '.YuanMy'])
+const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', 'out', 'target', 'coverage', '.next', '.cache', '.Memento'])
 
 /** host 致命退出时的退出码。 */
 const EXIT_FATAL = 1
@@ -107,7 +107,7 @@ async function listModels(ctx: Kernel['ctx'], provider: string): Promise<ModelIn
   try {
     catalog = await ctx.llm.listModels(provider)
   } catch (error) {
-    process.stderr.write(`YuanMy host: 读模型目录失败（回退到内置清单）: ${String(error)}\n`)
+    process.stderr.write(`Memento host: 读模型目录失败（回退到内置清单）: ${String(error)}\n`)
     return fallback
   }
   if (catalog.length === 0) return fallback
@@ -156,7 +156,7 @@ async function modelEfforts(
       })),
     }
   } catch (error) {
-    process.stderr.write(`YuanMy host: 读模型 ${model} 的推理强度失败（界面用内置兜底）: ${String(error)}\n`)
+    process.stderr.write(`Memento host: 读模型 ${model} 的推理强度失败（界面用内置兜底）: ${String(error)}\n`)
     return {}
   }
 }
@@ -227,7 +227,7 @@ async function main(): Promise<void> {
       bridge.dispose()
       await kernel.dispose()
     } catch (error) {
-      process.stderr.write(`YuanMy host: 卸载内核失败: ${String(error)}\n`)
+      process.stderr.write(`Memento host: 卸载内核失败: ${String(error)}\n`)
     } finally {
       process.exit(0)
     }
@@ -246,14 +246,14 @@ async function main(): Promise<void> {
   /**
    * 「最近打开过的其他项目」——由 Electron 主进程通过环境变量传来（冒号分隔）。
    *
-   * 为什么需要它：内核的 `stateDir` 默认是 `<cwd>/.YuanMy`，**每个项目一份会话库**，
+   * 为什么需要它：内核的 `stateDir` 默认是 `<cwd>/.Memento`，**每个项目一份会话库**，
    * 而这里只扫当前项目那一个根。不带上这份清单，侧栏的「项目 → 会话」树里
    * 就永远只有一个项目（换项目后上一个直接消失）。
    *
    * 只当线索用：目录存不存在、里面有什么，都由 `sessions.ts` 自己去读，
    * 读不到就跳过 —— 传进来的路径可能早就被删了。
    */
-  const recentProjects = (process.env.YuanMy_PROJECT_ROOTS ?? '')
+  const recentProjects = (process.env.Memento_PROJECT_ROOTS ?? '')
     .split(':')
     .map(path => path.trim())
     .filter(path => path !== '' && resolve(path) !== options.cwd)
@@ -385,11 +385,11 @@ async function main(): Promise<void> {
    * 要扫的**技能目录**（设置界面用来看「盘上有什么」）。
    *
    * 直接复用 CLI 的技能目录规则（项目 `.agents/skills` + `.dsh/skills` +
-   * `$YuanMy_SKILL_DIRS`），别在界面侧另写一份 —— 否则两边会漂。
+   * `$Memento_SKILL_DIRS`），别在界面侧另写一份 —— 否则两边会漂。
    * @returns 绝对路径列表。
    */
   function skillScanDirs(cwd: string): string[] {
-    return [...skillRoots(cwd), ...(process.env.YuanMy_SKILL_DIRS ?? '')
+    return [...skillRoots(cwd), ...(process.env.Memento_SKILL_DIRS ?? '')
       .split(':').map(part => part.trim()).filter(part => part !== '')]
   }
 
@@ -498,7 +498,7 @@ async function main(): Promise<void> {
    *     「调用方式中立」的全集 —— 命令专用（`disable-model-invocation`）的 skill
    *     也在里面，靠 `invocation` 政策区分，这正是界面要显示的东西；
    *   - **命令**：复用 CLI 的命令层（`.agents/commands/*.md`），顺便刷新缓存；
-   *   - **MCP**：内置定义 + 项目目录定义 + `<cwd>/.YuanMy/mcp.json` 的开关。
+   *   - **MCP**：内置定义 + 项目目录定义 + `<cwd>/.Memento/mcp.json` 的开关。
    *
    * 单个 skill 读失败（文件被删等）只跳过它，不让整张表消失。
    */
@@ -588,7 +588,7 @@ async function main(): Promise<void> {
     const config = readMcpConfig(options.cwd)
     const specs = availableMcpSpecs(options.cwd)
     const fromEnv = new Set(
-      (process.env.YuanMy_MCP ?? '').split(':').map(part => part.trim()).filter(part => part !== ''),
+      (process.env.Memento_MCP ?? '').split(':').map(part => part.trim()).filter(part => part !== ''),
     )
     const mcp: McpEntry[] = []
     const names = [...new Set([...Object.keys(specs), ...config.entries.map(entry => entry.name)])]
@@ -774,7 +774,7 @@ async function main(): Promise<void> {
       type: 'notice',
       level: 'warn',
       message: '未找到 DeepSeek API key：可直接在界面里使用，但第一次请求会失败。'
-        + ' 任选一种方式提供：export DEEPSEEK_API_KEY=… / export YuanMy_API_KEY=… / 使用 ~/.dsh/.credentials.yaml。',
+        + ' 任选一种方式提供：export DEEPSEEK_API_KEY=… / export Memento_API_KEY=… / 使用 ~/.dsh/.credentials.yaml。',
     })
   }
   // 就绪后立刻把项目 / 会话清单推给侧栏。

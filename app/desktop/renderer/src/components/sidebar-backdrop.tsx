@@ -30,7 +30,7 @@
  *
  * canvas 是 `pointer-events: none` + `aria-hidden`：不参与交互，也不该被读屏软件念出来。
  *
- * @module YuanMy/desktop/renderer/src/components/sidebar-backdrop
+ * @module Memento/desktop/renderer/src/components/sidebar-backdrop
  */
 
 import { useEffect, useRef, type ReactElement } from 'react'

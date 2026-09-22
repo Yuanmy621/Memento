@@ -22,7 +22,7 @@
  * 所以 {@link pageToken} 要按页取并缓存 —— 拿 A 页的 token 去调 B 页的接口同样会
  * `no token`。
  *
- * @module YuanMy/opencli/clis/butian/utils
+ * @module Memento/opencli/clis/butian/utils
  */
 
 import { readFile } from 'node:fs/promises'
@@ -36,13 +36,13 @@ export const DOMAIN = 'www.butian.net'
 export const ORIGIN = `https://${DOMAIN}`
 
 /**
- * 凭据文件位置 —— 与 YuanMy 里的补天 MCP 共用同一份。
+ * 凭据文件位置 —— 与 Memento 里的补天 MCP 共用同一份。
  *
- * 填一次两边都能用：`~/.YuanMy/butian-cookie.txt` 里放浏览器里 butian.net 的
+ * 填一次两边都能用：`~/.Memento/butian-cookie.txt` 里放浏览器里 butian.net 的
  * Cookie 整串（`Cookie:` 前缀、换行都会被自动清掉）。
  * 想放别处用 `BUTIAN_COOKIE_FILE`，或直接用环境变量 `BUTIAN_COOKIE`。
  */
-const COOKIE_FILE = process.env.BUTIAN_COOKIE_FILE ?? join(homedir(), '.YuanMy', 'butian-cookie.txt')
+const COOKIE_FILE = process.env.BUTIAN_COOKIE_FILE ?? join(homedir(), '.Memento', 'butian-cookie.txt')
 
 /** 去掉 `Cookie:` 前缀与换行，拼成一行。 */
 function normalizeCookie(raw) {

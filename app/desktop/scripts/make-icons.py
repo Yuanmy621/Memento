@@ -38,8 +38,8 @@ HERE = Path(__file__).resolve().parent              # app/desktop/scripts
 ASSETS = (HERE / ".." / "assets").resolve()         # app/desktop/assets
 SRC = Path(
     os.environ.get(
-        "YUANMY_ICON_SRC",
-        Path.home() / ".YuanMy" / "ip-as-logo" / "20260921-ghost" / "B1.jpg",
+        "Memento_ICON_SRC",
+        Path.home() / ".Memento" / "ip-as-logo" / "20260921-ghost" / "B1.jpg",
     )
 )
 
@@ -72,7 +72,7 @@ def macos_icon(src: Image.Image, canvas: int = CANVAS) -> Image.Image:
 def main() -> int:
     if not SRC.exists():
         print(f"找不到源图：{SRC}", file=sys.stderr)
-        print("可以用 YUANMY_ICON_SRC=<路径> 换一张。", file=sys.stderr)
+        print("可以用 Memento_ICON_SRC=<路径> 换一张。", file=sys.stderr)
         return 1
 
     src = Image.open(SRC)
@@ -93,7 +93,7 @@ def main() -> int:
     print(f"logo.png {LOGO_PX}²：铺满画布，圆角 {round(LOGO_PX * RADIUS_RATIO)}")
 
     # 3) icns：每个尺寸都从源图直接画，避免逐级缩放把圆角磨花
-    iconset = Path("/tmp/yuanmy.iconset")
+    iconset = Path("/tmp/Memento.iconset")
     subprocess.run(["rm", "-rf", str(iconset)], check=True)
     iconset.mkdir(parents=True)
     for px in (16, 32, 128, 256, 512):

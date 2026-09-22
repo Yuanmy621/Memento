@@ -18,7 +18,7 @@
  *   - chip = **完整参数**（bash 就是整条命令，CSS 里超宽才省略，hover 有 title）；
  *   - 点行 = 展开**完整输出**（不截断、按原文换行、超过 320px 自己滚）。
  *
- * @module YuanMy/desktop/renderer/components/tool-run
+ * @module Memento/desktop/renderer/components/tool-run
  */
 
 import { memo, useMemo, type ReactElement } from 'react'

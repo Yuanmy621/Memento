@@ -15,7 +15,7 @@
  * 纯逻辑：只 `import type`，不 import `@tiptap/core`。这样真值表脚本（Node 直接跑）
  * 可以引用它，验证「chip 落库的文本，恰好会被记录端认成同一种颜色」。
  *
- * @module YuanMy/desktop/renderer/src/components/editor/chip-text
+ * @module Memento/desktop/renderer/src/components/editor/chip-text
  */
 
 import type { ChipAttrs } from './chip.ts'

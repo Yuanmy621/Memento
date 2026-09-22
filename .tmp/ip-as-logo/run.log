@@ -1,11 +1,11 @@
 {"daemon": "started"}
 续跑：已有 B1 A1 A2 C2 B2 C1，跳过
 
-输出目录：/Users/yuanmingyuan/YuanMy/.tmp/ip-as-logo/out
-A1	ok	lower-left	2048x2048	126381B	/Users/yuanmingyuan/YuanMy/.tmp/ip-as-logo/out/A1.jpg
-A2	ok	lower-right	2048x2048	135259B	/Users/yuanmingyuan/YuanMy/.tmp/ip-as-logo/out/A2.jpg
-B1	ok	lower-left	2048x2048	133089B	/Users/yuanmingyuan/YuanMy/.tmp/ip-as-logo/out/B1.jpg
-B2	ok	lower-right	2048x2048	139048B	/Users/yuanmingyuan/YuanMy/.tmp/ip-as-logo/out/B2.jpg
-C1	ok	lower-left	2048x2048	140251B	/Users/yuanmingyuan/YuanMy/.tmp/ip-as-logo/out/C1.jpg
-C2	ok	lower-right	2048x2048	133351B	/Users/yuanmingyuan/YuanMy/.tmp/ip-as-logo/out/C2.jpg
+输出目录：/Users/yuanmingyuan/Memento/.tmp/ip-as-logo/out
+A1	ok	lower-left	2048x2048	126381B	/Users/yuanmingyuan/Memento/.tmp/ip-as-logo/out/A1.jpg
+A2	ok	lower-right	2048x2048	135259B	/Users/yuanmingyuan/Memento/.tmp/ip-as-logo/out/A2.jpg
+B1	ok	lower-left	2048x2048	133089B	/Users/yuanmingyuan/Memento/.tmp/ip-as-logo/out/B1.jpg
+B2	ok	lower-right	2048x2048	139048B	/Users/yuanmingyuan/Memento/.tmp/ip-as-logo/out/B2.jpg
+C1	ok	lower-left	2048x2048	140251B	/Users/yuanmingyuan/Memento/.tmp/ip-as-logo/out/C1.jpg
+C2	ok	lower-right	2048x2048	133351B	/Users/yuanmingyuan/Memento/.tmp/ip-as-logo/out/C2.jpg
 全部就绪（6/6）

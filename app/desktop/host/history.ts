@@ -31,7 +31,7 @@
  * 只回放最近 `maxTurns` 个回合（默认 50）。更早的内容不显示，但 **agent 自己仍然
  * 记得**（它的上下文来自完整日志）—— 这个差异通过 `truncatedTurns` 如实告知界面。
  *
- * @module YuanMy/desktop/host/history
+ * @module Memento/desktop/host/history
  */
 
 import { open, readdir, readFile, stat } from 'node:fs/promises'

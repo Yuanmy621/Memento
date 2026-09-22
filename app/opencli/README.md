@@ -23,10 +23,10 @@ opencli butian missions -f table
 ## 凭据：和补天 MCP 共用同一份
 
 ```
-~/.YuanMy/butian-cookie.txt      ← 浏览器里 butian.net 的 Cookie 整串
+~/.Memento/butian-cookie.txt      ← 浏览器里 butian.net 的 Cookie 整串
 ```
 
-填一次，opencli 的适配器和 YuanMy 里的补天 MCP 都能用（`BUTIAN_COOKIE_FILE` 可改路径，
+填一次，opencli 的适配器和 Memento 里的补天 MCP 都能用（`BUTIAN_COOKIE_FILE` 可改路径，
 `BUTIAN_COOKIE` 环境变量也可以）。**改完不用重装**，每次执行都会重新读。
 
 失效时的表现是明确的：补天会 302 到登录页，命令返回
@@ -98,7 +98,7 @@ Vue 渲染的，行字段名没能从静态页面确认 —— 该账号关注�
 
 | 现象 | 原因 | 处理 |
 | --- | --- | --- |
-| `AUTH_REQUIRED … 被重定向到登录页（HTTP 302）` | Cookie 失效 | 重新复制一份写进 `~/.YuanMy/butian-cookie.txt` |
+| `AUTH_REQUIRED … 被重定向到登录页（HTTP 302）` | Cookie 失效 | 重新复制一份写进 `~/.Memento/butian-cookie.txt` |
 | `COMMAND_EXEC … 没有 token` | Cookie 失效，或补天改版 | 先确认 `opencli butian center` 能出数据；能出就说明是页面结构变了 |
 | `EMPTY_RESULT … 共 0 条` | 该账号确实没数据（不是错误） | 换个筛选条件 |
 | `opencli doctor` 报 Extension 未连接 | 浏览器桥没装扩展 | **不影响这些命令**（见上）；只有浏览器型适配器需要 |

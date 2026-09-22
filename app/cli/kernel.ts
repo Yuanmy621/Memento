@@ -1,5 +1,5 @@
 /**
- * YuanMy 内核：用 cordis 手工装配 DeepSeek Harness 的 agent 内核。
+ * Memento 内核：用 cordis 手工装配 DeepSeek Harness 的 agent 内核。
  *
  * 这里**不**使用 DSH 的 `cordis.yml` 加载器，而是显式 `await ctx.plugin(...)`
  * 每一个插件 —— 装配顺序、依赖关系、配置全部在这一个文件里可见。
@@ -11,7 +11,7 @@
  *   - `AgentLoop.inject = ['agents','sessions','llm','tools','systemPrompt','sessionProjections']`。
  *   - 真正的抽象 seam 只有一个：LLM adapter（这里用官方 `dsh-llm-deepseek`）。
  *
- * @module YuanMy/kernel
+ * @module Memento/kernel
  */
 
 import { existsSync, readdirSync } from 'node:fs'
@@ -58,7 +58,7 @@ import * as ToolJobs from '@deepseek-ai/dsh-tool-jobs'
 // 外部 MCP 服务器（可选挂载）：它把 MCP 服务器的工具注册成 `mcp__<名字>__<工具>`。
 import * as McpClient from '@deepseek-ai/dsh-mcp-client'
 
-// —— YuanMy 自己的扩展 ——
+// —— Memento 自己的扩展 ——
 import * as customTools from './tools.ts'
 // System One 决策原语
 import * as SystemOne from '../plugins/system-one/index.ts'
@@ -110,9 +110,9 @@ function skillDirsFromEnv(): { customSkillDirs?: string[] } {
   return dirs.length === 0 ? {} : { customSkillDirs: dirs }
 }
 
-/** `$YuanMy_SKILL_DIRS` 里追加的技能目录（设置界面扫盘也要用同一份）。 */
+/** `$Memento_SKILL_DIRS` 里追加的技能目录（设置界面扫盘也要用同一份）。 */
 function extraSkillDirs(): string[] {
-  const extra = process.env.YuanMy_SKILL_DIRS?.trim()
+  const extra = process.env.Memento_SKILL_DIRS?.trim()
   if (extra === undefined || extra === '') return []
   return extra.split(':').map(part => part.trim()).filter(part => part !== '')
 }
@@ -121,7 +121,7 @@ function extraSkillDirs(): string[] {
 function newSessionId(): string {
   const stamp = new Date().toISOString().replace(/[-:.TZ]/g, '').slice(0, 14)
   const rand = Math.random().toString(36).slice(2, 8)
-  return `YuanMy-${stamp}-${rand}`
+  return `Memento-${stamp}-${rand}`
 }
 
 /** 按依赖顺序挂载一个插件，失败时带上可读的插件名。 */
@@ -181,7 +181,7 @@ export function availableMcpSpecs(cwd: string): Record<string, McpSpec> {
       title: '漏洞盒子 vulbox.com（只读）',
       origin: 'builtin',
     },
-    // 工作目录里的自定义 MCP server：`<cwd>/.YuanMy/mcp/<名字>.ts`
+    // 工作目录里的自定义 MCP server：`<cwd>/.Memento/mcp/<名字>.ts`
     ...customMcpSpecs(cwd),
   }
 }
@@ -209,15 +209,15 @@ export interface McpSpec {
 }
 
 /**
- * 工作目录里的自定义 MCP server：`<cwd>/.YuanMy/mcp/<名字>.ts`。
+ * 工作目录里的自定义 MCP server：`<cwd>/.Memento/mcp/<名字>.ts`。
  *
  * 放这儿而不是写死在代码里，是为了「不重新构建就能加一个 MCP」：
- * 丢一个 TS 文件进目录、在 `$YuanMy_MCP` 里写上名字即可。
+ * 丢一个 TS 文件进目录、在 `$Memento_MCP` 里写上名字即可。
  * @param cwd - agent 的工作目录。
  * @returns 名字 → 启动方式（目录不存在时是空对象）。
  */
 function customMcpSpecs(cwd: string): Record<string, McpSpec> {
-  const dir = join(cwd, '.YuanMy', 'mcp')
+  const dir = join(cwd, '.Memento', 'mcp')
   if (!existsSync(dir)) return {}
   const specs: Record<string, McpSpec> = {}
   for (const entry of readdirSync(dir)) {
@@ -236,14 +236,14 @@ function customMcpSpecs(cwd: string): Record<string, McpSpec> {
 }
 
 /**
- * 按 `$YuanMy_MCP` 挂载外部 MCP 服务器（**默认不挂**）。
+ * 按 `$Memento_MCP` 挂载外部 MCP 服务器（**默认不挂**）。
  *
  * 为什么默认关：每挂一个都会起一个子进程，而且它的工具会进**每一次**请求的
  * 工具表（占上下文）。所以做成显式开启，值是用冒号分隔的名字：
  *
  * ```bash
- * YuanMy_MCP=butian node app/cli/main.ts            # 只挂补天
- * YuanMy_MCP=butian:my-thing node app/cli/main.ts   # 补天 + 工作目录里的自定义 server
+ * Memento_MCP=butian node app/cli/main.ts            # 只挂补天
+ * Memento_MCP=butian:my-thing node app/cli/main.ts   # 补天 + 工作目录里的自定义 server
  * ```
  *
  * 未知名字只警告不报错：写错一个名字不该让整个内核起不来。
@@ -254,8 +254,8 @@ function customMcpSpecs(cwd: string): Record<string, McpSpec> {
  * 算出这一次要挂哪些 MCP 服务器。
  *
  * 三个来源合并（见 `mcp-config.ts` 的说明）：
- *   1. `$YuanMy_MCP`（冒号分隔）—— 临时开一个；
- *   2. `<cwd>/.YuanMy/mcp.json` 里显式 `enabled: true` 的条目 —— 持久开关，可内联覆盖启动参数；
+ *   1. `$Memento_MCP`（冒号分隔）—— 临时开一个；
+ *   2. `<cwd>/.Memento/mcp.json` 里显式 `enabled: true` 的条目 —— 持久开关，可内联覆盖启动参数；
  *   3. 配置文件里 `enabled: false` 的条目 —— **强制关掉**（盖过前两者）。
  *
  * @param ctx - 内核上下文（未使用，保留签名一致性）。
@@ -265,14 +265,14 @@ function customMcpSpecs(cwd: string): Record<string, McpSpec> {
 async function mountMcpServers(ctx: Context, options: Options): Promise<string[]> {
   const config = readMcpConfig(options.cwd)
   if (config.error !== undefined) {
-    process.stderr.write(`YuanMy: MCP 配置文件解析失败（已忽略）：${config.path} — ${config.error}\n`)
+    process.stderr.write(`Memento: MCP 配置文件解析失败（已忽略）：${config.path} — ${config.error}\n`)
   }
   const specs = availableMcpSpecs(options.cwd)
   const disabled = new Set(config.entries.filter(entry => !entry.enabled).map(entry => entry.name))
 
   // 名字 → 启动方式：配置里的内联定义优先，其次内置/项目目录
   const wanted: { name: string; spec: McpSpec }[] = []
-  const fromEnv = (process.env.YuanMy_MCP ?? '')
+  const fromEnv = (process.env.Memento_MCP ?? '')
     .split(':')
     .map(part => part.trim())
     .filter(part => part !== '')
@@ -285,7 +285,7 @@ async function mountMcpServers(ctx: Context, options: Options): Promise<string[]
     const spec = mergeSpec(name, entry, base)
     if (spec === undefined) {
       process.stderr.write(
-        `YuanMy: 未知的 MCP 服务器 "${name}"（配置文件里也没有它的启动参数），可用: ${Object.keys(specs).join(', ') || '（无）'}\n`,
+        `Memento: 未知的 MCP 服务器 "${name}"（配置文件里也没有它的启动参数），可用: ${Object.keys(specs).join(', ') || '（无）'}\n`,
       )
       continue
     }
@@ -311,7 +311,7 @@ async function mountMcpServers(ctx: Context, options: Options): Promise<string[]
     }
     if (spec.transport === 'streamable-http') {
       if (spec.url === undefined) {
-        process.stderr.write(`YuanMy: MCP 服务器 "${name}" 声明了 streamable-http 但没有 url，跳过。\n`)
+        process.stderr.write(`Memento: MCP 服务器 "${name}" 声明了 streamable-http 但没有 url，跳过。\n`)
         continue
       }
       await mount(ctx, `mcp:${name}`, McpClient, {
@@ -331,7 +331,7 @@ async function mountMcpServers(ctx: Context, options: Options): Promise<string[]
       })
     }
     mounted.push(name)
-    process.stderr.write(`YuanMy: 已挂载 MCP 服务器 ${spec.title}\n`)
+    process.stderr.write(`Memento: 已挂载 MCP 服务器 ${spec.title}\n`)
   }
   return mounted
 }
@@ -452,13 +452,13 @@ export async function bootKernel(options: Options): Promise<Kernel> {
   })
   await mount(ctx, 'dsh-tool-bash', ToolBash, { enableRunInBackground: true })
   await mount(ctx, 'dsh-tool-jobs', ToolJobs)
-  await mount(ctx, 'YuanMy-tools', customTools, { cwd: options.cwd })
+  await mount(ctx, 'Memento-tools', customTools, { cwd: options.cwd })
   // System One：默认挂载决策模型
-  await mount(ctx, 'YuanMy-system-one', SystemOne, {})
+  await mount(ctx, 'Memento-system-one', SystemOne, {})
   // 模型侧的入口：在首个请求前投递一份「可用技能目录」，并注册 `skill` 工具按需加载正文。
   await mount(ctx, 'dsh-tool-skill', ToolSkill)
 
-  // ── 6.5 外部 MCP 服务器（只有 `$YuanMy_MCP` 或配置显式 `enabled: true` 才挂）──
+  // ── 6.5 外部 MCP 服务器（只有 `$Memento_MCP` 或配置显式 `enabled: true` 才挂）──
   await mountMcpServers(ctx, options)
 
   // ── 7. prompt 扩展 ─────────────────────────────────────────────────────

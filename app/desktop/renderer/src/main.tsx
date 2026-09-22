@@ -8,7 +8,7 @@
  * 注意：源码是 `.tsx`，但**类型检查与打包都独立于 Electron** ——
  * 类型由 `app/desktop/renderer/tsconfig.json` 检查，产物由 esbuild 生成。
  *
- * @module YuanMy/desktop/renderer
+ * @module Memento/desktop/renderer
  */
 
 import { StrictMode } from 'react'
@@ -19,9 +19,9 @@ const container = document.getElementById('root')
 
 if (container === null) {
   document.body.textContent = '初始化失败：找不到 #root 挂载点。'
-} else if (globalThis.window.YuanMy === undefined) {
+} else if (globalThis.window.Memento === undefined) {
   // preload 没注入：这是主进程配置问题，把原因直接摆在界面上。
-  container.textContent = '初始化失败：window.YuanMy 不存在，preload 脚本没有加载。'
+  container.textContent = '初始化失败：window.Memento 不存在，preload 脚本没有加载。'
 } else {
   createRoot(container).render(
     <StrictMode>

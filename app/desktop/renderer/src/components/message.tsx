@@ -13,7 +13,7 @@
  * 把「刻度」和真实 DOM 对上，点击才能滚到那一条。加在根元素上而不是包一层 div ——
  * `.messages__inner` 是 flex 列，多包一层会把 `align-self` 那套对齐弄乱。
  *
- * @module YuanMy/desktop/renderer/components/message
+ * @module Memento/desktop/renderer/components/message
  */
 
 import { memo, type ReactElement } from 'react'

@@ -10,7 +10,7 @@
  * 帧，由 Electron 主进程转发给渲染进程。工具摘要的格式化逻辑直接复用 CLI 的实现，
  * 保证两边「工具调用长什么样」不会分叉。
  *
- * @module YuanMy/desktop/host/bridge
+ * @module Memento/desktop/host/bridge
  */
 
 import type { Context } from '@deepseek-ai/cordis'

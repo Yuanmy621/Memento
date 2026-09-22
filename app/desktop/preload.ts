@@ -10,7 +10,7 @@
  *   - 主进程能直接跑 `.ts`（Electron 44 自带的 Node 24 默认开类型擦除，实测可用），
  *     但 **preload 不行**：沙箱化 preload 走的是 Electron 自己的 CJS 加载器，
  *     它不认识 TypeScript —— 直接把 preload 指到 `.ts` 会**静默失败**
- *     （`window.YuanMy` 不存在，界面只会说「preload 脚本没有加载」，看不出真因）。
+ *     （`window.Memento` 不存在，界面只会说「preload 脚本没有加载」，看不出真因）。
  *     实测：同一个 preload，指 `.ts` 时 `window.probe === null`，指构建出来的
  *     `.cjs` 时正常。
  *   - 所以这里保持「**源码 .ts、产物 .cjs**」：类型检查照做，Electron 拿到的仍是
@@ -25,9 +25,9 @@
  *      重复一份（与 `ipc.ts` 的 `IPC` 表逐字对应，改名字要两处都改）。
  *
  * 为什么只暴露这几个方法：渲染进程是「网页」，不该拿到 ipcRenderer / require / fs。
- * `contextBridge` 把下面这个对象**深拷贝**到 `window.YuanMy`，网页只能看到函数。
+ * `contextBridge` 把下面这个对象**深拷贝**到 `window.Memento`，网页只能看到函数。
  *
- * @module YuanMy/desktop/preload
+ * @module Memento/desktop/preload
  */
 
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
@@ -35,25 +35,25 @@ import type { PreviewPayload } from './ipc.ts'
 
 /** 与 `ipc.ts` 的 `IPC` 表逐字对应。 */
 const CHANNEL = Object.freeze({
-  state: 'YuanMy:state',
-  hostEvent: 'YuanMy:host-event',
-  prompt: 'YuanMy:prompt',
-  cancel: 'YuanMy:cancel',
-  setModel: 'YuanMy:set-model',
-  setEffort: 'YuanMy:set-effort',
-  pickDirectory: 'YuanMy:pick-directory',
-  attach: 'YuanMy:attach',
-  listSessions: 'YuanMy:list-sessions',
-  replayHistory: 'YuanMy:replay-history',
-  openPath: 'YuanMy:open-path',
-  listProjectSessions: 'YuanMy:list-project-sessions',
-  appInfo: 'YuanMy:app-info',
-  steer: 'YuanMy:steer',
-  listFiles: 'YuanMy:list-files',
-  settingsList: 'YuanMy:settings-list',
-  settingsRead: 'YuanMy:settings-read',
-  settingsWrite: 'YuanMy:settings-write',
-  previewRead: 'YuanMy:preview-read',
+  state: 'Memento:state',
+  hostEvent: 'Memento:host-event',
+  prompt: 'Memento:prompt',
+  cancel: 'Memento:cancel',
+  setModel: 'Memento:set-model',
+  setEffort: 'Memento:set-effort',
+  pickDirectory: 'Memento:pick-directory',
+  attach: 'Memento:attach',
+  listSessions: 'Memento:list-sessions',
+  replayHistory: 'Memento:replay-history',
+  openPath: 'Memento:open-path',
+  listProjectSessions: 'Memento:list-project-sessions',
+  appInfo: 'Memento:app-info',
+  steer: 'Memento:steer',
+  listFiles: 'Memento:list-files',
+  settingsList: 'Memento:settings-list',
+  settingsRead: 'Memento:settings-read',
+  settingsWrite: 'Memento:settings-write',
+  previewRead: 'Memento:preview-read',
 })
 
 /** 读/写配置文件的结果。 */
@@ -77,7 +77,7 @@ export interface AttachResult {
   readonly key: string
 }
 
-/** 渲染进程可见的 API（`window.YuanMy` 的形状）。 */
+/** 渲染进程可见的 API（`window.Memento` 的形状）。 */
 const api = {
   /** 取当前 shell / agent 状态：`{ phase, info?, error? }`。 */
   getState: (): Promise<unknown> => ipcRenderer.invoke(CHANNEL.state),
@@ -180,4 +180,4 @@ const api = {
   previewRead: (path: string): Promise<PreviewPayload> => ipcRenderer.invoke(CHANNEL.previewRead, path),
 }
 
-contextBridge.exposeInMainWorld('YuanMy', Object.freeze(api))
+contextBridge.exposeInMainWorld('Memento', Object.freeze(api))

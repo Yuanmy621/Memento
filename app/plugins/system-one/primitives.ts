@@ -20,7 +20,7 @@
  * 本插件只接官方 Jev，概率是标定过的；但 confidence 仍只是**这次回答**的分布集中度，
  * 不代表答案正确，也不是行动的许可。
  *
- * @module YuanMy/plugins/system-one/primitives
+ * @module Memento/plugins/system-one/primitives
  */
 
 /** 三种问题类型。 */

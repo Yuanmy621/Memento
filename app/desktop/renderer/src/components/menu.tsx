@@ -17,7 +17,7 @@
  * 这份实现只有两百来行，行为边界清楚。真要继续加菜单（右键菜单、子菜单）时，
  * 再按 README「自研 vs 成熟组件」里那条建议整体换 Radix 更划算。
  *
- * @module YuanMy/desktop/renderer/src/components/menu
+ * @module Memento/desktop/renderer/src/components/menu
  */
 
 import {

@@ -1,22 +1,22 @@
 ---
-name: yuanmy-mcp
-description: 往 YuanMy 上接 MCP 服务器的固定套路 —— 内核怎么挂官方 MCP 客户端、$YuanMy_MCP 怎么开、凭据为什么必须显式转发、以及这个仓库用 pnpm 时踩过的两个依赖坑（npm install 会展平布局、降级 dsh-subprocess 会打崩内核）。当你要给 YuanMy 加一个 MCP 服务器、接一个新平台（飞书/GitHub/补天之类）、排查「MCP 工具没出现在工具表里」，或者要改 app/mcp/ 下的服务器时使用。
+name: Memento-mcp
+description: 往 Memento 上接 MCP 服务器的固定套路 —— 内核怎么挂官方 MCP 客户端、$Memento_MCP 怎么开、凭据为什么必须显式转发、以及这个仓库用 pnpm 时踩过的两个依赖坑（npm install 会展平布局、降级 dsh-subprocess 会打崩内核）。当你要给 Memento 加一个 MCP 服务器、接一个新平台（飞书/GitHub/补天之类）、排查「MCP 工具没出现在工具表里」，或者要改 app/mcp/ 下的服务器时使用。
 # 默认保持 Agent 纯净：命令专用，不进模型的会话技能目录；用 /名字 显式加载。
 disable-model-invocation: true
 ---
 
-# 给 YuanMy 接 MCP 服务器
+# 给 Memento 接 MCP 服务器
 
 ## 现状（别重新造轮子）
 
 内核挂的是**官方**客户端插件 `@deepseek-ai/dsh-mcp-client`（`app/cli/kernel.ts` 的
 `mountMcpServers()`）。它把 MCP 服务器的工具注册成 `mcp__<serverName>__<工具名>`，
 模型看到的就是普通工具。**默认不挂** —— 每个服务器一个子进程，工具还会进每一次请求的
-工具表（占上下文），所以用 `$YuanMy_MCP` 显式开启：
+工具表（占上下文），所以用 `$Memento_MCP` 显式开启：
 
 ```bash
-YuanMy_MCP=butian npm start          # CLI
-YuanMy_MCP=vulbox npm start          # CLI（漏洞盒子，第二个内置 server）
+Memento_MCP=butian npm start          # CLI
+Memento_MCP=vulbox npm start          # CLI（漏洞盒子，第二个内置 server）
 npm run desktop:vulbox               # 桌面端；desktop:src = 补天 + 漏洞盒子一起
 ```
 
@@ -35,7 +35,7 @@ Cookie 过期了、反复重配凭据。判据：`/暂无权限|无权限/` → 
 
 1. **仓库内置**：在 `app/cli/kernel.ts` 的 `mcpSpecs()` 里加一条。TS 直接用当前 node +
    `--experimental-strip-types` 拉起，**不需要构建**（别用 Electron 的二进制）。
-2. **工作目录里丢文件**：`<cwd>/.YuanMy/mcp/<名字>.ts`，然后 `YuanMy_MCP=<名字>`。
+2. **工作目录里丢文件**：`<cwd>/.Memento/mcp/<名字>.ts`，然后 `Memento_MCP=<名字>`。
    内核自动扫描（`customMcpSpecs()`），适合一次性的、跟项目走的服务器。
 
 ## ⚠️ 凭据必须写进 `forwardEnv`
@@ -58,7 +58,7 @@ butian: {
 转发列表里连 `*_COOKIE_FILE` / `*_PORTAL` 这类**非凭据但影响行为**的变量也一起写上
 （漏洞盒子用 `VULBOX_PORTAL` 选门户），否则用户在 shell 里设了却不生效，很难查。
 
-给凭据留后路：让服务器**自己也读一个文件**（如 `~/.YuanMy/butian-cookie.txt`），
+给凭据留后路：让服务器**自己也读一个文件**（如 `~/.Memento/butian-cookie.txt`），
 这样用户不用把密钥塞进 shell 环境、也能手工调试。同时提供
 `BUTIAN_COOKIE_FILE` 之类的**路径覆盖**变量 —— 冒烟测试必须用它，
 否则测试会读用户真实的凭据文件（断言测不准，还可能真打线上）。
@@ -113,7 +113,7 @@ server.registerTool('butian_x', {
 
 ```bash
 node app/mcp/<名字>/server.ts                              # 单独起：手工发一行 initialize 就能看它活没活
-YuanMy_MCP=<名字> node app/cli/main.ts -p "调用 mcp__x__y，把返回原样列出来"
+Memento_MCP=<名字> node app/cli/main.ts -p "调用 mcp__x__y，把返回原样列出来"
 ```
 
 ⚠️ 只看到工具出现在表里**不等于**调用能成功：MCP 服务器的进程可能起来了但接口全失败。
@@ -130,7 +130,7 @@ YuanMy_MCP=<名字> node app/cli/main.ts -p "调用 mcp__x__y，把返回原样�
 
 ## 加完检查清单
 
-1. `YuanMy_MCP=<名字> node app/cli/main.ts --list-tools` → 工具表里出现 `mcp__<名字>__*`；
+1. `Memento_MCP=<名字> node app/cli/main.ts --list-tools` → 工具表里出现 `mcp__<名字>__*`；
 2. 真让模型调一次（`node app/cli/main.ts -p "调用 mcp__x__y，把返回原样列出来"`），
    确认端到端通了 —— 只看到工具在表里**不等于**调用能成功；
 3. 确认**只读边界**：工具表里不该出现任何写接口（`registerTool` 是写死的，别加）。

@@ -2,7 +2,7 @@
 /**
  * 补天（butian.net）MCP server —— **只读**。
  *
- * 它把补天的私有接口包装成 MCP 工具，由 YuanMy 内核里的 `@deepseek-ai/dsh-mcp-client`
+ * 它把补天的私有接口包装成 MCP 工具，由 Memento 内核里的 `@deepseek-ai/dsh-mcp-client`
  * 挂载后，模型就能像调用原生工具一样调用它们（工具名形如
  * `mcp__butian__butian_project_hall`）。
  *
@@ -22,7 +22,7 @@
  * 免登录工具（项目大厅 / 排行 / 平台数字）不需要任何配置。
  * 需要登录的工具（个人中心 / 任务 / 关注列表）按顺序从两处取 Cookie：
  *
- *   1. **文件 `~/.YuanMy/butian-cookie.txt`** ← 推荐，把浏览器里 butian.net 的
+ *   1. **文件 `~/.Memento/butian-cookie.txt`** ← 推荐，把浏览器里 butian.net 的
  *      Cookie 整串粘进去即可（`Cookie:` 前缀和多余换行都会被自动清掉）。
  *      想放别处就用环境变量 `BUTIAN_COOKIE_FILE` 指定路径。
  *   2. 环境变量 `BUTIAN_COOKIE`。
@@ -41,7 +41,7 @@
  * 领任务 `/WhiteHat/Mission/take`、提交漏洞 `/Loo/submit` 等都不在表里）。
  * 要加写操作请先想清楚：它们会真实改变你账号的数据。
  *
- * @module YuanMy/mcp/butian/server
+ * @module Memento/mcp/butian/server
  */
 
 import { readFile } from 'node:fs/promises'
@@ -62,7 +62,7 @@ const VERSION = '0.1.0'
  *
  * 想放到别处（比如密码管理器挂载的目录）就用环境变量 `BUTIAN_COOKIE_FILE` 覆盖它。
  */
-const COOKIE_FILE = process.env['BUTIAN_COOKIE_FILE'] ?? join(homedir(), '.YuanMy', 'butian-cookie.txt')
+const COOKIE_FILE = process.env['BUTIAN_COOKIE_FILE'] ?? join(homedir(), '.Memento', 'butian-cookie.txt')
 
 /**
  * 读登录 Cookie。
@@ -158,7 +158,7 @@ function describe(error: unknown): string {
       return `需要登录凭据：${error.message}\n\n`
         + `配置方式（二选一）：\n`
         + `1. 写文件 ${COOKIE_FILE}（内容就是浏览器里 butian.net 的 Cookie 整串）；\n`
-        + `2. 设置环境变量 BUTIAN_COOKIE 后重启 YuanMy。\n`
+        + `2. 设置环境变量 BUTIAN_COOKIE 后重启 Memento。\n`
         + `免登录工具（项目大厅 / 排行 / 平台数字）不受影响。`
     }
     if (error.kind === 'auth') {

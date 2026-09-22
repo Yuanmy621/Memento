@@ -1,5 +1,5 @@
 /**
- * System One 插件：把 TypeSafe/Jev 那套「决策原语」接进 YuanMy。
+ * System One 插件：把 TypeSafe/Jev 那套「决策原语」接进 Memento。
  *
  * ## 为什么要接这个（设计逻辑，不是照抄 API）
  *
@@ -24,7 +24,7 @@
  *
  * 挂在 `app/cli/kernel.ts` 里，随内核默认挂载。
  *
- * @module YuanMy/plugins/system-one
+ * @module Memento/plugins/system-one
  */
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -40,13 +40,13 @@ import {
  * 本文件内部用的 JSON 值类型。
  *
  * 内核的 `JsonValue` 来自 `@deepseek-ai/dsh-util-values`，它不是本仓库的**顶层依赖**
- * （pnpm 严格布局下 import 不到，见 `yuanmy-mcp` 技能里记的那两个坑），
+ * （pnpm 严格布局下 import 不到，见 `Memento-mcp` 技能里记的那两个坑），
  * 所以这里按同一形状自己标一个 —— 结构上等价，不引入依赖。
  */
 type Json = string | number | boolean | null | Json[] | { [key: string]: Json }
 
 /** 插件名（DSH 约定）。 */
-export const name = 'YuanMy-system-one'
+export const name = 'Memento-system-one'
 /** 需要工具注册表；官方后端直接走 HTTP，不需要 LLM 运行时。 */
 export const inject = ['tools']
 

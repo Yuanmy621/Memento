@@ -13,7 +13,7 @@
  *
  * 用法：`npm run audit:css`（退出码 1 表示发现误删）。
  *
- * @module YuanMy/desktop/scripts/audit-css
+ * @module Memento/desktop/scripts/audit-css
  */
 
 import { execFileSync } from 'node:child_process'

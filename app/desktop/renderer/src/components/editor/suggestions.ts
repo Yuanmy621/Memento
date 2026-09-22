@@ -22,7 +22,7 @@
  * 「已忽略」状态：**同一个触发词内不再弹**（继续打字也不弹），打出空白后自动复位。
  * 这样 Esc 是「这次我不要菜单」，而不是「关了立刻又弹出来」。
  *
- * @module YuanMy/desktop/renderer/src/components/editor/suggestions
+ * @module Memento/desktop/renderer/src/components/editor/suggestions
  */
 
 import { Extension, type Editor, type Extensions } from '@tiptap/core'
@@ -248,7 +248,7 @@ export function createSuggestExtensions(options: {
   readonly source: () => SuggestSource
 }): Extensions {
   return TRIGGERS.map((trigger) => {
-    const pluginKey = new PluginKey(`YuanMyChipSuggest${trigger}`)
+    const pluginKey = new PluginKey(`MementoChipSuggest${trigger}`)
     return Extension.create({
       name: EXTENSION_NAMES[trigger],
       addProseMirrorPlugins() {

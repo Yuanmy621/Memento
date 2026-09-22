@@ -1,7 +1,7 @@
 /**
  * 命令行参数解析（零依赖）。
  *
- * @module YuanMy/options
+ * @module Memento/options
  */
 
 import { resolve } from 'node:path'
@@ -45,7 +45,7 @@ export interface Options {
 export class UsageError extends Error {}
 
 /**
- * YuanMy **对用户暴露**的模型清单（单一事实来源）。
+ * Memento **对用户暴露**的模型清单（单一事实来源）。
  *
  * 内核适配器申报的目录比这更长（还包含 `deepseek-flash` 这个 V4.1 旧版，
  * 以及 `deepseek-v4-flash-vision-exp` 实验视觉模型）。这里只保留两款主力，
@@ -77,9 +77,9 @@ export function resolveOptions(input: OptionsInput = {}): Options {
   const root = resolve(input.cwd ?? process.cwd())
   return {
     cwd: root,
-    stateDir: resolve(input.stateDir ?? `${root}/.YuanMy`),
+    stateDir: resolve(input.stateDir ?? `${root}/.Memento`),
     provider: input.provider ?? 'deepseek-official',
-    model: input.model ?? (process.env.YuanMy_MODEL?.trim() || DEFAULT_MODEL),
+    model: input.model ?? (process.env.Memento_MODEL?.trim() || DEFAULT_MODEL),
     effort: input.effort ?? 'high',
     maxTokens: input.maxTokens,
     sessionId: input.sessionId,
@@ -92,21 +92,21 @@ export function resolveOptions(input: OptionsInput = {}): Options {
   }
 }
 
-const HELP = `YuanMy — 基于 DeepSeek Harness 内核的终端 coding agent
+const HELP = `Memento — 基于 DeepSeek Harness 内核的终端 coding agent
 
 用法:
-  YuanMy [选项]
+  Memento [选项]
 
 选项:
   -p, --prompt <text>     一次性执行该任务后退出（非交互）
       --cwd <dir>         agent 的工作目录（默认: 当前目录）
-      --model <id>        模型 id（默认: $YuanMy_MODEL 或 ${DEFAULT_MODEL}）
+      --model <id>        模型 id（默认: $Memento_MODEL 或 ${DEFAULT_MODEL}）
       --provider <id>     provider id（默认: deepseek-official）
       --effort <level>    推理强度: off | low | high | max（默认: high）
       --max-tokens <n>    单次请求输出上限
       --session <id>      指定新会话 id（默认自动生成）
       --resume <id>       恢复一个已持久化的会话
-      --state-dir <dir>   会话与运行数据目录（默认: <cwd>/.YuanMy）
+      --state-dir <dir>   会话与运行数据目录（默认: <cwd>/.Memento）
       --no-persist        不把会话写入磁盘
       --list-tools        打印已注册工具后退出
       --no-reasoning      不显示模型的推理过程（默认灰色显示）
@@ -115,8 +115,8 @@ const HELP = `YuanMy — 基于 DeepSeek Harness 内核的终端 coding agent
 
 环境变量:
   DEEPSEEK_API_KEY        模型 API key；缺省时回退到 ~/.dsh/.credentials.yaml
-  YuanMy_API_KEY            同上，优先级更高
-  YuanMy_MODEL              默认模型 id
+  Memento_API_KEY            同上，优先级更高
+  Memento_MODEL              默认模型 id
 `
 
 /** 帮助文本。 */
@@ -143,7 +143,7 @@ export function parseOptions(argv: readonly string[]): Options {
   let cwd: string | undefined
   let stateDir: string | undefined
   let provider = 'deepseek-official'
-  let model = process.env.YuanMy_MODEL?.trim() || DEFAULT_MODEL
+  let model = process.env.Memento_MODEL?.trim() || DEFAULT_MODEL
   let effort: Effort = 'high'
   let maxTokens: number | undefined
   let sessionId: string | undefined
@@ -163,7 +163,7 @@ export function parseOptions(argv: readonly string[]): Options {
         break
       case '-v':
       case '--version':
-        process.stdout.write('YuanMy 0.1.0\n')
+        process.stdout.write('Memento 0.1.0\n')
         process.exit(0)
         break
       case '-p':

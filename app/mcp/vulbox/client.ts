@@ -44,7 +44,7 @@
  * 门户侧仍回 `logged: false`）。所以 {@link VulboxError} 把 `forbidden` 单独分一类，
  * 提示是「去门户点加入项目」，而不是「重新复制 Cookie」。
  *
- * @module YuanMy/mcp/vulbox/client
+ * @module Memento/mcp/vulbox/client
  */
 
 /** API 网关。所有接口路径都相对它 —— 门户与主站共用一个。 */
@@ -55,7 +55,7 @@ const TIMEOUT_MS = 20_000
 
 /** 统一 UA：带上一个正常浏览器的，避免被当成脚本拦掉。 */
 const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 '
-  + '(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 YuanMy-Agent/0.1 vulbox-mcp'
+  + '(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 Memento-Agent/0.1 vulbox-mcp'
 
 /** 默认门户：`X-Host-Original` 不给时用它（企业 SRC 门户的域名）。 */
 export const DEFAULT_PORTAL = process.env['VULBOX_PORTAL'] ?? 'paypal.vulbox.com'
@@ -301,7 +301,7 @@ function unescapeJsString(raw: string): string {
   }
 }
 
-/** 逐个解析 IIFE 的实参（`false,0,"",true,1,"173****2646",void 0,"YuanMy",…`）。 */
+/** 逐个解析 IIFE 的实参（`false,0,"",true,1,"173****2646",void 0,"Memento",…`）。 */
 function splitTopLevel(text: string): string[] {
   const parts: string[] = []
   let depth = 0

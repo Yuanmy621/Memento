@@ -1,5 +1,5 @@
 /**
- * YuanMy 自己的工具插件 —— 演示 `defineTool` 的完整写法。
+ * Memento 自己的工具插件 —— 演示 `defineTool` 的完整写法。
  *
  * 官方工具（`read`/`write`/`edit`/`bash`/`glob`/`grep`）由 `@deepseek-ai/dsh-tool-*`
  * 提供；这里补两个官方内核里没有、但对 coding agent 很实用的工具：
@@ -10,7 +10,7 @@
  * 插件形状遵循 DSH 约定：模块级 `name` + `inject` + `apply(ctx, config)`，
  * 因此可以直接 `await ctx.plugin(customTools)` 挂载。
  *
- * @module YuanMy/tools
+ * @module Memento/tools
  */
 
 import type { Dirent } from 'node:fs'
@@ -21,7 +21,7 @@ import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 
 /** 插件名（DSH 约定）。 */
-export const name = 'YuanMy-tools'
+export const name = 'Memento-tools'
 /** 依赖 `ctx.tools` 注册表。 */
 export const inject = ['tools']
 
@@ -38,7 +38,7 @@ export const Config: z<Config> = z.object({
 
 /** 目录遍历时默认跳过的名字。 */
 const DEFAULT_IGNORES = new Set([
-  '.git', '.hg', '.svn', '.DS_Store', '.YuanMy', '.cache', '.turbo', '.venv', '.idea', '.vscode-test',
+  '.git', '.hg', '.svn', '.DS_Store', '.Memento', '.cache', '.turbo', '.venv', '.idea', '.vscode-test',
   'node_modules', 'dist', 'build', 'out', 'coverage', '__pycache__', 'target', '.next', '.nuxt',
 ])
 
@@ -124,7 +124,7 @@ function renderTree(root: string, lines: readonly TreeLine[], truncated: boolean
 }
 
 /**
- * 挂载 YuanMy 自定义工具。
+ * 挂载 Memento 自定义工具。
  * @param ctx - 已就绪的上下文（`ctx.tools` 可用）。
  * @param config - 解析后的插件配置（`cwd` 为工作目录基准）。
  */

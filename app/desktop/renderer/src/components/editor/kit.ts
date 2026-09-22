@@ -20,7 +20,7 @@
  * 其余（标题/列表/引用/代码块/加粗/斜体/链接/下滑线/删除线/光标间隙/拖放光标）全部
  * `false`。要加功能时请**逐个**打开并想清楚它的输入规则会不会和 `/` `@` `#` 打架。
  *
- * @module YuanMy/desktop/renderer/src/components/editor/kit
+ * @module Memento/desktop/renderer/src/components/editor/kit
  */
 
 import { StarterKit } from '@tiptap/starter-kit'

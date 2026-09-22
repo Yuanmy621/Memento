@@ -5,7 +5,7 @@
  * 被三处同时引用：
  *   1. `host/index.ts`   —— agent host（跑在独立的 Node 进程里）产生事件；
  *   2. `main.js`        —— Electron 主进程转发事件到渲染进程；
- *   3. `preload.js`     —— 渲染进程通过 `window.YuanMy` 收到同一批事件。
+ *   3. `preload.js`     —— 渲染进程通过 `window.Memento` 收到同一批事件。
  *
  * 为什么 agent 要跑在**子进程**而不是 Electron 主进程里：
  *   DSH 的执行能力 provider（`dsh-fs-local` → koffi、`dsh-subprocess-local` → node-pty）
@@ -13,7 +13,7 @@
  *   直接在主进程里 `import` 会在加载 .node 时失败。把内核放进一个用系统 `node`
  *   启动的子进程，既绕开了 ABI 问题，也让「渲染进程崩溃 / 窗口关闭」不会带走内核状态。
  *
- * @module YuanMy/desktop/host/protocol
+ * @module Memento/desktop/host/protocol
  */
 
 /** 协议版本：主进程与 host 对不上时直接报错，避免静默错位。 */
@@ -26,7 +26,7 @@ export const PROTOCOL_VERSION = 1
  * 渲染进程按它把事件路由到对应会话的视图（后台会话的事件不能落进前台会话里）。
  *
  * 用 `cwd + sessionId` 而不是单看 sessionId：会话 id 只在它自己的项目里唯一
- * （每个项目的会话库是 `<cwd>/.YuanMy`，两份库互不可见）。
+ * （每个项目的会话库是 `<cwd>/.Memento`，两份库互不可见）。
  *
  * 新建但还没就绪的会话没有 id，用空串占位；`ready` 帧带回真实 id 后，
  * 两边各自把键改名为带真实 id 的那个（见 `main.ts` 的 `renameSlot` 与
@@ -447,7 +447,7 @@ export type HostRequest =
    * 要一次设置数据（skill / 命令 / MCP），回一个 `settings` 帧。
    *
    * 与之配套的文件读写**不在这里** —— 那是主进程的活（它有 fs，也是安全边界），
-   * 见 `main.js` 的 `YuanMy:settings-read` / `YuanMy:settings-write`。
+   * 见 `main.js` 的 `Memento:settings-read` / `Memento:settings-write`。
    */
   | { readonly type: 'settings:list' }
   | {

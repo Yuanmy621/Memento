@@ -7,13 +7,13 @@
  * ## 目录布局
  *
  * ```
- * .YuanMy/sessions/
+ * .Memento/sessions/
  *   --Users-me-proj--/                  ← 项目目录名是 cwd 的转义形式（不可逆，所以真路径从日志头里读）
- *     YuanMy-20260918115410-jq637s/
+ *     Memento-20260918115410-jq637s/
  *       session.v3.jsonl                ← 第一行是 session 头，之后每行一个事件
  * ```
  *
- * ⚠️ **会话库是按项目分开的**：内核的 `stateDir` 默认是 `<cwd>/.YuanMy`，
+ * ⚠️ **会话库是按项目分开的**：内核的 `stateDir` 默认是 `<cwd>/.Memento`，
  * 所以上面这个布局在每个项目里各有一份。只扫当前项目那一份的话，侧栏的
  * 「项目 → 会话」树里永远只有**一个**项目 —— 换到别的项目，上一个项目就消失了。
  * 因此列表会**同时扫「最近打开过的项目」各自的库**（{@link rootsOf}），
@@ -41,7 +41,7 @@
  *     其他项目由 {@link listProjectSessions} 在侧栏里被点开时才读。于是「项目很多」
  *     只让首屏多付「每个项目读一个头」的代价，而不是把所有会话都读一遍。
  *
- * @module YuanMy/desktop/host/sessions
+ * @module Memento/desktop/host/sessions
  */
 
 import { open, readdir, readFile, stat } from 'node:fs/promises'
@@ -345,13 +345,13 @@ function projectSummary(scan: ProjectScan, currentPath: string, sessionCount = s
 /**
  * 把一个项目根目录换算成它的**会话库根**。
  *
- * 与内核的约定一致：`stateDir` 默认是 `<cwd>/.YuanMy`，会话落在它的 `sessions/` 下。
+ * 与内核的约定一致：`stateDir` 默认是 `<cwd>/.Memento`，会话落在它的 `sessions/` 下。
  * 所以「每个项目一份会话库」—— 光扫当前项目的库，侧栏就永远只看得见一个项目。
  * @param projectPath - 项目根目录。
  * @returns 该项目的会话库根（可能并不存在）。
  */
 export function sessionsRootOf(projectPath: string): string {
-  return join(projectPath, '.YuanMy', 'sessions')
+  return join(projectPath, '.Memento', 'sessions')
 }
 
 /**
@@ -397,7 +397,7 @@ function withCurrentSession(sessions: SessionSummary[], currentSessionId: string
  * （{@link listProjectSessions}），所以项目再多也不会拖慢首屏。
  *
  * ⚠️ 项目清单**不止来自当前项目的会话库**：内核的 `stateDir` 默认是
- * `<cwd>/.YuanMy`，每个项目一份库，只扫一个根的话侧栏永远只有一个项目。
+ * `<cwd>/.Memento`，每个项目一份库，只扫一个根的话侧栏永远只有一个项目。
  * 所以还要扫「最近打开过的项目」各自的库（{@link rootsOf}）——
  * 数据一个字节都不动，只是多读几个根。
  *

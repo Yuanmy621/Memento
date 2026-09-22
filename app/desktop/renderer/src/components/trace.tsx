@@ -18,7 +18,7 @@
  *
  * 入场动画保留：每行 `fade-up` 依次浮现，展开仍是 `grid-template-rows` 的 0fr→1fr。
  *
- * @module YuanMy/desktop/renderer/components/trace
+ * @module Memento/desktop/renderer/components/trace
  */
 
 import { memo, useState, type ReactElement } from 'react'

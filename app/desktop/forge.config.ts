@@ -30,7 +30,7 @@ import { fileURLToPath } from 'node:url'
  *
  * （Forge 的 `package`/`make` 接受一个目录参数，所以不必 cd 过去。）
  *
- * @module YuanMy/desktop/forge.config
+ * @module Memento/desktop/forge.config
  */
 
 import { FuseV1Options, FuseVersion } from '@electron/fuses'
@@ -45,7 +45,7 @@ export default {
   outDir: '../../out',
 
   packagerConfig: {
-    name: 'YuanMy Agent',
+    name: 'Memento Agent',
     /**
      * 应用图标（不带扩展名）：macOS 用 `assets/icon.icns`，Windows 用 `assets/icon.ico`。
      * 路径相对 **staging 目录**（`build/app`），所以 `build-app.ts` 要把 `assets/` 复制进去。
@@ -59,7 +59,7 @@ export default {
      * `app/desktop/assets/icon`，两边都成立。
      */
     icon: fileURLToPath(new URL('./assets/icon', import.meta.url)),
-    appBundleId: 'net.yuanmy.agent',
+    appBundleId: 'net.Memento.agent',
     appCategoryType: 'public.app-category.developer-tools',
     /**
      * 打进 asar。原生二进制必须**排除在外**（见下面的 `asar.unpack`）：
@@ -144,7 +144,7 @@ export default {
        * ⚠️ **`RunAsNode` 必须保持开启**。
        *
        * Forge 官方模板默认把它关掉（安全加固：防止别人拿你的 Electron 当 node 用）。
-       * 但 YuanMy 的内核是**子进程**，在打包形态下正是靠
+       * 但 Memento 的内核是**子进程**，在打包形态下正是靠
        * `ELECTRON_RUN_AS_NODE=1 <App 里的 Electron 二进制> host/index.ts` 跑起来的
        * （见 `main.js` 的 `resolveHostRuntime()`）—— 关掉这个 fuse，内核就起不来，
        * 表现是「窗口能开、agent 永远不可用」。要关它就得改成内置一个 Node 运行时，

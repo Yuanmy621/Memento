@@ -1,7 +1,7 @@
 "use client";
 
 /*
- * ⚠️ VENDORED PATCH（YuanMy）：
+ * ⚠️ VENDORED PATCH（Memento）：
  *   · `live`    —— 行立刻全出来（上游按 700ms 一条演示浮现，真实会话里数据已经在了）；
  *   · `compact` —— 去掉 220px 的演示最小高度（消息流里会撑出空白）；
  *   · 没有 diff 时不再渲染「文件 diff 页脚 + `+N more`」那一块；

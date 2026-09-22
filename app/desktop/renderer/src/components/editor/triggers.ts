@@ -21,7 +21,7 @@
  *
  * 纯逻辑（除了 import 一个纯函数），可被真值表脚本直接跑。
  *
- * @module YuanMy/desktop/renderer/src/components/editor/triggers
+ * @module Memento/desktop/renderer/src/components/editor/triggers
  */
 
 import { isBoundaryChar } from '../rich-text-tokens.ts'

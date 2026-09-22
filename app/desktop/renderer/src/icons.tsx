@@ -15,7 +15,7 @@
  *   2. **线宽**：lucide 默认 2，在小尺寸下略粗，这里统一降到 1.75；
  *   3. **命名**：保留 `Icon*` 前缀，改图标库时组件侧不用动。
  *
- * @module YuanMy/desktop/renderer/src/icons
+ * @module Memento/desktop/renderer/src/icons
  */
 
 import {

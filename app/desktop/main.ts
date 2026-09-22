@@ -1,10 +1,10 @@
 /**
- * YuanMy Agent 桌面客户端 —— **Electron 主进程**。
+ * Memento Agent 桌面客户端 —— **Electron 主进程**。
  *
  * 职责边界（保持这条线，界面渲染的事一律不进主进程）：
  *   1. **窗口与生命周期**：创建 BrowserWindow、应用菜单、单实例锁、退出清理；
  *   2. **agent host 子进程**：拉起来（系统 node）、转发消息、崩了要能看出来；
- *   3. **IPC 收口**：渲染进程只能通过 `preload.js` 暴露的 `window.YuanMy` 说话，
+ *   3. **IPC 收口**：渲染进程只能通过 `preload.js` 暴露的 `window.Memento` 说话，
  *      每个 handler 都校验发送方是不是本窗口，主进程不信任渲染进程；
  *   4. **原生能力**：目录选择框、关于面板、外部链接。
  *
@@ -14,7 +14,7 @@
  *
  * 参考文档：https://www.electronjs.org/zh/docs/latest/api/app
  *
- * @module YuanMy/desktop/main
+ * @module Memento/desktop/main
  */
 
 import { app, BrowserWindow, Menu, dialog, ipcMain, shell } from 'electron'
@@ -71,7 +71,7 @@ let state: ShellState = { phase: 'booting' }
  * 最近一帧「项目 / 会话清单」。
  *
  * 渲染进程要解析 10MB 的 bundle，订阅事件往往晚于 host 推送的首帧 —— 只靠推会丢。
- * 所以这里缓存一份，随 `YuanMy:state` 一起返回（「推 + 拉」两条腿，与 ready 同理）。
+ * 所以这里缓存一份，随 `Memento:state` 一起返回（「推 + 拉」两条腿，与 ready 同理）。
  */
 let workspaceSnapshot: WorkspaceListing | null = null
 /**
@@ -81,11 +81,11 @@ let workspaceSnapshot: WorkspaceListing | null = null
  * 打开的就是仓库自己）；**打包后 `process.cwd()` 是 `/`**，拿它当工作目录会让
  * agent 在一个没有意义的根目录上工作，所以那里换成：上次打开过的项目 → 家目录。
  *
- * `YuanMy_CWD` 可以显式指定（冒烟测试与「从终端打开某个项目」都用它）。
+ * `Memento_CWD` 可以显式指定（冒烟测试与「从终端打开某个项目」都用它）。
  * @returns {string} 项目根目录的绝对路径。
  */
 function defaultProjectDir() {
-  const fromEnv = process.env.YuanMy_CWD
+  const fromEnv = process.env.Memento_CWD
   if (fromEnv !== undefined && fromEnv !== '') return resolve(fromEnv)
   if (app.isPackaged) {
     const recent = readRecentProjects()[0]
@@ -103,12 +103,12 @@ let launchConfig: LaunchConfig = {
 // ─────────────────────────────────────────────────────────────────────────────
 // 「最近打开过的项目」登记
 //
-// 为什么需要它：内核的 `stateDir` 默认是 `<cwd>/.YuanMy`，所以**每个项目一份
+// 为什么需要它：内核的 `stateDir` 默认是 `<cwd>/.Memento`，所以**每个项目一份
 // 会话库**；host 侧的 lister 只扫它自己那一个根，于是侧栏的「项目 → 会话」树里
 // 永远只有当前项目 —— 换到别的项目，上一个就直接消失了。
 //
 // 这里维护一份「打开过哪些项目」的清单（放在 app 级的 userData 里，因为项目
-// 自己的 `.YuanMy` 是每个项目一份、互相看不到），随环境变量交给 host，
+// 自己的 `.Memento` 是每个项目一份、互相看不到），随环境变量交给 host，
 // 由它去扫这些项目各自的库。**数据位置一个字节都不动**。
 //
 // 它只是**线索**：路径可能早被删了、库可能还不存在，host 那边读不到就跳过。
@@ -121,8 +121,8 @@ interface RecentEntry {
   readonly lastOpenedAt: number
 }
 
-/** 登记文件。`YuanMy_PROJECTS_FILE` 可覆盖（冒烟用它把状态关进临时工作区）。 */
-const PROJECTS_FILE = process.env.YuanMy_PROJECTS_FILE ?? join(app.getPath('userData'), 'projects.json')
+/** 登记文件。`Memento_PROJECTS_FILE` 可覆盖（冒烟用它把状态关进临时工作区）。 */
+const PROJECTS_FILE = process.env.Memento_PROJECTS_FILE ?? join(app.getPath('userData'), 'projects.json')
 /** 最多记多少个项目（超出丢最久没打开的）。 */
 const MAX_RECENT_PROJECTS = 20
 
@@ -175,7 +175,7 @@ function rememberProject(path: string): void {
     mkdirSync(dirname(PROJECTS_FILE), { recursive: true })
     writeFileSync(PROJECTS_FILE, `${JSON.stringify({ version: 1, projects: next }, null, 2)}\n`)
   } catch (error) {
-    process.stderr.write(`YuanMy: 记录最近项目失败: ${String(error)}\n`)
+    process.stderr.write(`Memento: 记录最近项目失败: ${String(error)}\n`)
   }
 }
 
@@ -199,7 +199,7 @@ const MAX_LIVE_SLOTS = 6
  *
  * | 情形 | 用什么 | 为什么 |
  * | --- | --- | --- |
- * | `YuanMy_NODE_BIN` 显式指定 | 照用 | 逃生口：想指定别的 node 时不改代码 |
+ * | `Memento_NODE_BIN` 显式指定 | 照用 | 逃生口：想指定别的 node 时不改代码 |
  * | **打包后**（`app.isPackaged`） | **App 自带的那颗 Electron 二进制** + `ELECTRON_RUN_AS_NODE=1` | 用户机器上不该假设有 Node；Electron 自带的 Node 24 与开发机一致，实测能跑内核（含 node-pty/koffi 的原生模块） |
  * | 开发时 | npm/pnpm 注入的 node，退回 PATH | 与 CLI 完全同一条路，行为不会两套 |
  *
@@ -210,7 +210,7 @@ const MAX_LIVE_SLOTS = 6
  * @returns {{ command: string, env: Record<string, string> }} 可执行文件与附加环境变量。
  */
 function resolveHostRuntime() {
-  if (process.env.YuanMy_NODE_BIN) return { command: process.env.YuanMy_NODE_BIN, env: {} }
+  if (process.env.Memento_NODE_BIN) return { command: process.env.Memento_NODE_BIN, env: {} }
   if (app.isPackaged) {
     return {
       command: process.execPath,
@@ -342,7 +342,7 @@ class AgentHost {
     const child = spawn(runtime.command, buildHostArgs(config), {
       cwd: config.cwd,
       stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
-      env: { ...process.env, ...runtime.env, YuanMy_PROJECT_ROOTS: recentProjects.join(':') },
+      env: { ...process.env, ...runtime.env, Memento_PROJECT_ROOTS: recentProjects.join(':') },
     })
     this.child = child
 
@@ -482,7 +482,7 @@ function sendToRenderer(event: BridgeEvent): void {
  */
 function assertSender(event: Electron.IpcMainInvokeEvent): void {
   if (win === null || event.sender !== win.webContents) {
-    throw new Error('YuanMy: 拒绝来自非本窗口的 IPC 调用')
+    throw new Error('Memento: 拒绝来自非本窗口的 IPC 调用')
   }
 }
 
@@ -553,7 +553,7 @@ function requireActiveHost(): AgentHost {
   return slot.host
 }
 
-/** 把当前槽位的状态同步到全局 `state`（`YuanMy:state` / `appInfo` 读它）。 */
+/** 把当前槽位的状态同步到全局 `state`（`Memento:state` / `appInfo` 读它）。 */
 function syncState(): void {
   const slot = activeSlot()
   const key = activeKey === null ? undefined : activeKey
@@ -822,7 +822,7 @@ function createWindow(): void {
     height: 800,
     minWidth: 860,
     minHeight: 560,
-    title: 'YuanMy Agent',
+    title: 'Memento Agent',
     // macOS 不认这个字段（Dock 图标由 .app 包决定，见 APP_ICON 的注释）
     ...(process.platform === 'darwin' ? {} : { icon: APP_ICON }),
     show: false,
@@ -842,7 +842,7 @@ function createWindow(): void {
 
   // 把渲染进程的 console 转发到主进程输出：界面出问题时（React 抛错、CSP 拦截、
   // Promise 未处理）这里是唯一的线索。开发模式下才开，避免正常使用刷屏。
-  if (process.env.YuanMy_DEV === '1') {
+  if (process.env.Memento_DEV === '1') {
     win.webContents.on('console-message', (...args) => {
       // Electron 新旧版本签名不同：新版是 ({level, message, ...})，旧版是 (event, level, message)。
       const first = args[0]
@@ -856,7 +856,7 @@ function createWindow(): void {
   win.once('ready-to-show', () => {
     win?.show()
     // 渲染进程的 bundle 有 10MB 左右（主要是 shiki 的语法定义），这里量一下真实代价。
-    if (process.env.YuanMy_DEV === '1') {
+    if (process.env.Memento_DEV === '1') {
       process.stdout.write(`[desktop] 窗口可见 · 启动耗时 ${String(Date.now() - STARTED_AT)}ms\n`)
     }
   })
@@ -872,7 +872,7 @@ function createWindow(): void {
   })
 
   void win.loadFile(INDEX_HTML)
-  if (process.env.YuanMy_DEV === '1') win.webContents.openDevTools({ mode: 'detach' })
+  if (process.env.Memento_DEV === '1') win.webContents.openDevTools({ mode: 'detach' })
 }
 
 /** 应用菜单：把「换工作目录 / 新建会话」这类动作放到原生菜单里。 */
@@ -881,7 +881,7 @@ function buildMenu() {
   const template = [
     ...(isMac ? [{ role: 'appMenu' }] : []),
     {
-      // 注意 label 不叫「YuanMy」：macOS 的 appMenu 已经占了应用名，
+      // 注意 label 不叫「Memento」：macOS 的 appMenu 已经占了应用名，
       // 再叫一次会出现两个同名顶级菜单。
       label: '文件',
       submenu: [
@@ -898,12 +898,12 @@ function buildMenu() {
         },
         { type: 'separator' },
         {
-          label: '关于 YuanMy Agent',
+          label: '关于 Memento Agent',
           click: () => { app.showAboutPanel() },
         },
         { type: 'separator' },
-        isMac ? { role: 'hide', label: '隐藏 YuanMy' } : { role: 'quit', label: '退出' },
-        ...(isMac ? [{ role: 'quit', label: '退出 YuanMy' }] : []),
+        isMac ? { role: 'hide', label: '隐藏 Memento' } : { role: 'quit', label: '退出' },
+        ...(isMac ? [{ role: 'quit', label: '退出 Memento' }] : []),
       ],
     },
     { role: 'editMenu', label: '编辑' },
@@ -1041,10 +1041,10 @@ function settingsRoots() {
   const roots = [
     join(cwd, '.agents'),
     join(cwd, '.dsh'),
-    join(cwd, '.YuanMy'),
-    join(app.getPath('home'), '.YuanMy'),
+    join(cwd, '.Memento'),
+    join(app.getPath('home'), '.Memento'),
   ]
-  for (const name of ['YuanMy_SKILL_DIRS', 'YuanMy_COMMAND_DIRS']) {
+  for (const name of ['Memento_SKILL_DIRS', 'Memento_COMMAND_DIRS']) {
     const extra = process.env[name]
     if (typeof extra !== 'string' || extra.trim() === '') continue
     for (const part of extra.split(':')) {
@@ -1082,7 +1082,7 @@ function registerIpc() {
   ipcMain.handle(IPC.appInfo, (event) => {
     assertSender(event)
     return {
-      name: 'YuanMy Agent',
+      name: 'Memento Agent',
       version: app.getVersion(),
       electron: process.versions.electron,
       chrome: process.versions.chrome,
@@ -1259,9 +1259,9 @@ async function onReady() {
   void attach({ cwd: launchConfig.cwd, reuse: false })
 }
 
-app.setName('YuanMy Agent')
+app.setName('Memento Agent')
 app.setAboutPanelOptions({
-  applicationName: 'YuanMy Agent',
+  applicationName: 'Memento Agent',
   applicationVersion: app.getVersion(),
   version: `Electron ${process.versions.electron} · Node ${process.versions.node}`,
   copyright: '基于 DeepSeek Harness 内核的 coding agent',
@@ -1301,7 +1301,7 @@ if (!app.requestSingleInstanceLock()) {
   //   「模块已加载」，但永远不出现窗口（实测 Electron 44 必现）。
   //   用 `.then()` 注册回调是可靠写法。
   app.whenReady().then(onReady).catch((error) => {
-    process.stderr.write(`YuanMy: 启动失败: ${error instanceof Error ? error.message : String(error)}\n`)
+    process.stderr.write(`Memento: 启动失败: ${error instanceof Error ? error.message : String(error)}\n`)
     app.exit(1)
   })
 }

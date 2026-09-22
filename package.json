@@ -1,5 +1,5 @@
 {
-  "name": "YuanMy",
+  "name": "Memento",
   "version": "0.1.0",
   "private": true,
   "description": "A minimal coding agent built on the DeepSeek Harness kernel",
@@ -17,9 +17,9 @@
     "typecheck": "tsc --noEmit && tsc --noEmit -p app/desktop/renderer/tsconfig.json && tsc --noEmit -p tsconfig.js.json",
     "mcp:butian": "node app/mcp/butian/server.ts",
     "mcp:vulbox": "node app/mcp/vulbox/server.ts",
-    "desktop:butian": "YuanMy_MCP=butian npm run desktop",
-    "desktop:vulbox": "YuanMy_MCP=vulbox npm run desktop",
-    "desktop:src": "YuanMy_MCP=butian:vulbox npm run desktop",
+    "desktop:butian": "Memento_MCP=butian npm run desktop",
+    "desktop:vulbox": "Memento_MCP=vulbox npm run desktop",
+    "desktop:src": "Memento_MCP=butian:vulbox npm run desktop",
     "opencli:install": "node app/opencli/install.js",
     "audit:css": "node app/desktop/scripts/audit-css.ts"
   },
@@ -105,6 +105,6 @@
     "typescript": "^5.6.0"
   },
   "bin": {
-    "YuanMy": "app/cli/main.ts"
+    "Memento": "app/cli/main.ts"
   }
 }

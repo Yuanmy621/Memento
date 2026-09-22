@@ -30,7 +30,7 @@
  * 不同的落库文本；三个触发符还共用同一个节点（官方做法是三个 mention 实例，节点名
  * 会撞车）。所以这里自己定义节点，样式靠 class 分：`chip--command` 等。
  *
- * @module YuanMy/desktop/renderer/src/components/editor/chip
+ * @module Memento/desktop/renderer/src/components/editor/chip
  */
 
 import { Node, type JSONContent } from '@tiptap/core'

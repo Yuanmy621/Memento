@@ -31,7 +31,7 @@
  *   2. `confidence` 只描述这次回答的分布有多集中，**不是**「答案正确」的保证；
  *   3. 答案里的概率是**标定过**的（上游把 calibration 当训练目标）。
  *
- * @module YuanMy/plugins/system-one/typesafe
+ * @module Memento/plugins/system-one/typesafe
  */
 
 import type { Answer, ChoiceAnswer, NoulAnswer, Question, ScoreAnswer } from './primitives.ts'

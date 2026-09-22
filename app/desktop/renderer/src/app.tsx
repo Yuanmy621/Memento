@@ -17,7 +17,7 @@
  *   - `data-vibrancy`：native 表示窗口已启用原生磨砂玻璃，侧栏要让出背景
  *     （**不是**用 CSS backdrop-filter 自己糊）。
  *
- * @module YuanMy/desktop/renderer/app
+ * @module Memento/desktop/renderer/app
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'

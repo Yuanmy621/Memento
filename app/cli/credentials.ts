@@ -2,7 +2,7 @@
  * DeepSeek API key 解析。
  *
  * 解析顺序（先到先用）：
- *   1. `YuanMy_API_KEY` / `DEEPSEEK_API_KEY` 环境变量；
+ *   1. `Memento_API_KEY` / `DEEPSEEK_API_KEY` 环境变量；
  *   2. DSH 自己的凭据库 `$DSH_HOME/.credentials.yaml`（默认 `~/.dsh/.credentials.yaml`）
  *      的 `refs.DEEPSEEK_API_KEY` —— 也就是 DSH Web/CLI 已经写入的那把 key。
  *
@@ -10,7 +10,7 @@
  * `@deepseek-ai/dsh-llm-deepseek` 是从“启动环境快照”里按变量名取 key 的。
  * 本模块只负责取出与安装，任何日志都不得打印 key 本身。
  *
- * @module YuanMy/credentials
+ * @module Memento/credentials
  */
 
 import { readFileSync } from 'node:fs'
@@ -21,7 +21,7 @@ import { join } from 'node:path'
 export const API_KEY_ENV = 'DEEPSEEK_API_KEY'
 
 /** 本工具自己的覆盖变量，优先级最高。 */
-export const YuanMy_API_KEY_ENV = 'YuanMy_API_KEY'
+export const Memento_API_KEY_ENV = 'Memento_API_KEY'
 
 /** 一次成功的解析：key 本身 + 它来自哪里（用于启动横幅展示）。 */
 export interface ResolvedCredential {
@@ -86,8 +86,8 @@ function unquote(raw: string): string {
  * @returns 命中的凭据，或 `undefined`。
  */
 export function resolveApiKey(): ResolvedCredential | undefined {
-  const own = process.env[YuanMy_API_KEY_ENV]?.trim()
-  if (own !== undefined && own.length > 0) return { key: own, origin: `$${YuanMy_API_KEY_ENV}` }
+  const own = process.env[Memento_API_KEY_ENV]?.trim()
+  if (own !== undefined && own.length > 0) return { key: own, origin: `$${Memento_API_KEY_ENV}` }
   const ambient = process.env[API_KEY_ENV]?.trim()
   if (ambient !== undefined && ambient.length > 0) return { key: ambient, origin: `$${API_KEY_ENV}` }
   return readDshCredential()

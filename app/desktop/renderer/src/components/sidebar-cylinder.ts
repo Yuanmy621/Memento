@@ -32,7 +32,7 @@
  * 强度曲线、切割周期、消散进度都能在 Node 里直接验（仓库里不放测试文件，跑临时脚本）。
  * 画布、rAF、`prefers-reduced-motion` 都在 `components/sidebar-backdrop.tsx`。
  *
- * @module YuanMy/desktop/renderer/src/components/sidebar-cylinder
+ * @module Memento/desktop/renderer/src/components/sidebar-cylinder
  */
 
 /** 可调参数。 */

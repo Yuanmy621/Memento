@@ -1,9 +1,9 @@
-# YuanMy
+# Memento
 
 一个 **coding agent**：内核完全建立在 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)（DSH）之上，同时提供**终端 CLI** 与 **Electron 桌面客户端**两种外壳。
 
 DSH 本身是一个插件化的 agent 内核：agent 循环、会话日志、工具执行管线、文件系统 / Shell / 沙箱能力都是独立的 cordis 插件。
-`YuanMy` 做的事情是**用手写装配把内核搭起来**，再加上两种交互外壳和两个自定义工具，最终得到一个能读代码、改代码、跑命令的编码助手。
+`Memento` 做的事情是**用手写装配把内核搭起来**，再加上两种交互外壳和两个自定义工具，最终得到一个能读代码、改代码、跑命令的编码助手。
 
 ```
 $ npm start                              # 终端：交互式 REPL
@@ -19,10 +19,10 @@ $ npm run desktop                        # 桌面：Electron 客户端
 ## 1. 它长什么样
 
 ```
-YuanMy · 基于 DeepSeek Harness 内核的 coding agent
+Memento · 基于 DeepSeek Harness 内核的 coding agent
 模型     deepseek-official/deepseek-v4-flash
 工作目录 /Users/me/project
-会话     YuanMy-20260917115410-jq637s
+会话     Memento-20260917115410-jq637s
 工具     12 个
 凭据     ~/.dsh/.credentials.yaml sk-de…9a3
 
@@ -54,7 +54,7 @@ npm install
 
 # 提供 DeepSeek API key（三种方式任选）
 export DEEPSEEK_API_KEY=sk-...      # ① 环境变量
-export YuanMy_API_KEY=sk-...          # ② 优先级更高的环境变量
+export Memento_API_KEY=sk-...          # ② 优先级更高的环境变量
 # ③ 不设置也行：会自动读取 DSH 自己写入的 ~/.dsh/.credentials.yaml
 
 npm start
@@ -69,12 +69,12 @@ npm start
 | `--model <id>` / `--provider <id>` | 模型与 provider（默认 `deepseek-v4-flash` / `deepseek-official`） |
 | `--effort <off\|low\|high\|max>` | 推理强度 |
 | `--session <id>` / `--resume <id>` | 指定新会话 id / 恢复已持久化的会话 |
-| `--state-dir <dir>` | 会话与运行数据目录（默认 `<cwd>/.YuanMy`） |
+| `--state-dir <dir>` | 会话与运行数据目录（默认 `<cwd>/.Memento`） |
 | `--no-persist` | 不写会话日志 |
 | `--no-reasoning` | 不显示推理过程 |
 | `--list-tools` | 打印内核注册的全部工具后退出 |
 
-会话以明文 JSONL 落在 `.YuanMy/sessions/<项目>/<会话 id>/session.v3.jsonl`，可以直接 `cat` / `jq` 查看 DSH 的完整事件流。
+会话以明文 JSONL 落在 `.Memento/sessions/<项目>/<会话 id>/session.v3.jsonl`，可以直接 `cat` / `jq` 查看 DSH 的完整事件流。
 
 ### 桌面客户端
 
@@ -211,7 +211,7 @@ await ctx.plugin(AgentLoop, { agents: [] })                 // ctx.agentLoop
 | 内核 | `dsh-llm` `dsh-session` `dsh-session-projection` `dsh-system-prompt` `dsh-tools` `dsh-agent` `dsh-agent-loop` | agent 循环与六个必需服务 |
 | 模型 | `dsh-llm-deepseek` `dsh-deepseek-llm-api-extensions` `dsh-llm-retry` | DeepSeek 路由 + 请求级重试 |
 | 执行能力 | `dsh-subprocess-local` `dsh-shell-env` `dsh-bash-local` `dsh-fs-local` `dsh-fs-observation-policy` `dsh-jobs-local` `dsh-spill-local` `dsh-attachment-local` | `ctx.subprocess` / `ctx.shell` / `ctx.fs` / `ctx.jobs` / `ctx.spillStore` / `ctx.attachments` |
-| 工具 | `dsh-tool-fs` `dsh-tool-fs-search` `dsh-tool-bash` `dsh-tool-jobs` + 自定义 `YuanMy-tools` | `read` `write` `edit` `read_image` `glob` `grep` `bash` `job_*` `tree` `fetch_url` |
+| 工具 | `dsh-tool-fs` `dsh-tool-fs-search` `dsh-tool-bash` `dsh-tool-jobs` + 自定义 `Memento-tools` | `read` `write` `edit` `read_image` `glob` `grep` `bash` `job_*` `tree` `fetch_url` |
 | 技能 | `dsh-skill` `dsh-skill-filesystem` `dsh-tool-skill` | `ctx.skills` + `skill` 工具；技能放 `.agents/skills/`（见第 5 节） |
 | 持久化 | `dsh-session-persistence-jsonl` | 明文 JSONL 会话日志，支撑 `--resume` |
 
@@ -230,8 +230,8 @@ await ctx.plugin(AgentLoop, { agents: [] })                 // ctx.agentLoop
 
 ```
 .agents/skills/
-  yuanmy-desktop-ui/SKILL.md    改桌面端界面的固定套路与两个已修 bug 的复现条件
-  yuanmy-mcp/SKILL.md           往 YuanMy 上接 MCP 服务器的固定套路
+  Memento-desktop-ui/SKILL.md    改桌面端界面的固定套路与两个已修 bug 的复现条件
+  Memento-mcp/SKILL.md           往 Memento 上接 MCP 服务器的固定套路
   src-hunter/                   SRC / 众测漏洞挖掘工作流（27 个文件 + 上游 MIT LICENSE）
 ```
 
@@ -239,14 +239,14 @@ await ctx.plugin(AgentLoop, { agents: [] })                 // ctx.agentLoop
 只落地「能力内核」约 1.1 MB（5 阶段方法论 + 19 个 playbook + 指纹库 + 合规红线），
 上游那 46 MB 的 H1 案例库与 3 MB 的 payloader 刻意没进仓库 ——
 playbook 把 payload 内联在文件里，砍掉它们不影响可用；需要时按该技能〈收录范围〉用
-`$YuanMy_SKILL_DIRS` 挂上。改写要点与 vendored 技能的规矩见 [`.agents/README.md`](.agents/README.md)。
+`$Memento_SKILL_DIRS` 挂上。改写要点与 vendored 技能的规矩见 [`.agents/README.md`](.agents/README.md)。
 
 每个技能是一个目录包，`SKILL.md` 以 YAML frontmatter 开头（`name` + `description` 必填）：
 
 ```markdown
 ---
-name: yuanmy-mcp
-description: 往 YuanMy 上接 MCP 服务器的固定套路 …… 当你要给 YuanMy 加一个 MCP 服务器时使用。
+name: Memento-mcp
+description: 往 Memento 上接 MCP 服务器的固定套路 …… 当你要给 Memento 加一个 MCP 服务器时使用。
 ---
 
 # 正文：写成可执行步骤
@@ -259,7 +259,7 @@ description: 往 YuanMy 上接 MCP 服务器的固定套路 …… 当你要给 
 ### 它是怎么接上内核的
 
 `app/cli/kernel.ts` 挂了 DSH 的三个插件 —— 这三个包本身就属于 DSH 的 skill 体系，
-所以 YuanMy 的技能行为与 DSH CLI 完全一致：
+所以 Memento 的技能行为与 DSH CLI 完全一致：
 
 | 插件 | 作用 |
 | --- | --- |
@@ -268,7 +268,7 @@ description: 往 YuanMy 上接 MCP 服务器的固定套路 …… 当你要给 
 | `@deepseek-ai/dsh-tool-skill` | 首个请求前投递「可用技能目录」，并注册 `skill` 工具按需加载正文 |
 
 扫描范围由 `skillDirs()` 显式指定为 `<cwd>/.agents/skills` 与 `<cwd>/.dsh/skills`，
-可用 `$YuanMy_SKILL_DIRS`（冒号分隔）追加。**没有**开启 DSH 的全局默认根
+可用 `$Memento_SKILL_DIRS`（冒号分隔）追加。**没有**开启 DSH 的全局默认根
 （`~/.dsh/skills`）—— 那是几十个飞书 / 记忆类技能，对编码 agent 是噪声；
 想要 DSH 那套默认行为，把 `includeDefaultRoots` 改成 `true` 即可。
 
@@ -279,7 +279,7 @@ description: 往 YuanMy 上接 MCP 服务器的固定套路 …… 当你要给 
 
 ```bash
 node app/cli/main.ts --list-tools | grep '^skill'   # skill 工具已注册
-node app/cli/main.ts -p "用 skill 工具加载 yuanmy-mcp，告诉我它的第二节标题"
+node app/cli/main.ts -p "用 skill 工具加载 Memento-mcp，告诉我它的第二节标题"
 ```
 
 ⚠️ frontmatter 写错（`name` 与目录名不一致、`description` 为空）的技能会被 provider
@@ -350,13 +350,13 @@ ctx.tools.register(defineTool({
 | 读权威历史 | `session/event`（`tool/call` / `tool/result` / `turn/end`） | 同上 |
 | 给桌面端加一个界面动作 | preload 加一个方法 → main 加一个 `ipcMain.handle` → renderer 调用 | `app/desktop/preload.cjs` / `main.ts` / `renderer/src/` |
 | 给桌面端加一种 UI 帧 | 在 `host/protocol.ts` 加一个 `HostEvent` 分支，bridge 发出、renderer 消费 | `app/desktop/host/bridge.ts` |
-| 读会话历史 / 列会话 | 会话以 JSONL 落在 `<cwd>/.YuanMy/sessions/<项目>/<会话 id>/session.v3.jsonl`，第一行是头 | `app/desktop/host/sessions.ts` |
-| 列会话（项目 → 会话树） | 会话以 JSONL 落在 `<cwd>/.YuanMy/sessions/<项目>/<会话 id>/session.v3.jsonl`，第一行是头 | `app/desktop/host/sessions.ts` |
-| 跨项目列表 | 内核 stateDir 每项目一份库 → 桌面端记一份「最近打开过的项目」（`<userData>/projects.json`），经 `YuanMy_PROJECT_ROOTS` 交给 host 多扫几个根 | `app/desktop/main.ts` + `host/sessions.ts` |
+| 读会话历史 / 列会话 | 会话以 JSONL 落在 `<cwd>/.Memento/sessions/<项目>/<会话 id>/session.v3.jsonl`，第一行是头 | `app/desktop/host/sessions.ts` |
+| 列会话（项目 → 会话树） | 会话以 JSONL 落在 `<cwd>/.Memento/sessions/<项目>/<会话 id>/session.v3.jsonl`，第一行是头 | `app/desktop/host/sessions.ts` |
+| 跨项目列表 | 内核 stateDir 每项目一份库 → 桌面端记一份「最近打开过的项目」（`<userData>/projects.json`），经 `Memento_PROJECT_ROOTS` 交给 host 多扫几个根 | `app/desktop/main.ts` + `host/sessions.ts` |
 | 把某个网站包成 agent 能用的命令 | 写 opencli 适配器放 `app/opencli/clis/<site>/`，`npm run opencli:install` 同步到 `~/.opencli/clis/`（要真实目录、只认 .js） | `app/opencli/` |
 | 加一个命令（`/名字`） | 在 `.agents/commands/<名字>.md` 写 frontmatter + 指令；`include` 可内联技能正文，仅触发那一回合生效 | `.agents/commands/` |
 | 把技能改成命令专用 | 在 `SKILL.md` 的 frontmatter 加 `disable-model-invocation: true`（内核原生政策，不进模型目录） | `.agents/skills/<名字>/SKILL.md` |
-| 接一个 MCP 服务器 | `YuanMy_MCP=<名字> npm start`（默认不挂）；内置的在 `app/cli/kernel.ts` 的 `mcpSpecs()`，也可以丢一个 `<cwd>/.YuanMy/mcp/<名字>.ts` | `app/mcp/` |
+| 接一个 MCP 服务器 | `Memento_MCP=<名字> npm start`（默认不挂）；内置的在 `app/cli/kernel.ts` 的 `mcpSpecs()`，也可以丢一个 `<cwd>/.Memento/mcp/<名字>.ts` | `app/mcp/` |
 | 回放一个会话的历史 | 恢复会话 = `--resume <id>` 重启内核；界面侧由 host 读日志发 `history` 帧（实时路径与回放路径共用 `protocol.ts` 的词表与 `toOutcome`）。界面重载而内核还活着时走 `history:replay`，不必重启 | `app/desktop/host/history.ts` |
 | 拿 token 计量 | `session/event` 的 `assistant/message` 带 `usage`（计数互斥：未命中/命中/写入分开记） | `bridge.ts` 的 `usage` 帧 |
 | 切会话而不打断正在跑的任务 | 主进程按 `sessionKey(cwd, sessionId)` 持有多个 host 槽位：忙的留着、闲的收掉；每一帧打上 `hostId`，渲染进程按会话分视图归约（`Store.views`），对组件只暴露当前那一份 | `main.ts` 的 `attach` + `renderer/src/use-agent.ts` 的 `reducer`/`project` |
@@ -374,14 +374,14 @@ ctx.tools.register(defineTool({
 - **token 统计是会话累计的估算口径**：DSH 的 `inputTokens` 只算**未命中缓存**的部分，命中部分在 `cacheReadTokens`，所以「输入」一栏看起来会比直觉小 —— 悬停明细卡里的「计费输入合计」才是这次请求的完整提示词量。
 - **多内核是有上限的**：每个「后台继续跑」的会话都是一整个内核子进程（10MB 级 bundle + 插件 + 可能的 MCP 子进程），所以空闲的会在切换时立刻回收，同时最多 6 个；超了会明确告诉用户「这个后台任务已被中断」，而不是静默杀掉。
 - **推理强度下拉只露 `low | high | max`**：适配器还会申报 `off`（关掉推理），但它是「关」不是「一档强度」，放进同一个下拉会让人以为它是最低档。要 `off` 就用启动参数 `--effort off`。
-- **技能不扫描全局目录**：默认只看项目里的 `.agents/skills` 与 `.dsh/skills`，`~/.dsh/skills` 里那几十个飞书/记忆类技能不会进编码 agent 的目录（想要就用 `includeDefaultRoots: true` 或 `$YuanMy_SKILL_DIRS`）。
+- **技能不扫描全局目录**：默认只看项目里的 `.agents/skills` 与 `.dsh/skills`，`~/.dsh/skills` 里那几十个飞书/记忆类技能不会进编码 agent 的目录（想要就用 `includeDefaultRoots: true` 或 `$Memento_SKILL_DIRS`）。
 - **三个 tsconfig，各管一层**：`tsconfig.json`（Node 侧 TS：`app/cli` + `app/desktop/host` + `app/mcp`）、`app/desktop/renderer/tsconfig.json`（渲染进程 TSX，DOM+JSX）、`tsconfig.js.json`（Node 侧 **.js**：Electron 入口与冒烟脚本，`checkJs: false`，只管「被认领」与语法）。
   新增源码目录时**必须把 glob 加进对应的 include** —— 漏了的话 `npm run typecheck` 根本不会检查它，编辑器还会另建推断项目、报出极具误导性的「找不到名称 "node:fs/promises"，请安装 @types/node」（真踩过）。自查办法：`npm run typecheck` 之后确认新文件确实被某个项目收进来了
 （`npx tsc --noEmit --listFiles -p <项目> | grep <文件名>`）。
 - **MCP 客户端插件用的是过期发布线**：npm 上 `@deepseek-ai/dsh-mcp-client` 只有 `0.0.1-rc.1`（其它 dsh 包锁在 `0.1.5-rc.2`），peer 范围全都对不上。已逐条核对过它实际用到的 API 在 0.1.5-rc.2 上成立，并用 `peerDependencyRules.allowedVersions` 声明；升级到同一条线时要回来清掉这段。细节见 `app/mcp/README.md`。
 - **桌面端渲染进程的 bundle 约 10 MB**：其中约 9 MB 是 shiki 的 200 多种语言语法定义（单文件 IIFE 会把「按需加载」全部内联）。实测冷启动到窗口可见约 235–400 ms，暂不处理；瘦身路线见 `app/desktop/README.md`。
 - **磨砂玻璃与隐藏标题栏只在 macOS 上验证过**：Windows 走 `backgroundMaterial: 'acrylic'` + `titleBarOverlay`，Linux 保留原生标题栏（否则没有关闭按钮），都还没实机跑过。材质覆盖**整窗**（侧栏 + 主界面），渲染进程这边按 `html[data-vibrancy]` 分支让出背景并各刷一层同族染色（`--ym-sidebar-tint` / `--ym-main-tint`）。
-- **模型目录**：默认 `deepseek-v4-flash`；用 `--model` 或 `/model` 切换。适配器申报 4 款，但 YuanMy 只对用户暴露 `deepseek-v4-flash` 与 `deepseek-v4-pro` 两款主力（清单在 `app/cli/options.ts` 的 `SUPPORTED_MODELS`，CLI 默认值与桌面端下拉框共用它）。
+- **模型目录**：默认 `deepseek-v4-flash`；用 `--model` 或 `/model` 切换。适配器申报 4 款，但 Memento 只对用户暴露 `deepseek-v4-flash` 与 `deepseek-v4-pro` 两款主力（清单在 `app/cli/options.ts` 的 `SUPPORTED_MODELS`，CLI 默认值与桌面端下拉框共用它）。
 - **依赖版本锁定**：所有 `@deepseek-ai/dsh-*` 固定在 **`0.1.5-rc.2`**，即标准发布线 —— 官方 CLI `@deepseek-ai/dsh`（npm `latest`）依赖 `^0.1.5-rc.1`，解析结果正是它。安装时请认准这条线：
   - 不要按各**子包**自己的 `latest` 标签装：那些标签是过期的（核心停在 `0.1.0-rc.6`，`dsh-tool-fs` / `dsh-fs-local` / `dsh-llm-deepseek` 停在 `0.0.1-rc.1`），混装会因 `inject` 列表不一致而静默停在 PENDING；
   - 也不要用 `0.1.0-rc` 线：它本身缺包（例如没有 `dsh-deepseek-llm-api-extensions`）；

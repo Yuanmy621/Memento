@@ -29,7 +29,7 @@ include:
 ## 已经接过一个可用的图像工具：SenseAudio 同步出图（2026-09 实测）
 
 同一个工作目录里已经有一整套**跑通过**的脚本（`.tmp/ip-as-logo/`，`.tmp/` 是 scratch，
-交付物另存 `~/.YuanMy/ip-as-logo/<日期>/`）：
+交付物另存 `~/.Memento/ip-as-logo/<日期>/`）：
 
 | 文件 | 作用 |
 | --- | --- |
@@ -41,7 +41,7 @@ include:
 接口与约束（**每次动手前先读文档确认，别照抄这段当契约**）：
 `POST https://api.senseaudio.cn/v1/image/sync`，body `{model, prompt, size}` → `{url}`；
 模型 `doubao-seedream-5-0-260128`；`prompt` ≤ 2048 码位；方形尺寸从 `2048x2048` 起。
-key 放 `~/.YuanMy/senseaudio.key`（600）或 `SENSEAUDIO_API_KEY`。
+key 放 `~/.Memento/senseaudio.key`（600）或 `SENSEAUDIO_API_KEY`。
 
 ### ⚠️ 长任务必须守护化启动，否则会被 harness 连坐杀掉
 

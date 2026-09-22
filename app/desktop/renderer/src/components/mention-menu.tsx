@@ -17,7 +17,7 @@
  * - 「用 … 工具：」「用 skill 工具加载 …」这两句话是刻意保留的：它们是给**模型**
  *   看的明确指令（会话记录里的 token 染色也认这两种句式，见 rich-text-tokens.ts）。
  *
- * @module YuanMy/desktop/renderer/src/components/mention-menu
+ * @module Memento/desktop/renderer/src/components/mention-menu
  */
 
 import type { ReactElement } from 'react'

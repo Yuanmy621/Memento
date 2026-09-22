@@ -22,7 +22,7 @@
  *   - **强度**：真下拉（low / high / max）。档位来自适配器对**这个模型**申报的
  *     推理强度（`ModelInfo.efforts`），只挑出「强度」三档（`off` 是关掉推理，
  *     不算强度，见 `effortChoices`）；选中即 `setEffort`，同样下一次请求生效。
- *   - **权限**：YuanMy 的本地 provider **没有沙箱、没有审批**（见根 README「已知边界」），
+ *   - **权限**：Memento 的本地 provider **没有沙箱、没有审批**（见根 README「已知边界」），
  *     所以这里只如实显示「完全访问」，**不做成一个能选的假开关** ——
  *     一个假的安全控件比没有控件更糟：它会让人以为有沙箱。
  *   - **加号**：放真实的会话 / 工作区动作（新建会话、打开工作目录）。
@@ -37,7 +37,7 @@
  *    `handleKeyDown` 的顺序是「view 自己的 props 先，然后才是插件」，所以这里就是
  *    唯一的总闸：先输入法、再菜单、最后才是提交/中断。
  *
- * @module YuanMy/desktop/renderer/components/composer
+ * @module Memento/desktop/renderer/components/composer
  */
 
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react'
@@ -445,7 +445,7 @@ export function Composer(props: ComposerProps): ReactElement {
             <Menu
               icon={<IconShield size={14} />}
               label="完全访问"
-              title="YuanMy 的本地 provider 没有沙箱与审批：agent 拥有当前用户的全部读写与执行权限"
+              title="Memento 的本地 provider 没有沙箱与审批：agent 拥有当前用户的全部读写与执行权限"
               caret
               width={300}
               entries={[{

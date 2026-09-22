@@ -1,5 +1,5 @@
 /**
- * YuanMy 的系统提示词组成。
+ * Memento 的系统提示词组成。
  *
  * DSH 的 system prompt 是「按 order 排序的可插拔 section 集合」，每个插件都能贡献。
  * 这里做两件事：
@@ -9,7 +9,7 @@
  * `{{cwd}}` / `{{model}}` 这类变量由 `dsh-agent-loop` 注册，`interpolate: true`
  * 的 section 会在每次组装时替换它们。
  *
- * @module YuanMy/prompt
+ * @module Memento/prompt
  */
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -19,7 +19,7 @@ import type {} from '@deepseek-ai/dsh-system-prompt'
 /** 部署级 persona：写清楚「你是谁、在什么环境里、怎么干活」。 */
 export function personaText(): string {
   return [
-    'You are YuanMy, a coding agent running in the user\'s terminal.',
+    'You are Memento, a coding agent running in the user\'s terminal.',
     'You are built on the DeepSeek Harness kernel: the agent loop, session log, tool pipeline, and filesystem/shell services are DSH plugins.',
     '',
     'Working style:',
@@ -32,12 +32,12 @@ export function personaText(): string {
 }
 
 /**
- * 注册 YuanMy 自己的 prompt section。
+ * 注册 Memento 自己的 prompt section。
  * @param ctx - 已经挂载了 `ctx.systemPrompt` 的上下文。
  */
 export function installPromptSections(ctx: Context): void {
   ctx.systemPrompt.section({
-    name: 'YuanMy:workspace',
+    name: 'Memento:workspace',
     // 300：位于 persona(0) 之后、各类策略段(500+) 之前。
     order: 300,
     text: [
@@ -51,7 +51,7 @@ export function installPromptSections(ctx: Context): void {
   })
 
   ctx.systemPrompt.section({
-    name: 'YuanMy:custom-tools',
+    name: 'Memento:custom-tools',
     // 1950：紧跟官方工具说明（bash 1000 … jobs 1600），排在 web 工具之前。
     order: 1950,
     text: [

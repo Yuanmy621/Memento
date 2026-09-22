@@ -52,9 +52,9 @@ user-invocable: true             # 仍然允许人工入口（默认就是 true�
 
 | 技能 | 来源 | 调用方式 | 说明 |
 | --- | --- | --- | --- |
-| `yuanmy-desktop-ui` | 自研 | **命令专用**（`/yuanmy-desktop-ui`） | 改桌面端界面的固定套路 |
-| `yuanmy-mcp` | 自研 | **命令专用**（`/yuanmy-mcp`） | 往 YuanMy 上接 MCP 服务器的固定套路 |
-| `yuanmy-package` | 自研 | **命令专用**（`/yuanmy-package`） | 桌面端打包、排障与产物验证 |
+| `Memento-desktop-ui` | 自研 | **命令专用**（`/Memento-desktop-ui`） | 改桌面端界面的固定套路 |
+| `Memento-mcp` | 自研 | **命令专用**（`/Memento-mcp`） | 往 Memento 上接 MCP 服务器的固定套路 |
+| `Memento-package` | 自研 | **命令专用**（`/Memento-package`） | 桌面端打包、排障与产物验证 |
 | `report` | **vendored**（[v-yun/vuln-report-skill](https://github.com/v-yun/vuln-report-skill)，MIT） | **命令专用**（`/report`） | 已确认漏洞 → 可提交的 DOCX 报告：分层验证门 + 固定版式 + Step 式 PoC + 截图铁律 |
 | `butian-src-hunter` | **vendored**（[MyuriKanao/src-hunter-skill](https://github.com/MyuriKanao/src-hunter-skill)，MIT） | **命令专用**（`/butian-src-hunter`） | SRC / 众测漏洞挖掘工作流：5 阶段 + 19 个 playbook + 指纹库 |
 | `ip-as-logo` | 自研 | **命令专用**（`/ip-as-logo`） | IP 形象 logo 生成方法论 |
@@ -86,7 +86,7 @@ user-invocable: true             # 仍然允许人工入口（默认就是 true�
 
 ```markdown
 ---
-name: yuanmy-desktop-ui
+name: Memento-desktop-ui
 description: 在这个仓库里改完代码怎么验证 —— 从便宜的静态检查到真窗口 E2E 的顺序、
              什么算「验证过了」、以及三个踩过的坑。当你说「验证一下 / 跑测试 / 确认没坏」时用。
 ---
@@ -124,7 +124,7 @@ description: 在这个仓库里改完代码怎么验证 —— 从便宜的静�
 
 1. `<cwd>/.agents/skills` —— **本目录，主用**
 2. `<cwd>/.dsh/skills` —— DSH 约定的项目级目录（优先级更高，保留兼容）
-3. `$YuanMy_SKILL_DIRS`（冒号分隔）追加的目录 —— 放个人 / 团队共享技能
+3. `$Memento_SKILL_DIRS`（冒号分隔）追加的目录 —— 放个人 / 团队共享技能
 
 > 这里**没有**开启 DSH 的默认根（`~/.dsh/skills`、`~/.agents/skills`）。
 > 那些是 DSH CLI 的全局技能库（几十个飞书 / 记忆类技能），对编码 agent 是噪声，
@@ -154,7 +154,7 @@ include:                       # 可选：把哪些文件内联进这一回合
   扫命令时不会把子目录里的东西当成命令。
 - 展开后的消息结构固定为三段：**命令正文 → 内联文件 → 本次输入**。
   顺序有意为之：规则在前，素材居中，用户这次的具体要求放最后（离生成最近）。
-- 名字冲突时**项目目录优先**（`.agents/commands` > `.dsh/commands` > `$YuanMy_COMMAND_DIRS`）。
+- 名字冲突时**项目目录优先**（`.agents/commands` > `.dsh/commands` > `$Memento_COMMAND_DIRS`）。
 
 在哪敲：
 
@@ -178,7 +178,7 @@ include:                       # 可选：把哪些文件内联进这一回合
 node app/cli/main.ts --list-tools | grep '^skill'     # 工具存在
 node app/cli/main.ts -p "回答两个字：收到"             # 跑一轮
 # 然后看会话日志里投递的技能目录（首个请求前会 splice 进 agent inbox）：
-grep -l 'yuanmy-desktop-ui' .YuanMy/sessions/*/*/session.v3.jsonl | tail -1
+grep -l 'Memento-desktop-ui' .Memento/sessions/*/*/session.v3.jsonl | tail -1
 ```
 
 技能名出现在会话日志里 = 发现 + 目录投递都正常。

@@ -7,7 +7,7 @@
  *
  * 前者是易失的、后者才是权威记录，所以正文靠前者渲染、结论靠后者判断。
  *
- * @module YuanMy/ui
+ * @module Memento/ui
  */
 
 import type { Context } from '@deepseek-ai/cordis'
@@ -264,7 +264,7 @@ export function printBanner(info: {
     `${gray('工具')}     ${info.tools} 个`,
     `${gray('凭据')}     ${info.credential}`,
   ]
-  process.stdout.write(`\n${bold('YuanMy')} ${gray('· 基于 DeepSeek Harness 内核的 coding agent')}\n`)
+  process.stdout.write(`\n${bold('Memento')} ${gray('· 基于 DeepSeek Harness 内核的 coding agent')}\n`)
   process.stdout.write(rows.join('\n') + '\n')
   process.stdout.write(gray('输入任务开始对话；/help 查看命令，Ctrl-C 中断当前回合，再按一次退出。\n\n'))
 }

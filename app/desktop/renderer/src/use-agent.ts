@@ -1,5 +1,5 @@
 /**
- * agent 状态机：把 `window.YuanMy` 的事件流归约成界面状态。
+ * agent 状态机：把 `window.Memento` 的事件流归约成界面状态。
  *
  * 这里是**唯一**把 host 事件翻译成 UI 数据的地方，组件只读 `state.items`。
  * 归约器是纯函数：事件进、状态出，不碰 DOM、不碰网络。
@@ -14,7 +14,7 @@
  * 事件类型直接取自 host 的协议定义（`host/protocol.ts`）—— 只做类型导入，
  * 编译后不留运行时依赖，于是「协议真相」仍然只有一份。
  *
- * @module YuanMy/desktop/renderer/use-agent
+ * @module Memento/desktop/renderer/use-agent
  */
 
 import { useCallback, useEffect, useReducer, useRef, type Dispatch } from 'react'
@@ -80,7 +80,7 @@ export type AgentEvent = (HostEvent | ShellEvent) & {
   readonly hostId?: string
 }
 
-/** shell / agent 状态快照（`YuanMy:state` 的返回）。 */
+/** shell / agent 状态快照（`Memento:state` 的返回）。 */
 export interface ShellState {
   readonly phase: 'booting' | 'ready' | 'error'
   readonly info?: HostReadyInfo
@@ -109,20 +109,20 @@ export interface SettingsData {
   readonly skills: readonly SkillEntry[]
   readonly commands: readonly CommandEntry[]
   readonly mcp: readonly McpEntry[]
-  /** MCP 配置文件路径（`<cwd>/.YuanMy/mcp.json`）。 */
+  /** MCP 配置文件路径（`<cwd>/.Memento/mcp.json`）。 */
   readonly mcpConfigPath: string
   /** 配置文件存在但解析失败时的原因。 */
   readonly mcpConfigError?: string
 }
 
-/** `YuanMy:settings-read` / `settings-write` 的返回。 */
+/** `Memento:settings-read` / `settings-write` 的返回。 */
 export interface FileResult {
   readonly ok: boolean
   readonly content?: string
   readonly error?: string
 }
 
-/** `YuanMy:app-info` 的返回。 */
+/** `Memento:app-info` 的返回。 */
 export interface AppInfo {
   readonly name: string
   readonly version: string
@@ -183,7 +183,7 @@ export interface AgentApi {
 declare global {
   interface Window {
     /** preload 注入；若注入失败则为 undefined（界面会给出明确提示）。 */
-    readonly YuanMy?: AgentApi
+    readonly Memento?: AgentApi
   }
 }
 
@@ -1183,7 +1183,7 @@ export interface AgentController {
   /**
    * 用当前配置重启**当前会话**的内核。
    *
-   * 用途：改完 MCP 配置（`<cwd>/.YuanMy/mcp.json`）后让它生效 ——
+   * 用途：改完 MCP 配置（`<cwd>/.Memento/mcp.json`）后让它生效 ——
    * MCP 服务器是启动时挂的，不重启不会变。
    */
   readonly restartKernel: () => Promise<void>
@@ -1250,9 +1250,9 @@ export function useAgent(): AgentController {
   }, [state.switching])
 
   useEffect(() => {
-    const api = globalThis.window?.YuanMy
+    const api = globalThis.window?.Memento
     if (api === undefined) {
-      dispatch({ type: 'notice', level: 'error', message: 'window.YuanMy 不存在：preload 没有加载。' })
+      dispatch({ type: 'notice', level: 'error', message: 'window.Memento 不存在：preload 没有加载。' })
       return undefined
     }
 
@@ -1311,7 +1311,7 @@ export function useAgent(): AgentController {
     return off
   }, [])
 
-  const api = globalThis.window?.YuanMy
+  const api = globalThis.window?.Memento
 
   /** 发送一个回合。 */
   const send = useCallback(async (text: string): Promise<void> => {
@@ -1329,7 +1329,7 @@ export function useAgent(): AgentController {
 
   /** 右侧预览面板读文件（`openPath` 的「读回内容」版本）。 */
   const previewRead = useCallback(async (path: string): Promise<PreviewPayload> => {
-    if (api === undefined) return { ok: false, path, kind: 'binary', error: 'window.YuanMy 不可用' }
+    if (api === undefined) return { ok: false, path, kind: 'binary', error: 'window.Memento 不可用' }
     return await api.previewRead(path)
   }, [api])
 
@@ -1503,12 +1503,12 @@ export function useAgent(): AgentController {
   }, [api])
 
   const readFile = useCallback(async (path: string): Promise<FileResult> => {
-    if (api === undefined) return { ok: false, error: 'window.YuanMy 不可用' }
+    if (api === undefined) return { ok: false, error: 'window.Memento 不可用' }
     return api.settingsRead(path)
   }, [api])
 
   const writeFile = useCallback(async (path: string, content: string): Promise<FileResult> => {
-    if (api === undefined) return { ok: false, error: 'window.YuanMy 不可用' }
+    if (api === undefined) return { ok: false, error: 'window.Memento 不可用' }
     const result = await api.settingsWrite(path, content)
     // 写成功后顺手刷新设置数据：列表里的「大小/告警」要跟着变
     if (result.ok) void loadSettings()

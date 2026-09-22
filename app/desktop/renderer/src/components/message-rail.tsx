@@ -24,7 +24,7 @@
  *   2. 重新测量的触发条件必须苛刻（内容总高变了 / 条目数变了 / 窗口尺寸变了），
  *      不然流式输出时每一帧都量一遍几百个元素。
  *
- * @module YuanMy/desktop/renderer/components/message-rail
+ * @module Memento/desktop/renderer/components/message-rail
  */
 
 import {

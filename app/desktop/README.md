@@ -1,4 +1,4 @@
-# YuanMy Agent 桌面客户端
+# Memento Agent 桌面客户端
 
 Electron 外壳。**复用 `app/cli/` 的同一套 DSH 内核装配**，只把「终端渲染」换成「窗口界面」。
 
@@ -17,7 +17,7 @@ npm run desktop          # 打开窗口
 > | `renderer/src/*.tsx` | 浏览器（打包成 IIFE） | 由 `<script src>` 加载，不走 Node 模块系统 |
 >
 > ⚠️ **`preload` 是全项目唯一需要构建的一环，而且不能省**：把 Electron 的
-> `webPreferences.preload` 指到 `preload.ts` 会**静默失败**（`window.YuanMy` 不存在，
+> `webPreferences.preload` 指到 `preload.ts` 会**静默失败**（`window.Memento` 不存在，
 > 界面只会说「preload 脚本没有加载」，看不出真因）。实测：同一个文件指 `.ts` 时
 > `window.probe === null`，指构建出来的 `.cjs` 时正常。
 > 另外 **Electron 加载 preload 时会忽略 `"type": "module"`**，一律按 CommonJS 执行
@@ -228,7 +228,7 @@ CSS 侧删掉 `.topbar__title`、`.btn--primary` / `.btn--stop`（连同只为�
 └──────────────────────────────────────────────────────────────────────────────┘
 
 ┌──────────────── 渲染进程 (renderer/) ────────────────┐
-│  React 应用：无 Node、无 ipcRenderer，只能看到 window.YuanMy │
+│  React 应用：无 Node、无 ipcRenderer，只能看到 window.Memento │
 │  Markdown 由 Streamdown 渲染（代码高亮走 shiki）        │
 └──────────────────────────────────────────────────────┘
 ```
@@ -236,7 +236,7 @@ CSS 侧删掉 `.topbar__title`、`.btn--primary` / `.btn--stop`（连同只为�
 | 文件 | 语言 | 角色 |
 | --- | --- | --- |
 | `main.ts` | JS（ESM） | Electron 主进程：窗口、菜单、生命周期、IPC 收口、**多 host 槽位**（一会话一进程）、窗口材质 |
-| `preload.cjs` | JS（**CommonJS**） | 安全桥：把一组函数挂到 `window.YuanMy`，此外什么都不暴露 |
+| `preload.cjs` | JS（**CommonJS**） | 安全桥：把一组函数挂到 `window.Memento`，此外什么都不暴露 |
 | `ipc.ts` | JS（ESM） | IPC 频道名 + shell 状态形状（只被主进程引用） |
 | `host/index.ts` | TS | agent host：装凭据、起内核、驱动回合、收发协议消息 |
 | `host/bridge.ts` | TS | 内核事件 → UI 帧；工具摘要直接复用 CLI 的 `summarizeCall` / `summarizeResult` |
@@ -305,7 +305,7 @@ renderer/dist/renderer.css    Tailwind 产出（含 Streamdown 的类名）
 
 渲染进程能做的事，全部由 `preload.cjs` 的 `api` 对象定义。加一个动作的完整链路：
 
-1. `ipc.ts`：往 `IPC` 表里加频道名（例如 `theme: 'YuanMy:theme'`）；
+1. `ipc.ts`：往 `IPC` 表里加频道名（例如 `theme: 'Memento:theme'`）；
 2. `main.ts`：加 `ipcMain.handle(IPC.theme, (event) => { assertSender(event); … })`；
 3. `preload.cjs`：在 `CHANNEL` 与 `api` 里各加一条（**沙箱化 preload 不能 require 本地文件，
    所以频道字面量必须重复一份**）；
@@ -403,7 +403,7 @@ app.whenReady().then(() => { /* … */ })
 
 1. `styles/app.css` 在 `@import "tailwindcss"` 之后 `@import "../src/ui/beautifului/foundation.css"`；
 2. `index.html` 的 `<html>` 写死 `class="dark"` —— foundation 用 `.dark` 开关它那套暗色令牌，
-   YuanMy 只有暗色一套，不做主题切换；
+   Memento 只有暗色一套，不做主题切换；
 3. `--font-inter` / `--font-mono-face` 指到项目现有两套字体（上游靠 Next.js 的 `next/font` 注入）。
 
 ### 哪些上游构件没法直接用（记录取舍）
@@ -441,7 +441,7 @@ app.whenReady().then(() => { /* … */ })
 | `--color-accent` **撞名**：上游当品牌色，Streamdown（shadcn 主题）当 hover 底色 | `bg-accent` 主按钮渲染成灰色 | 全局给品牌语义（`--color-accent: var(--accent)`），Streamdown 那份收进 `.sd { --color-accent: … }` |
 | 上游原子构件**不透传原生属性** | `title` / `aria-*` 传不进去（我们到处用 tooltip） | vendored 时给根元素加 `...props`（已在 README 的改动表里登记） |
 
-品牌色沿用 YuanMy 那支低饱和蓝紫（`--accent: oklch(0.62 0.16 285.5)` 一族），
+品牌色沿用 Memento 那支低饱和蓝紫（`--accent: oklch(0.62 0.16 285.5)` 一族），
 只换色相、不动它的阴影/描边/圆角结构 —— 这是设计系统留的口子。
 
 **历史令牌的过渡办法**：界面里还留着大量早期自研的 `--ym-*` / `--dsw-*` 变量，
@@ -502,9 +502,9 @@ app.whenReady().then(() => { /* … */ })
 | `icon.png`（1024²） | 开发态 macOS Dock 图标（`app.dock.setIcon`，仅 `!app.isPackaged`）、Windows/Linux 的窗口图标（`BrowserWindow.icon`） | **Apple 图标网格**，见下 |
 | `icon.icns` | 打包产物：`forge.config.ts` 的 `packagerConfig.icon` 指向 `assets/icon`，`build-app.ts` 把整个 `assets/` 复制进 staging | 同 `icon.png` |
 
-来源：`~/.YuanMy/ip-as-logo/<日期>-ghost/B1.jpg`（ip-as-logo 技能出的「圆头小幽灵」方片，
+来源：`~/.Memento/ip-as-logo/<日期>-ghost/B1.jpg`（ip-as-logo 技能出的「圆头小幽灵」方片，
 白 + 淡紫、浅底）。派生脚本：`python3 app/desktop/scripts/make-icons.py`
-（要 Pillow，**不参与每次构建**，换图时才跑；源图可用 `YUANMY_ICON_SRC=<路径>` 覆盖）。
+（要 Pillow，**不参与每次构建**，换图时才跑；源图可用 `Memento_ICON_SRC=<路径>` 覆盖）。
 
 ### 两档尺寸规范，别搞混
 
@@ -679,18 +679,18 @@ html[data-vibrancy='native'] .app-shell { background: transparent; }
 
 #### 项目树为什么能跨项目：一份「最近打开过」的登记
 
-内核的 `stateDir` 默认是 `<cwd>/.YuanMy`，所以**每个项目一份会话库**，
-项目自己的 `.YuanMy` 里看不到别的项目。只扫当前项目那一个根的话，树里永远只有
+内核的 `stateDir` 默认是 `<cwd>/.Memento`，所以**每个项目一份会话库**，
+项目自己的 `.Memento` 里看不到别的项目。只扫当前项目那一个根的话，树里永远只有
 **一个**项目 —— 换到别的项目，上一个就直接消失了。数据位置不动，改用一份线索补齐：
 
 ```
 main.ts                                    host（sessions.ts）
 <userData>/projects.json                   roots = [当前项目的库]
-  { version, projects: [                   + 每个「最近打开」项目的 <path>/.YuanMy/sessions
+  { version, projects: [                   + 每个「最近打开」项目的 <path>/.Memento/sessions
       { path, lastOpenedAt }, …            ↓
   ] }                                      locateProjects(roots)
   ↓ 启动 host 时                          · 逐根扫项目目录，按日志头里的 cwd 分组
-  env YuanMy_PROJECT_ROOTS=a:b:c           · 按 cwd 去重，**先扫的根优先**（当前库说了算）
+  env Memento_PROJECT_ROOTS=a:b:c           · 按 cwd 去重，**先扫的根优先**（当前库说了算）
 ```
 
 几条刻意定的规则：
@@ -702,7 +702,7 @@ main.ts                                    host（sessions.ts）
   项目清单总数仍受 `DEFAULT_MAX_PROJECTS` 限制；
 - `list-project-sessions` 用**同一套根与同一套去重**，否则会出现
   「列出来的」和「点开的」不是同一个项目的诡异现象；
-- 项目要**被打开过一次**才会进登记 —— 没跑过 YuanMy 的项目不会凭空出现在树里。
+- 项目要**被打开过一次**才会进登记 —— 没跑过 Memento 的项目不会凭空出现在树里。
 
 > ⚠️ 会话只属于它的项目。`main.ts` 的 `attach()` 只认「调用方明确给出的 `resume`」，
 > 不会把一个项目的会话 id 带到另一个项目去 —— 否则会拿着旧项目的 id 去新项目里找。
@@ -846,7 +846,7 @@ main.ts                                    host（sessions.ts）
 | --- | --- | --- |
 | 技能 | `.agents/skills/<名字>/SKILL.md` | 列表标出 `全局` / `命令专用`，点开编辑正文（含 frontmatter 里的调用政策） |
 | 命令 | `.agents/commands/<名字>.md` | 列表 + 编辑；显示它 `include` 了哪些文件 |
-| MCP | `<cwd>/.YuanMy/mcp.json` | 每个服务器一个启用/停用开关 + 直接编辑 JSON；改完点「重启内核」生效 |
+| MCP | `<cwd>/.Memento/mcp.json` | 每个服务器一个启用/停用开关 + 直接编辑 JSON；改完点「重启内核」生效 |
 
 几个刻意的取舍：
 
@@ -857,9 +857,9 @@ main.ts                                    host（sessions.ts）
   `SKILL.md` 用 ⚠ 标出来（frontmatter 写坏时 provider 只 warn 一句就忽略，
   表现是「文件在、技能不生效」；真踩过：上游 `report` skill 的描述里有 `EN: `，
   YAML 判定成嵌套映射直接抛错）。
-- **文件读写放在主进程**（`YuanMy:settings-read` / `settings-write`），并且只允许
-  `.agents` / `.dsh` / `.YuanMy` / `~/.YuanMy`（外加 `$YuanMy_SKILL_DIRS`、
-  `$YuanMy_COMMAND_DIRS`）之内的路径 —— 渲染进程能要求写文件，所以这里是**安全边界**，
+- **文件读写放在主进程**（`Memento:settings-read` / `settings-write`），并且只允许
+  `.agents` / `.dsh` / `.Memento` / `~/.Memento`（外加 `$Memento_SKILL_DIRS`、
+  `$Memento_COMMAND_DIRS`）之内的路径 —— 渲染进程能要求写文件，所以这里是**安全边界**，
   不能相信传来的路径（`resolve()` 之后比前缀，`../` 逃逸因此无效）。
 - **开关 MCP 只改那一条的 `enabled`**，不用界面上的字段重写整个文件：界面拿到的是
   **合并后**的启动参数（含从内置定义继承的），原样写回会把继承值固化进配置、
@@ -1241,7 +1241,7 @@ waterfall 监听者把它写进即将发出的请求配置（`reasoningEffort`�
 
 适配器（`dsh-llm-deepseek`）申报的目录有 4 款：`deepseek-flash`（V4.1 旧版）、
 `deepseek-v4-flash`、`deepseek-v4-pro`、`deepseek-v4-flash-vision-exp`（实验视觉）。
-YuanMy 只对用户暴露**两款主力**，清单定义在 `app/cli/options.ts` 的
+Memento 只对用户暴露**两款主力**，清单定义在 `app/cli/options.ts` 的
 `SUPPORTED_MODELS` —— 那里同时是 `--model` 的默认值来源，CLI 与桌面端因此不会漂移。
 
 host 侧（`host/index.ts` 的 `listModels`）的规则：
@@ -1258,7 +1258,7 @@ host 侧（`host/index.ts` 的 `listModels`）的规则：
 
 两处刻意的取舍：
 
-- **权限不做成能选的假开关**。YuanMy 的本地 provider 没有沙箱与审批，
+- **权限不做成能选的假开关**。Memento 的本地 provider 没有沙箱与审批，
   给一个「只读 / 工作区可写 / 完全访问」的选择器会让人**以为**有沙箱 ——
   假的安全控件比没有控件更糟。所以它只显示「完全访问」并说明怎么换成受限形态。
 - **统计里的「耗时」是上一轮的墙钟耗时**，由 host 在回合前后量（`durationMs`），
@@ -1599,7 +1599,7 @@ if (view.composing || ime.isImeKeyNative(event)) return false
 
 ```bash
 npm run app:build        # 只生成 staging（build/app/），排查打包问题时用
-npm run package          # → out/YuanMy Agent-darwin-arm64/YuanMy Agent.app
+npm run package          # → out/Memento Agent-darwin-arm64/Memento Agent.app
 npm run make             # → out/make/…（zip + dmg）
 ```
 
@@ -1636,7 +1636,7 @@ build/app/
 
 | 情形 | 用什么 |
 | --- | --- |
-| `YuanMy_NODE_BIN` 显式指定 | 照用（逃生口） |
+| `Memento_NODE_BIN` 显式指定 | 照用（逃生口） |
 | **打包后** | **App 自带的那颗 Electron 二进制** + `ELECTRON_RUN_AS_NODE=1` |
 | 开发时 | npm/pnpm 注入的 node，退回 PATH（现状不变） |
 
@@ -1644,7 +1644,7 @@ Electron 44 自带的 Node 是 **24.21**（与开发机一致），`--experiment
 所以 host 仍然是「直接跑 `.ts`、不构建」。实测（`PATH` 里连 `node` 都没有）：
 
 ```
-$ env PATH=/usr/bin:/bin "out/…/YuanMy Agent.app/Contents/MacOS/YuanMy Agent"
+$ env PATH=/usr/bin:/bin "out/…/Memento Agent.app/Contents/MacOS/Memento Agent"
 → 界面「就绪」，跑一轮 bash 工具调用 → echo no-node-needed ✓
 ```
 
@@ -1670,7 +1670,7 @@ MCP 子进程也是 `process.execPath` 拉起的（`app/cli/kernel.ts` 的 `avai
 3. **staging 目录必须自己声明「我是 Forge 项目」。** Forge 的 `resolveDir()` 从目标目录
    逐级**向上**找标记（`config.forge` / `devDependencies['@electron-forge/cli']`），
    staging 一个都不占时会一路找到**仓库根**，然后把仓库当成要打包的项目 ——
-   报错却是 `Failed to locate module "@standard-schema/spec" from …/YuanMy/node_modules/…`，
+   报错却是 `Failed to locate module "@standard-schema/spec" from …/Memento/node_modules/…`，
    完全不提「项目目录认错了」。所以生成的 `package.json` 里写了
    `config: { forge: './forge.config.ts' }`，并保留 `devDependencies.electron`（精确版本，
    它同时是 `getElectronVersion()` 的数据源）。
@@ -1686,9 +1686,9 @@ MCP 子进程也是 `process.execPath` 拉起的（`app/cli/kernel.ts` 的 `avai
 ### 产物与签名
 
 ```
-out/YuanMy Agent-darwin-arm64/YuanMy Agent.app      # 未压缩的 .app（约 395MB）
-out/make/YuanMy Agent-0.1.0-arm64.dmg               # 146MB，拖进 Applications
-out/make/zip/darwin/arm64/YuanMy Agent-…-0.1.0.zip  # .app 的压缩包（自动更新要的形态）
+out/Memento Agent-darwin-arm64/Memento Agent.app      # 未压缩的 .app（约 395MB）
+out/make/Memento Agent-0.1.0-arm64.dmg               # 146MB，拖进 Applications
+out/make/zip/darwin/arm64/Memento Agent-…-0.1.0.zip  # .app 的压缩包（自动更新要的形态）
 ```
 
 `out/` 与 `build/` 都在 `.gitignore` 里。
@@ -1711,7 +1711,7 @@ Gatekeeper 拦，需要「右键 → 打开」或 `xattr -dr com.apple.quarantin
   真要做「几十个会话常驻」得换成更轻的形态（例如内核里支持会话切换，而不是一进程一会话）。
   （挂回一个还活着的内核 < 1s 且不重启；重启 + 历史可见 ≈ 300ms~1s，见「多会话」一节。）
 - **跨项目列表靠一份「最近打开过」的登记**（不是靠共享会话库）：内核 `stateDir`
-  默认 `<cwd>/.YuanMy`，每个项目一份库，所以桌面端维护
+  默认 `<cwd>/.Memento`，每个项目一份库，所以桌面端维护
   `<userData>/projects.json` 并在启动 host 时把清单交过去，由 host 多扫几个根。
   代价与边界见「项目树为什么能跨项目」一节：项目要**被打开过一次**才会进登记，
   登记最多 20 条、单次最多多扫 8 个根。

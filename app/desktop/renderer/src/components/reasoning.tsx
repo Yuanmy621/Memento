@@ -18,7 +18,7 @@
  *   - 结束后自动收起成一行「思考了 N 字」，点一下展开全文（再点收起）；
  *   - 文本节点 key 稳定（按块的位置），增量只是文本变长 —— 真正的流式输出。
  *
- * @module YuanMy/desktop/renderer/components/reasoning
+ * @module Memento/desktop/renderer/components/reasoning
  */
 
 import { memo, useEffect, useMemo, useRef, useState, type ReactElement } from 'react'

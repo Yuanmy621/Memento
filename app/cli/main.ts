@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
- * YuanMy 入口：解析参数 → 安装凭据 → 启动内核 → 进入 REPL 或一次性执行。
+ * Memento 入口：解析参数 → 安装凭据 → 启动内核 → 进入 REPL 或一次性执行。
  *
  * 注意这里的 import 顺序是有意的：`./credentials.ts` 必须在
  * `@deepseek-ai/dsh-llm-deepseek`（进而 `dsh-launch-environment`）被加载**之前**
  * 把 key 写进 `process.env`，所以内核用动态 `import()` 延迟载入。
  *
- * @module YuanMy/main
+ * @module Memento/main
  */
 
 import { installApiKey, fingerprint } from './credentials.ts'

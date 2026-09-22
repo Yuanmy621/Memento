@@ -31,7 +31,7 @@
  * `include` 的路径相对**命令文件所在目录**解析，`include` 进来的文件会剥掉
  * frontmatter（SKILL.md 的 frontmatter 对模型没用，还占 token）。
  *
- * @module YuanMy/cli/commands
+ * @module Memento/cli/commands
  */
 
 import { existsSync } from 'node:fs'
@@ -76,7 +76,7 @@ export function commandRoots(cwd: string): CommandRoot[] {
     { dir: join(cwd, '.agents', 'commands'), scope: 'project' },
     { dir: join(cwd, '.dsh', 'commands'), scope: 'project' },
   ]
-  const extra = process.env.YuanMy_COMMAND_DIRS?.trim()
+  const extra = process.env.Memento_COMMAND_DIRS?.trim()
   if (extra !== undefined && extra !== '') {
     for (const part of extra.split(':')) {
       const dir = part.trim()
