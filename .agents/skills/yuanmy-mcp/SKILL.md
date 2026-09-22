@@ -1,6 +1,8 @@
 ---
 name: yuanmy-mcp
 description: 往 YuanMy 上接 MCP 服务器的固定套路 —— 内核怎么挂官方 MCP 客户端、$YuanMy_MCP 怎么开、凭据为什么必须显式转发、以及这个仓库用 pnpm 时踩过的两个依赖坑（npm install 会展平布局、降级 dsh-subprocess 会打崩内核）。当你要给 YuanMy 加一个 MCP 服务器、接一个新平台（飞书/GitHub/补天之类）、排查「MCP 工具没出现在工具表里」，或者要改 app/mcp/ 下的服务器时使用。
+# 默认保持 Agent 纯净：命令专用，不进模型的会话技能目录；用 /名字 显式加载。
+disable-model-invocation: true
 ---
 
 # 给 YuanMy 接 MCP 服务器

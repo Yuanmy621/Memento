@@ -7,7 +7,6 @@
   "type": "module",
   "scripts": {
     "start": "node app/cli/main.ts",
-    "agent": "node app/cli/main.ts",
     "build:renderer": "node app/desktop/scripts/build-renderer.ts",
     "desktop": "npm run build:renderer && electron app/desktop/main.ts",
     "desktop:watch": "node app/desktop/scripts/build-renderer.ts --watch",

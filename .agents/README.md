@@ -46,12 +46,18 @@ user-invocable: true             # 仍然允许人工入口（默认就是 true�
 
 现有技能：
 
+> 本仓库当前策略：**所有技能都标了 `disable-model-invocation: true`**，默认只通过 `/名字` 显式加载，
+> 不进模型的会话技能目录 —— 启动时保持通用 agent 的上下文纯净。想恢复某个技能的模型自动调用，
+> 删掉它 frontmatter 里的那一行即可。
+
 | 技能 | 来源 | 调用方式 | 说明 |
 | --- | --- | --- | --- |
-| `yuanmy-desktop-ui` | 自研 | 全局 | 改桌面端界面的固定套路 |
-| `yuanmy-mcp` | 自研 | 全局 | 往 YuanMy 上接 MCP 服务器的固定套路 |
+| `yuanmy-desktop-ui` | 自研 | **命令专用**（`/yuanmy-desktop-ui`） | 改桌面端界面的固定套路 |
+| `yuanmy-mcp` | 自研 | **命令专用**（`/yuanmy-mcp`） | 往 YuanMy 上接 MCP 服务器的固定套路 |
+| `yuanmy-package` | 自研 | **命令专用**（`/yuanmy-package`） | 桌面端打包、排障与产物验证 |
 | `report` | **vendored**（[v-yun/vuln-report-skill](https://github.com/v-yun/vuln-report-skill)，MIT） | **命令专用**（`/report`） | 已确认漏洞 → 可提交的 DOCX 报告：分层验证门 + 固定版式 + Step 式 PoC + 截图铁律 |
-| `src-hunter` | **vendored**（[MyuriKanao/src-hunter-skill](https://github.com/MyuriKanao/src-hunter-skill)，MIT） | 全局 | SRC / 众测漏洞挖掘工作流：5 阶段 + 19 个 playbook + 指纹库 |
+| `butian-src-hunter` | **vendored**（[MyuriKanao/src-hunter-skill](https://github.com/MyuriKanao/src-hunter-skill)，MIT） | **命令专用**（`/butian-src-hunter`） | SRC / 众测漏洞挖掘工作流：5 阶段 + 19 个 playbook + 指纹库 |
+| `ip-as-logo` | 自研 | **命令专用**（`/ip-as-logo`） | IP 形象 logo 生成方法论 |
 
 现有命令：
 

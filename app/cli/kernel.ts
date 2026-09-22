@@ -255,7 +255,7 @@ function customMcpSpecs(cwd: string): Record<string, McpSpec> {
  *
  * 三个来源合并（见 `mcp-config.ts` 的说明）：
  *   1. `$YuanMy_MCP`（冒号分隔）—— 临时开一个；
- *   2. `<cwd>/.YuanMy/mcp.json` 里 `enabled` 的条目 —— 持久开关，可内联覆盖启动参数；
+ *   2. `<cwd>/.YuanMy/mcp.json` 里显式 `enabled: true` 的条目 —— 持久开关，可内联覆盖启动参数；
  *   3. 配置文件里 `enabled: false` 的条目 —— **强制关掉**（盖过前两者）。
  *
  * @param ctx - 内核上下文（未使用，保留签名一致性）。
@@ -458,7 +458,7 @@ export async function bootKernel(options: Options): Promise<Kernel> {
   // 模型侧的入口：在首个请求前投递一份「可用技能目录」，并注册 `skill` 工具按需加载正文。
   await mount(ctx, 'dsh-tool-skill', ToolSkill)
 
-  // ── 6.5 外部 MCP 服务器（`$YuanMy_MCP`，默认不挂）─────────────────────
+  // ── 6.5 外部 MCP 服务器（只有 `$YuanMy_MCP` 或配置显式 `enabled: true` 才挂）──
   await mountMcpServers(ctx, options)
 
   // ── 7. prompt 扩展 ─────────────────────────────────────────────────────

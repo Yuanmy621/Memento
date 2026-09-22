@@ -7,10 +7,10 @@
  * | --- | --- | --- |
  * | 内置 | `app/cli/kernel.ts` 的 `mcpSpecs()` | 仓库自带的（补天） |
  * | 项目目录 | `<cwd>/.YuanMy/mcp/<名字>.{ts,js}` | 丢个文件进去就是一个 server |
- * | **配置文件** | `<cwd>/.YuanMy/mcp.json` | 本模块管的：开关 + 可用内联定义覆盖 |
+ * | **配置文件** | `<cwd>/.YuanMy/mcp.json` | 本模块管的：显式开关（`enabled: true` 才挂）+ 可用内联定义覆盖 |
  *
  * 优先级：配置文件 > 项目目录 > 内置。`$YuanMy_MCP`（冒号分隔的名字）仍然有效，
- * 它是「临时开一个」的快捷方式；配置里的 `enabled` 才是持久开关。
+ * 它是「临时开一个」的快捷方式；配置里显式 `enabled: true` 才是持久开关。
  *
  * ## 配置文件长什么样
  *
@@ -46,7 +46,7 @@ import { join } from 'node:path'
 export interface McpConfigEntry {
   /** 服务器名字（也是工具名里的命名空间）。 */
   readonly name: string
-  /** 是否挂载。缺省视为 true（写进配置就是为了用它）。 */
+  /** 是否挂载。必须显式写 `true`；缺省/漏写一律视为不挂载。 */
   readonly enabled: boolean
   /** 传输方式；缺省从别的来源继承。 */
   readonly transport?: 'stdio' | 'streamable-http'
@@ -126,7 +126,7 @@ export function readMcpConfig(cwd: string): McpConfig {
       : undefined
     entries.push({
       name: record['name'],
-      enabled: record['enabled'] !== false,
+      enabled: record['enabled'] === true,
       ...(transport === undefined ? {} : { transport }),
       ...(typeof record['command'] === 'string' ? { command: record['command'] } : {}),
       ...(stringArray(record['args']) === undefined ? {} : { args: stringArray(record['args']) as string[] }),
