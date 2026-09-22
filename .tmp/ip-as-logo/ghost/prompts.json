@@ -1,0 +1,98 @@
+[
+  {
+    "label": "A1",
+    "direction": "A · 床单小幽灵「小幽」",
+    "corner": "lower-left",
+    "subject": "sheet ghost IP character",
+    "feature": "one bell-shaped dome with three blunt rounded waves along the hem, all three visible",
+    "accent": "the bottom hem wave band plus both eyes",
+    "model": "doubao-seedream-5-0-260128",
+    "size": "2048x2048",
+    "palette": {
+      "ip_color_1": "#FFFFFF 纯白",
+      "ip_color_2": "#C9C4EE 淡紫(浅档) / #8E86DA 淡紫(深档)",
+      "background": "#E7E7EF 白灰偏冷"
+    },
+    "prompt": "Create one full-bleed 1:1 square image.\nBackground: solid white-gray fills the square, every open area and unoccupied corner; the lower-left corner holds the character.\nSubject: one extremely simplified, cute, endearing sheet ghost IP character — one soft rounded continuous silhouette, one defining feature: one bell-shaped dome with three blunt rounded waves along the hem, all three visible.\nComplexity: only 4–7 large shapes, at most two internal color regions, two simple eyes, a tiny mouth only if needed. Remove nonessential outline, anatomy, texture. Readable at 32 × 32.\nColor: exactly three semantic colors — pure white and light purple as the two IP colors, plus the background. Light purple carries the bottom hem wave band plus both eyes; the eyes use a deeper tone of the same purple. Pure white carries the rest of the body, brighter than the background so the silhouette reads. Mute the background saturation slightly: clearly chromatic, not gray or muddy. Keep IP, facial marks, and background clearly separated.\nComposition: upright, emerging from the lower-left, filling 85–95% of the square, staying dominant. Cropping at the bottom or assigned side is welcome to strengthen the corner. Preserve both paired identifying features. Never center or bottom-center the character.\nStyle: simplification, cuteness, and lovable baby-like appeal are strongest; large soft forms, compact proportions, thick rounded contours, ultra-clean graphics. Add an extremely, extremely subtle, almost imperceptible depth through a barely-there neo-skeuomorphic treatment.\nFinish: only the character, clean surfaces, square corners.\nConstraints: no text or watermark, no borders, frames, cards, or masks, one character only, no extra subjects, no fragile lines, sharp tips, outlines, tiny details, or decorations, no photorealistic material or strong 3D rendering, no bevel, glossy hotspot, deep occlusion, extrusion, or cast shadow, no background texture, vignette, or lighting."
+  },
+  {
+    "label": "A2",
+    "direction": "A · 床单小幽灵「小幽」",
+    "corner": "lower-right",
+    "subject": "sheet ghost IP character",
+    "feature": "one bell-shaped dome with three blunt rounded waves along the hem, all three visible",
+    "accent": "one rounded core panel on the chest plus both eyes",
+    "model": "doubao-seedream-5-0-260128",
+    "size": "2048x2048",
+    "palette": {
+      "ip_color_1": "#FFFFFF 纯白",
+      "ip_color_2": "#C9C4EE 淡紫(浅档) / #8E86DA 淡紫(深档)",
+      "background": "#E7E7EF 白灰偏冷"
+    },
+    "prompt": "Create one full-bleed 1:1 square image.\nBackground: solid white-gray fills the square, every open area and unoccupied corner; the lower-right corner holds the character.\nSubject: one extremely simplified, cute, endearing sheet ghost IP character — one soft rounded continuous silhouette, one defining feature: one bell-shaped dome with three blunt rounded waves along the hem, all three visible.\nComplexity: only 4–7 large shapes, at most two internal color regions, two simple eyes, a tiny mouth only if needed. Remove nonessential outline, anatomy, texture. Readable at 32 × 32.\nColor: exactly three semantic colors — pure white and light purple as the two IP colors, plus the background. Light purple carries one rounded core panel on the chest plus both eyes; the eyes use a deeper tone of the same purple. Pure white carries the rest of the body, brighter than the background so the silhouette reads. Mute the background saturation slightly: clearly chromatic, not gray or muddy. Keep IP, facial marks, and background clearly separated.\nComposition: upright, emerging from the lower-right, filling 85–95% of the square, staying dominant. Cropping at the bottom or assigned side is welcome to strengthen the corner. Preserve both paired identifying features. Never center or bottom-center the character.\nStyle: simplification, cuteness, and lovable baby-like appeal are strongest; large soft forms, compact proportions, thick rounded contours, ultra-clean graphics. Add an extremely, extremely subtle, almost imperceptible depth through a barely-there neo-skeuomorphic treatment.\nFinish: only the character, clean surfaces, square corners.\nConstraints: no text or watermark, no borders, frames, cards, or masks, one character only, no extra subjects, no fragile lines, sharp tips, outlines, tiny details, or decorations, no photorealistic material or strong 3D rendering, no bevel, glossy hotspot, deep occlusion, extrusion, or cast shadow, no background texture, vignette, or lighting."
+  },
+  {
+    "label": "B1",
+    "direction": "B · 圆头小幽灵「圆尾」",
+    "corner": "lower-left",
+    "subject": "round-headed little ghost IP character",
+    "feature": "one perfectly round head tapering into a single thick blunt rounded curl tail",
+    "accent": "the single curl tail plus both eyes",
+    "model": "doubao-seedream-5-0-260128",
+    "size": "2048x2048",
+    "palette": {
+      "ip_color_1": "#FFFFFF 纯白",
+      "ip_color_2": "#C9C4EE 淡紫(浅档) / #8E86DA 淡紫(深档)",
+      "background": "#E7E7EF 白灰偏冷"
+    },
+    "prompt": "Create one full-bleed 1:1 square image.\nBackground: solid white-gray fills the square, every open area and unoccupied corner; the lower-left corner holds the character.\nSubject: one extremely simplified, cute, endearing round-headed little ghost IP character — one soft rounded continuous silhouette, one defining feature: one perfectly round head tapering into a single thick blunt rounded curl tail.\nComplexity: only 4–7 large shapes, at most two internal color regions, two simple eyes, a tiny mouth only if needed. Remove nonessential outline, anatomy, texture. Readable at 32 × 32.\nColor: exactly three semantic colors — pure white and light purple as the two IP colors, plus the background. Light purple carries the single curl tail plus both eyes; the eyes use a deeper tone of the same purple. Pure white carries the rest of the body, brighter than the background so the silhouette reads. Mute the background saturation slightly: clearly chromatic, not gray or muddy. Keep IP, facial marks, and background clearly separated.\nComposition: upright, emerging from the lower-left, filling 85–95% of the square, staying dominant. Cropping at the bottom or assigned side is welcome to strengthen the corner. Preserve both paired identifying features. Never center or bottom-center the character.\nStyle: simplification, cuteness, and lovable baby-like appeal are strongest; large soft forms, compact proportions, thick rounded contours, ultra-clean graphics. Add an extremely, extremely subtle, almost imperceptible depth through a barely-there neo-skeuomorphic treatment.\nFinish: only the character, clean surfaces, square corners.\nConstraints: no text or watermark, no borders, frames, cards, or masks, one character only, no extra subjects, no fragile lines, sharp tips, outlines, tiny details, or decorations, no photorealistic material or strong 3D rendering, no bevel, glossy hotspot, deep occlusion, extrusion, or cast shadow, no background texture, vignette, or lighting."
+  },
+  {
+    "label": "B2",
+    "direction": "B · 圆头小幽灵「圆尾」",
+    "corner": "lower-right",
+    "subject": "round-headed little ghost IP character",
+    "feature": "one perfectly round head tapering into a single thick blunt rounded curl tail",
+    "accent": "one rounded core panel on the chest plus both eyes",
+    "model": "doubao-seedream-5-0-260128",
+    "size": "2048x2048",
+    "palette": {
+      "ip_color_1": "#FFFFFF 纯白",
+      "ip_color_2": "#C9C4EE 淡紫(浅档) / #8E86DA 淡紫(深档)",
+      "background": "#E7E7EF 白灰偏冷"
+    },
+    "prompt": "Create one full-bleed 1:1 square image.\nBackground: solid white-gray fills the square, every open area and unoccupied corner; the lower-right corner holds the character.\nSubject: one extremely simplified, cute, endearing round-headed little ghost IP character — one soft rounded continuous silhouette, one defining feature: one perfectly round head tapering into a single thick blunt rounded curl tail.\nComplexity: only 4–7 large shapes, at most two internal color regions, two simple eyes, a tiny mouth only if needed. Remove nonessential outline, anatomy, texture. Readable at 32 × 32.\nColor: exactly three semantic colors — pure white and light purple as the two IP colors, plus the background. Light purple carries one rounded core panel on the chest plus both eyes; the eyes use a deeper tone of the same purple. Pure white carries the rest of the body, brighter than the background so the silhouette reads. Mute the background saturation slightly: clearly chromatic, not gray or muddy. Keep IP, facial marks, and background clearly separated.\nComposition: upright, emerging from the lower-right, filling 85–95% of the square, staying dominant. Cropping at the bottom or assigned side is welcome to strengthen the corner. Preserve both paired identifying features. Never center or bottom-center the character.\nStyle: simplification, cuteness, and lovable baby-like appeal are strongest; large soft forms, compact proportions, thick rounded contours, ultra-clean graphics. Add an extremely, extremely subtle, almost imperceptible depth through a barely-there neo-skeuomorphic treatment.\nFinish: only the character, clean surfaces, square corners.\nConstraints: no text or watermark, no borders, frames, cards, or masks, one character only, no extra subjects, no fragile lines, sharp tips, outlines, tiny details, or decorations, no photorealistic material or strong 3D rendering, no bevel, glossy hotspot, deep occlusion, extrusion, or cast shadow, no background texture, vignette, or lighting."
+  },
+  {
+    "label": "C1",
+    "direction": "C · 方形小幽灵「窗灵」",
+    "corner": "lower-left",
+    "subject": "rounded-square little ghost IP character",
+    "feature": "a pair of small blunt rounded hands, both fully visible",
+    "accent": "both blunt rounded hands plus both eyes",
+    "model": "doubao-seedream-5-0-260128",
+    "size": "2048x2048",
+    "palette": {
+      "ip_color_1": "#FFFFFF 纯白",
+      "ip_color_2": "#C9C4EE 淡紫(浅档) / #8E86DA 淡紫(深档)",
+      "background": "#E7E7EF 白灰偏冷"
+    },
+    "prompt": "Create one full-bleed 1:1 square image.\nBackground: solid white-gray fills the square, every open area and unoccupied corner; the lower-left corner holds the character.\nSubject: one extremely simplified, cute, endearing rounded-square little ghost IP character — one soft rounded continuous silhouette, one defining feature: a pair of small blunt rounded hands, both fully visible.\nComplexity: only 4–7 large shapes, at most two internal color regions, two simple eyes, a tiny mouth only if needed. Remove nonessential outline, anatomy, texture. Readable at 32 × 32.\nColor: exactly three semantic colors — pure white and light purple as the two IP colors, plus the background. Light purple carries both blunt rounded hands plus both eyes; the eyes use a deeper tone of the same purple. Pure white carries the rest of the body, brighter than the background so the silhouette reads. Mute the background saturation slightly: clearly chromatic, not gray or muddy. Keep IP, facial marks, and background clearly separated.\nComposition: upright, emerging from the lower-left, filling 85–95% of the square, staying dominant. Cropping at the bottom or assigned side is welcome to strengthen the corner. Preserve both paired identifying features. Never center or bottom-center the character.\nStyle: simplification, cuteness, and lovable baby-like appeal are strongest; large soft forms, compact proportions, thick rounded contours, ultra-clean graphics. Add an extremely, extremely subtle, almost imperceptible depth through a barely-there neo-skeuomorphic treatment.\nFinish: only the character, clean surfaces, square corners.\nConstraints: no text or watermark, no borders, frames, cards, or masks, one character only, no extra subjects, no fragile lines, sharp tips, outlines, tiny details, or decorations, no photorealistic material or strong 3D rendering, no bevel, glossy hotspot, deep occlusion, extrusion, or cast shadow, no background texture, vignette, or lighting."
+  },
+  {
+    "label": "C2",
+    "direction": "C · 方形小幽灵「窗灵」",
+    "corner": "lower-right",
+    "subject": "rounded-square little ghost IP character",
+    "feature": "a pair of small blunt rounded hands, both fully visible",
+    "accent": "one rounded core panel on the chest plus both eyes",
+    "model": "doubao-seedream-5-0-260128",
+    "size": "2048x2048",
+    "palette": {
+      "ip_color_1": "#FFFFFF 纯白",
+      "ip_color_2": "#C9C4EE 淡紫(浅档) / #8E86DA 淡紫(深档)",
+      "background": "#E7E7EF 白灰偏冷"
+    },
+    "prompt": "Create one full-bleed 1:1 square image.\nBackground: solid white-gray fills the square, every open area and unoccupied corner; the lower-right corner holds the character.\nSubject: one extremely simplified, cute, endearing rounded-square little ghost IP character — one soft rounded continuous silhouette, one defining feature: a pair of small blunt rounded hands, both fully visible.\nComplexity: only 4–7 large shapes, at most two internal color regions, two simple eyes, a tiny mouth only if needed. Remove nonessential outline, anatomy, texture. Readable at 32 × 32.\nColor: exactly three semantic colors — pure white and light purple as the two IP colors, plus the background. Light purple carries one rounded core panel on the chest plus both eyes; the eyes use a deeper tone of the same purple. Pure white carries the rest of the body, brighter than the background so the silhouette reads. Mute the background saturation slightly: clearly chromatic, not gray or muddy. Keep IP, facial marks, and background clearly separated.\nComposition: upright, emerging from the lower-right, filling 85–95% of the square, staying dominant. Cropping at the bottom or assigned side is welcome to strengthen the corner. Preserve both paired identifying features. Never center or bottom-center the character.\nStyle: simplification, cuteness, and lovable baby-like appeal are strongest; large soft forms, compact proportions, thick rounded contours, ultra-clean graphics. Add an extremely, extremely subtle, almost imperceptible depth through a barely-there neo-skeuomorphic treatment.\nFinish: only the character, clean surfaces, square corners.\nConstraints: no text or watermark, no borders, frames, cards, or masks, one character only, no extra subjects, no fragile lines, sharp tips, outlines, tiny details, or decorations, no photorealistic material or strong 3D rendering, no bevel, glossy hotspot, deep occlusion, extrusion, or cast shadow, no background texture, vignette, or lighting."
+  }
+]

@@ -1,0 +1,20 @@
+{"daemon": "started"}
+--- wave 1: A1 A2 B1 ---
+[B1] ok 2048x2048 33654ms 
+[A1] ok 2048x2048 33706ms 
+[A2] ok 2048x2048 35518ms 
+wave 1 done: A1=ok A2=ok B1=ok
+--- wave 2: B2 C1 C2 ---
+[B2] ok 2048x2048 35464ms 
+[C1] ok 2048x2048 40288ms 
+[C2] ok 2048x2048 42184ms 
+wave 2 done: B2=ok C1=ok C2=ok
+
+输出目录：/Users/yuanmingyuan/.YuanMy/ip-as-logo/20260921-ghost
+A1	ok	lower-left	2048x2048	115007B	/Users/yuanmingyuan/.YuanMy/ip-as-logo/20260921-ghost/A1.jpg
+A2	ok	lower-right	2048x2048	105887B	/Users/yuanmingyuan/.YuanMy/ip-as-logo/20260921-ghost/A2.jpg
+B1	ok	lower-left	2048x2048	118886B	/Users/yuanmingyuan/.YuanMy/ip-as-logo/20260921-ghost/B1.jpg
+B2	ok	lower-right	2048x2048	117870B	/Users/yuanmingyuan/.YuanMy/ip-as-logo/20260921-ghost/B2.jpg
+C1	ok	lower-left	2048x2048	105804B	/Users/yuanmingyuan/.YuanMy/ip-as-logo/20260921-ghost/C1.jpg
+C2	ok	lower-right	2048x2048	118171B	/Users/yuanmingyuan/.YuanMy/ip-as-logo/20260921-ghost/C2.jpg
+还差：A1 A2 B1 B2 C1 C2

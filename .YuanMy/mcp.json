@@ -1,0 +1,12 @@
+{
+  "servers": [
+    {
+      "name": "butian",
+      "enabled": false
+    },
+    {
+      "name": "vulbox",
+      "enabled": false
+    }
+  ]
+}

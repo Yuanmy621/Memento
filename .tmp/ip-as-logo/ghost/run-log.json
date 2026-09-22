@@ -1,0 +1,206 @@
+[
+  {
+    "label": "B1",
+    "direction": "B · 圆头小幽灵「圆尾」",
+    "corner": "lower-left",
+    "palette": {
+      "ip_color_1": "#FFFFFF 纯白",
+      "ip_color_2": "#C9C4EE 淡紫(浅档) / #8E86DA 淡紫(深档)",
+      "background": "#E7E7EF 白灰偏冷"
+    },
+    "model": "doubao-seedream-5-0-260128",
+    "size": "2048x2048",
+    "requested_size": "2048x2048",
+    "prompt_codepoints": 1980,
+    "http_status": 200,
+    "source_url": "https://dynamic.senseaudio.cn/image/651c67dc-641b-45a2-a355-1eb7136de9d5",
+    "status": "ok",
+    "path": "/Users/yuanmingyuan/.YuanMy/ip-as-logo/20260921-ghost/B1.jpg",
+    "bytes": 118886,
+    "mime": "image/jpeg",
+    "header": {
+      "width": 2048,
+      "height": 2048
+    },
+    "verified": {
+      "decoder": "sips",
+      "width": 2048,
+      "height": 2048,
+      "format": "jpeg"
+    },
+    "width": 2048,
+    "height": 2048,
+    "square": true,
+    "elapsed_ms": 33654
+  },
+  {
+    "label": "A1",
+    "direction": "A · 床单小幽灵「小幽」",
+    "corner": "lower-left",
+    "palette": {
+      "ip_color_1": "#FFFFFF 纯白",
+      "ip_color_2": "#C9C4EE 淡紫(浅档) / #8E86DA 淡紫(深档)",
+      "background": "#E7E7EF 白灰偏冷"
+    },
+    "model": "doubao-seedream-5-0-260128",
+    "size": "2048x2048",
+    "requested_size": "2048x2048",
+    "prompt_codepoints": 1977,
+    "http_status": 200,
+    "source_url": "https://dynamic.senseaudio.cn/image/6bf20520-46fa-4955-92da-8f396e4614eb",
+    "status": "ok",
+    "path": "/Users/yuanmingyuan/.YuanMy/ip-as-logo/20260921-ghost/A1.jpg",
+    "bytes": 115007,
+    "mime": "image/jpeg",
+    "header": {
+      "width": 2048,
+      "height": 2048
+    },
+    "verified": {
+      "decoder": "sips",
+      "width": 2048,
+      "height": 2048,
+      "format": "jpeg"
+    },
+    "width": 2048,
+    "height": 2048,
+    "square": true,
+    "elapsed_ms": 33706
+  },
+  {
+    "label": "A2",
+    "direction": "A · 床单小幽灵「小幽」",
+    "corner": "lower-right",
+    "palette": {
+      "ip_color_1": "#FFFFFF 纯白",
+      "ip_color_2": "#C9C4EE 淡紫(浅档) / #8E86DA 淡紫(深档)",
+      "background": "#E7E7EF 白灰偏冷"
+    },
+    "model": "doubao-seedream-5-0-260128",
+    "size": "2048x2048",
+    "requested_size": "2048x2048",
+    "prompt_codepoints": 1990,
+    "http_status": 200,
+    "source_url": "https://dynamic.senseaudio.cn/image/fe1c0e91-9eaa-4d0e-98c2-98bea47ce397",
+    "status": "ok",
+    "path": "/Users/yuanmingyuan/.YuanMy/ip-as-logo/20260921-ghost/A2.jpg",
+    "bytes": 105887,
+    "mime": "image/jpeg",
+    "header": {
+      "width": 2048,
+      "height": 2048
+    },
+    "verified": {
+      "decoder": "sips",
+      "width": 2048,
+      "height": 2048,
+      "format": "jpeg"
+    },
+    "width": 2048,
+    "height": 2048,
+    "square": true,
+    "elapsed_ms": 35518
+  },
+  {
+    "label": "B2",
+    "direction": "B · 圆头小幽灵「圆尾」",
+    "corner": "lower-right",
+    "palette": {
+      "ip_color_1": "#FFFFFF 纯白",
+      "ip_color_2": "#C9C4EE 淡紫(浅档) / #8E86DA 淡紫(深档)",
+      "background": "#E7E7EF 白灰偏冷"
+    },
+    "model": "doubao-seedream-5-0-260128",
+    "size": "2048x2048",
+    "requested_size": "2048x2048",
+    "prompt_codepoints": 1997,
+    "http_status": 200,
+    "source_url": "https://dynamic.senseaudio.cn/image/8f70f8d4-1b62-435a-96d4-b9ce2965f0f0",
+    "status": "ok",
+    "path": "/Users/yuanmingyuan/.YuanMy/ip-as-logo/20260921-ghost/B2.jpg",
+    "bytes": 117870,
+    "mime": "image/jpeg",
+    "header": {
+      "width": 2048,
+      "height": 2048
+    },
+    "verified": {
+      "decoder": "sips",
+      "width": 2048,
+      "height": 2048,
+      "format": "jpeg"
+    },
+    "width": 2048,
+    "height": 2048,
+    "square": true,
+    "elapsed_ms": 35464
+  },
+  {
+    "label": "C1",
+    "direction": "C · 方形小幽灵「窗灵」",
+    "corner": "lower-left",
+    "palette": {
+      "ip_color_1": "#FFFFFF 纯白",
+      "ip_color_2": "#C9C4EE 淡紫(浅档) / #8E86DA 淡紫(深档)",
+      "background": "#E7E7EF 白灰偏冷"
+    },
+    "model": "doubao-seedream-5-0-260128",
+    "size": "2048x2048",
+    "requested_size": "2048x2048",
+    "prompt_codepoints": 1964,
+    "http_status": 200,
+    "source_url": "https://dynamic.senseaudio.cn/image/5958010b-8f66-4449-8afc-36abc07f81f4",
+    "status": "ok",
+    "path": "/Users/yuanmingyuan/.YuanMy/ip-as-logo/20260921-ghost/C1.jpg",
+    "bytes": 105804,
+    "mime": "image/jpeg",
+    "header": {
+      "width": 2048,
+      "height": 2048
+    },
+    "verified": {
+      "decoder": "sips",
+      "width": 2048,
+      "height": 2048,
+      "format": "jpeg"
+    },
+    "width": 2048,
+    "height": 2048,
+    "square": true,
+    "elapsed_ms": 40288
+  },
+  {
+    "label": "C2",
+    "direction": "C · 方形小幽灵「窗灵」",
+    "corner": "lower-right",
+    "palette": {
+      "ip_color_1": "#FFFFFF 纯白",
+      "ip_color_2": "#C9C4EE 淡紫(浅档) / #8E86DA 淡紫(深档)",
+      "background": "#E7E7EF 白灰偏冷"
+    },
+    "model": "doubao-seedream-5-0-260128",
+    "size": "2048x2048",
+    "requested_size": "2048x2048",
+    "prompt_codepoints": 1977,
+    "http_status": 200,
+    "source_url": "https://dynamic.senseaudio.cn/image/2935bb1a-d0a1-46c0-9746-1cb133fe7d46",
+    "status": "ok",
+    "path": "/Users/yuanmingyuan/.YuanMy/ip-as-logo/20260921-ghost/C2.jpg",
+    "bytes": 118171,
+    "mime": "image/jpeg",
+    "header": {
+      "width": 2048,
+      "height": 2048
+    },
+    "verified": {
+      "decoder": "sips",
+      "width": 2048,
+      "height": 2048,
+      "format": "jpeg"
+    },
+    "width": 2048,
+    "height": 2048,
+    "square": true,
+    "elapsed_ms": 42184
+  }
+]

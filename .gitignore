@@ -1,6 +1,5 @@
 node_modules/
-.tmp/
-.YuanMy/
+.YuanMy/ssessions
 
 # 客户端构建产物：由 `npm run build:renderer` 生成
 #   renderer/dist/  —— React + Streamdown + Tailwind 打成一个 bundle
