@@ -22,7 +22,7 @@
 import { readFile, readdir, stat } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { installApiKey, fingerprint } from '../../cli/credentials.ts'
-import { parseOptions, SUPPORTED_MODELS, UsageError, type Options } from '../../cli/options.ts'
+import { parseOptions, EFFORTS, SUPPORTED_MODELS, UsageError, type Effort, type Options } from '../../cli/options.ts'
 import { readSessionHistory } from './history.ts'
 import { expandCommand, listCommands, matchCommand } from '../../cli/commands.ts'
 import { skillRoots } from '../../cli/kernel.ts'
@@ -39,6 +39,7 @@ import {
   type HostReadyInfo,
   type HostRequest,
   type McpEntry,
+  type ModelEffortInfo,
   type ModelInfo,
   type SessionUsage,
   type SkillEntry,
@@ -119,10 +120,45 @@ async function listModels(ctx: Kernel['ctx'], provider: string): Promise<ModelIn
       id: wanted.id,
       name: found.name === '' ? wanted.name : found.name,
       ...(found.description === undefined || found.description === '' ? {} : { description: found.description }),
+      ...await modelEfforts(ctx, provider, wanted.id),
     })
   }
   // 一款都没匹配上（适配器换了模型族）时宁可露出真实目录，也别给空下拉框。
   return offered.length > 0 ? offered : [...catalog]
+}
+
+/**
+ * 问适配器要一个模型的**可选推理强度**。
+ *
+ * 强度是模型能力（`resolveModelInfo` 才会给出 `reasoning.efforts`），
+ * 而 `listModels` 的目录里没有这一项 —— 所以要逐个 exact-route 解析一次。
+ * 解析失败（模型刚下线、适配器不申报）就**不带这一项**：界面会退回内置兜底，
+ * 而不是给一个空的下拉框。
+ * @param ctx - 已装配的内核上下文。
+ * @param provider - provider id。
+ * @param model - 模型 id。
+ * @returns 可直接展开进 {@link ModelInfo} 的字段（拿不到时是空对象）。
+ */
+async function modelEfforts(
+  ctx: Kernel['ctx'],
+  provider: string,
+  model: string,
+): Promise<{ efforts?: readonly ModelEffortInfo[] }> {
+  try {
+    const resolved = await ctx.llm.resolveModelInfo(provider, model)
+    const efforts = resolved.reasoning?.efforts
+    if (efforts === undefined || efforts.length === 0) return {}
+    return {
+      efforts: efforts.map(effort => ({
+        id: effort.id,
+        name: effort.name,
+        ...(effort.description === undefined || effort.description === '' ? {} : { description: effort.description }),
+      })),
+    }
+  } catch (error) {
+    process.stderr.write(`YuanMy host: 读模型 ${model} 的推理强度失败（界面用内置兜底）: ${String(error)}\n`)
+    return {}
+  }
 }
 
 async function main(): Promise<void> {
@@ -139,7 +175,7 @@ async function main(): Promise<void> {
   const credential = installApiKey()
 
   // ── 3. 再延迟载入内核（此时环境已就绪）─────────────────────────────────
-  const [kernelModule, { DesktopBridge }, { createUserMessage }] = await Promise.all([
+  const [kernelModule, { DesktopBridge }, { createUserMessage, ReasoningEffortId }] = await Promise.all([
     import('../../cli/kernel.ts'),
     import('./bridge.ts'),
     import('@deepseek-ai/dsh-llm'),
@@ -155,15 +191,30 @@ async function main(): Promise<void> {
     showReasoning: !options.noReasoning,
   })
 
-  /** `/model` 对应的落点：由 `agent/request` waterfall 在每次请求前读取。 */
-  const route: { model: string } = { model: options.model }
+  /**
+   * 「下一次请求用什么模型 / 什么推理强度」的落点。
+   *
+   * 由 `agent/request` waterfall 在每次请求前读取 —— 界面改这两个值只改这里，
+   * **不重建 agent、也不打断正在跑的回合**（已经飞出去的那次请求带着旧值）。
+   */
+  const route: { model: string; effort: Effort } = { model: options.model, effort: options.effort }
 
   // DSH 的 `agent/request` 是一次 waterfall：每个监听者都能改写即将发出的请求配置。
-  // 这里用它实现「运行中切换模型」——不必重建 agent 或会话。
+  // 这里用它实现「运行中切换模型 / 推理强度」——不必重建 agent 或会话。
   const offRoute = kernel.ctx.on('agent/request', async ({ agent: subject }, next) => {
     const config: LlmCallConfig = await next()
-    if (subject !== kernel.agent || config.model === route.model) return config
-    return { ...config, model: route.model }
+    if (subject !== kernel.agent) return config
+    const model = config.model === route.model ? undefined : route.model
+    // 强度用 `ReasoningEffortId`（品牌字符串）；route 里存的是 CLI 的 `Effort`，取值同一套。
+    const effort = config.reasoningEffort === route.effort
+      ? undefined
+      : ReasoningEffortId(route.effort)
+    if (model === undefined && effort === undefined) return config
+    return {
+      ...config,
+      ...(model === undefined ? {} : { model }),
+      ...(effort === undefined ? {} : { reasoningEffort: effort }),
+    }
   })
 
   let shuttingDown = false
@@ -666,9 +717,25 @@ async function main(): Promise<void> {
       case 'list-project-sessions':
         void sendProjectSessions(request.path)
         break
+      /**
+       * 重放当前会话的历史（界面重载后补内容用）。
+       *
+       * 用 `kernel.sessionId` 而不是 `options.resume`：新建会话（没给 `--resume`）
+       * 也有自己的 id，重放它才是「当前这个会话」。
+       */
+      case 'history:replay':
+        void sendHistory(kernel.sessionId)
+        break
       case 'set-model':
         route.model = request.model
         send({ type: 'model-changed', model: request.model })
+        break
+      case 'set-effort':
+        // 取值由 CLI 的 `EFFORTS` 兜底校验（界面只可能给出适配器申报过的值）。
+        route.effort = (EFFORTS as readonly string[]).includes(request.effort)
+          ? request.effort as Effort
+          : route.effort
+        send({ type: 'effort-changed', effort: route.effort })
         break
       case 'shutdown':
         void shutdown()
@@ -690,6 +757,7 @@ async function main(): Promise<void> {
     sessionId: kernel.sessionId,
     provider: options.provider,
     model: route.model,
+    effort: route.effort,
     cwd: options.cwd,
     persist: options.persist,
     credential: credential === undefined

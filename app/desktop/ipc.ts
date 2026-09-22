@@ -28,14 +28,20 @@ export const IPC = Object.freeze({
   cancel: 'YuanMy:cancel',
   /** 渲染进程 → 主进程：运行中切换模型。 */
   setModel: 'YuanMy:set-model',
+  /** 渲染进程 → 主进程：运行中切换推理强度。 */
+  setEffort: 'YuanMy:set-effort',
   /** 渲染进程 → 主进程：打开原生目录选择框。 */
   pickDirectory: 'YuanMy:pick-directory',
-  /** 渲染进程 → 主进程：用新的配置重启 agent host。 */
+  /** 渲染进程 → 主进程：切到某个会话（可能直接挂回活着的 host，也可能起一个新的）。 */
+  attach: 'YuanMy:attach',
+  /** 渲染进程 → 主进程：用新的配置重启**当前会话**的内核。 */
   restart: 'YuanMy:restart',
   /** 渲染进程 → 主进程：新建一个空会话（重启 host，不恢复旧会话）。 */
   newSession: 'YuanMy:new-session',
   /** 渲染进程 → 主进程：让 host 重新扫描落盘会话。 */
   listSessions: 'YuanMy:list-sessions',
+  /** 渲染进程 → 主进程：让当前会话重放一次历史（界面重载后补内容）。 */
+  replayHistory: 'YuanMy:replay-history',
   /** 渲染进程 → 主进程：用系统默认程序打开一个文件。 */
   openPath: 'YuanMy:open-path',
   /** 渲染进程 → 主进程：读某个项目的会话明细（侧栏里点开折叠的项目）。 */
@@ -72,8 +78,14 @@ export type ShellEvent =
   /** host 启动失败或异常退出：界面进入不可用状态。 */
   | { readonly type: 'host-error'; readonly message: string }
 
-/** 走 `hostEvent` 通道的全部事件（host 的 + 主进程自己的）。 */
-export type BridgeEvent = HostEvent | ShellEvent
+/**
+ * 走 `hostEvent` 通道的全部事件（host 的 + 主进程自己的）。
+ *
+ * 每个帧都带 `hostId` = **它属于哪个会话视图**（`sessionKey()`，见 `host/protocol.ts`）。
+ * 为什么必须带：主进程现在可以同时持有多个 host（后台会话继续跑），
+ * 渲染进程必须能把这些事件分别归到各自的会话上，否则后台会话的正文会串进前台。
+ */
+export type BridgeEvent = (HostEvent | ShellEvent) & { readonly hostId?: string }
 
 /** shell 当前阶段（主进程维护的那一份，随 `state` 频道给渲染进程）。 */
 export interface ShellState {
@@ -82,6 +94,44 @@ export interface ShellState {
   readonly info?: HostReadyInfo
   /** 失败原因。 */
   readonly error?: string
+  /** 当前会话视图的键（渲染进程据此把这份状态挂到对应会话上）。 */
+  readonly activeKey?: string
+}
+
+/**
+ * 「切到某个会话」的请求（`YuanMy:attach`）。
+ *
+ * 为什么需要它，而不是一个「重启」：用户在一个会话跑着任务时切走，
+ * 那个任务**不该被停掉**。所以主进程按会话持有 host，切走只是换前台；
+ * 切回来时能挂回还活着的那个（后台进度一点不丢），挂不上才重启 + 回放历史。
+ */
+export interface AttachRequest {
+  /** 目标项目根目录；省略表示沿用当前工作目录。 */
+  readonly cwd?: string
+  /** 要恢复的会话 id；省略表示在这个项目里开一个新会话。 */
+  readonly resume?: string
+  /**
+   * 渲染进程是否已经持有这个会话的视图。
+   *   - `true`：主进程还留着它的 host 就直接挂回去，**不重启**；
+   *   - `false`：强制重启（设置面板的「重启内核」、界面重载后重新接管）。
+   */
+  readonly reuse: boolean
+  /**
+   * 「我正在离开的这个会话有回合在跑」。
+   *
+   * 渲染进程的 `busy` 是乐观状态（点发送就先置位），而主进程要等 `prompt`
+   * 请求到达才知道。少了这个提示，用户「刚发出就切走」时那一轮可能被当成空闲收掉，
+   * 于是白跑 —— 这正是本功能要避免的事。
+   */
+  readonly activeBusy?: boolean
+}
+
+/** `attach` 的结果。 */
+export interface AttachResult {
+  /** `true` = 直接挂回了活着的 host（视图本来就是最新的，不需要历史回放）。 */
+  readonly attached: boolean
+  /** 目标会话视图键（与渲染进程用 `sessionKey()` 算出来的必须一致）。 */
+  readonly key: string
 }
 
 /** 启动（或重启）内核的配置。 */

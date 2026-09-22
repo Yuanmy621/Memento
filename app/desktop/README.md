@@ -56,7 +56,7 @@ app/desktop/
     index.html             唯一页面（CSP + 两个相对路径的产物）
     src/main.tsx           React 入口
     src/app.tsx            外壳布局、标签栏、滚动策略
-    src/use-agent.ts       唯一的 reducer：事件 → 界面状态；所有动作（send/steer/restart/…）
+    src/use-agent.ts       唯一的 reducer：事件 → 界面状态（**按会话分视图**）；所有动作（send/steer/attach/…）
     src/composition.ts     输入法（IME）组字守卫
     src/icons.tsx          lucide-react 的包装层（尺寸 16 / 线宽 1.75 / `Icon*` 命名收敛）
     src/components/        界面组件（每个文件一个关注点）
@@ -235,7 +235,7 @@ CSS 侧删掉 `.topbar__title`、`.btn--primary` / `.btn--stop`（连同只为�
 
 | 文件 | 语言 | 角色 |
 | --- | --- | --- |
-| `main.ts` | JS（ESM） | Electron 主进程：窗口、菜单、生命周期、IPC 收口、host 子进程管理、窗口材质 |
+| `main.ts` | JS（ESM） | Electron 主进程：窗口、菜单、生命周期、IPC 收口、**多 host 槽位**（一会话一进程）、窗口材质 |
 | `preload.cjs` | JS（**CommonJS**） | 安全桥：把一组函数挂到 `window.YuanMy`，此外什么都不暴露 |
 | `ipc.ts` | JS（ESM） | IPC 频道名 + shell 状态形状（只被主进程引用） |
 | `host/index.ts` | TS | agent host：装凭据、起内核、驱动回合、收发协议消息 |
@@ -332,7 +332,7 @@ main.ts: app.whenReady().then(onReady)      ← 注意：不是顶层 await，�
   ├─ registerIpc()          先装 handler，避免界面抢跑
   ├─ buildMenu()
   ├─ createWindow()         窗口立刻显示（先出界面，不空等）
-  └─ restartWith(config)    spawn host → host 发 ready → 状态置为 ready
+  └─ attach(config)         spawn host → host 发 ready → 状态置为 ready
                             ready 之前渲染进程拿到的是 { phase: 'booting' }
 
 host/index.ts:
@@ -562,7 +562,7 @@ blocks: [ {type:'text', text:'我先看目录。'}
 | 事件 | 归约结果 |
 | --- | --- |
 | `ready` | 状态置 ready，侧栏拿到模型 / 会话 / 目录 / 凭据 / 工具 |
-| `restarting` | 清空会话，状态回到启动中 |
+| `restarting` | 给**那个会话的视图**打 `switching` 标记（内容留着，等 `history` 整段替换） |
 | `text-delta` | 追加到**最后一个** text 块；上一个动作是工具就新起一块 |
 | `reasoning-delta` | 追加到 `blocks` 末尾的**推理块**（末尾不是推理块就新起一块 → 「想一段 → 做一步 → 再想一段」按真实位置排布）；同时拼进 `reasoning`（只给刻度尺摘要用） |
 | `tool-call` | push 一个 `tool` 块（`result: null` = 运行中） |
@@ -572,11 +572,11 @@ blocks: [ {type:'text', text:'我先看目录。'}
 | `workspace` | 刷新侧栏的项目 / 会话清单（就绪后、每轮结束、以及界面主动请求时各来一次） |
 | `usage` | 累加 token 计量（每个模型 step 一帧），并记下最近一次调用的明细 |
 
-### 磨砂玻璃侧栏 + 淡紫黑主区
+### 整窗磨砂玻璃：侧栏亮、主区深
 
-侧栏是**系统材质的磨砂玻璃**（macOS `vibrancy: 'sidebar'` / Windows acrylic），
-主区（侧栏之外那一整块）刷**淡紫黑**的基础底色。动态（柱面粒子）不受影响 ——
-它画在玻璃**上面**。
+**整窗**都是系统材质的磨砂玻璃（macOS `vibrancy: 'sidebar'` / Windows acrylic）。
+网页这边只负责**染色**，而且两层刻意用不同的深度 —— 深浅差本身就是层级：
+侧栏浮起、主区下沉。动态（柱面粒子）不受影响，它画在玻璃**上面**。
 
 | 层 | 颜色 | 谁刷的 |
 | --- | --- | --- |
@@ -584,12 +584,16 @@ blocks: [ {type:'text', text:'我先看目录。'}
 | 侧栏染色层 | `--ym-sidebar-tint` = violet-900 @ 47% | `.sidebar` |
 | 侧栏内部的 hover / 当前项 | 白色 4.5% / 5.5% / 10% | 在 `.sidebar` 作用域里重定义令牌 |
 | 柱面粒子 | `--ym-surface` / `--ym-shard` | canvas（不变） |
-| 主区底色 | `--dsw-alias-bg-base` = violet-950 `rgb(14,12,20)` | `.main-column` / `.topbar` |
+| 主区染色层（对话区 / 预览面板） | `--ym-main-tint` = **violet-950 @ 78%** | `.main-column` / `.preview` |
+| 顶栏 | 透明（在主列内部，露出的就是同一层） | `.topbar` |
+
+主区不能刷成不透明（那样「整窗都是玻璃」就只在左半边成立），也不能和侧栏一样浅
+（阅读区要压得住字、正文和壁纸不能互相干扰）。
 
 #### ⚠️ 玻璃不通，八成是「有一层不透明底」把材质盖住了
 
 系统材质在**网页内容之下**：网页只要有一层铺满窗口的不透明底色，材质就完全看不见 ——
-表现是「开了 vibrancy，侧栏还是死的一块深灰」。整条链路都得让路：
+表现是「开了 vibrancy，界面还是死的一块深灰」。整条链路都得让路：
 
 ```css
 html[data-vibrancy='native'],
@@ -598,18 +602,18 @@ html[data-vibrancy='native'] .app-shell { background: transparent; }
 ```
 
 **`.app-shell` 是最容易漏的那个**：它原来刷的是 `--dsw-alias-bg-base`，正好盖住侧栏那一列。
-主区不透明由 `.main-column` 自己负责（它确实刷了底色），所以只有侧栏露出材质。
+过一遍的清单：`.app-shell` → `.sidebar`（染色）→ `.main-column`（染色）→
+`.topbar`（必须透明，它在主列内部）→ `.preview`（跟主区同一层染色）。
 
-怎么用像素证明它真的透了（agent 看不了截图时尤其有用）：让页面里「没画东西」的地方保持透明，
-截一张 PNG，**看 alpha 通道**（透明的地方 alpha 应该 < 255）：
+怎么用像素证明它真的透了（agent 看不了截图时尤其有用）：截一张 PNG，**看 alpha 通道**
+（透明的地方 alpha 应该 < 255）。侧栏与主区都该是半透明，只是主区的 alpha 更高（更深）：
 
 ```
-主区 (700,400): rgb(13,12,19) a=255     ← 不透明，淡紫黑
-侧栏 (120,470): rgb(21,19,30) a=121     ← 半透明 = 材质能透出来
+主区 (700,400): rgb(13,12,19) a=199     ← 78% 不透明 = 材质能透出来，但更深
+侧栏 (120,470): rgb(21,19,30) a=121     ← 47% 不透明 = 更亮、材质更明显
 ```
 
-把 `.app-shell` 的底色改回不透明，同一处会变成 `a=255`，**而且 PNG 直接退化成 3 通道**
-（整页没有透明像素了）—— 这就是「侧栏不透」的判据。
+把 `.main-column` 的底色改回不透明，主区那一点会变成 `a=255` —— 那就是「主区不透」的判据。
 
 #### 两个连带决定
 
@@ -691,7 +695,7 @@ main.ts                                    host（sessions.ts）
 
 几条刻意定的规则：
 
-- **只在 host 起来了才登记**（`restartWith` 成功之后），启动失败的路径不会攒进表里；
+- **只在 host 起来了才登记**（`attach` 成功之后），启动失败的路径不会攒进表里；
 - 登记只是**线索**：路径可能早被删了、库可能还不存在，host 读不到就跳过，
   **读写失败一律不影响启动**（顶多是侧栏少列一个项目）；
 - 有界：登记最多 20 条，单次最多**多扫 8 个根**（`DEFAULT_MAX_EXTRA_PROJECTS`），
@@ -700,19 +704,20 @@ main.ts                                    host（sessions.ts）
   「列出来的」和「点开的」不是同一个项目的诡异现象；
 - 项目要**被打开过一次**才会进登记 —— 没跑过 YuanMy 的项目不会凭空出现在树里。
 
-> ⚠️ 会话只属于它的项目。`main.ts` 的 `restartWith()` 里有条规则：换 cwd 时，
-> **上一个**会话的 `resume` / `sessionId` 要丢掉 —— 否则会拿着旧项目的会话 id
-> 去新项目里找。但「恢复另一个项目里的会话」是**合法**组合（侧栏会同时给出目标
-> cwd 和该项目的会话 id），所以判据是「调用方有没有明确要求恢复」，
-> 不是「cwd 变没变」。早先写成后者，点别的项目下的会话会用**全新会话**启动，
+> ⚠️ 会话只属于它的项目。`main.ts` 的 `attach()` 只认「调用方明确给出的 `resume`」，
+> 不会把一个项目的会话 id 带到另一个项目去 —— 否则会拿着旧项目的 id 去新项目里找。
+> 侧栏点会话时同时给出目标 cwd 和该项目的会话 id（这是**合法**组合）；
+> 点「切换」/「打开工作目录」则不给 `resume`，于是新项目里开一个新会话。
+> 早先的判据是「cwd 变没变」，点别的项目下的会话会用**全新会话**启动、
 > 界面一片空白 —— 就是用户报的「切换工作区中的会话后读不到历史」。
 
 **侧栏刻意不放的东西**（都是重复或只在排查时才有用的「参数」）：
 状态行 → 并进底栏一个小圆点；模型名 → 就是下面那个输入框；会话 id → 树里已高亮；
 凭据 → **只在缺失时**以警告形式出现（左下角底栏只有状态点 / 设置 / 版本号）。
 
-点击会话 = `restart({ resume: id, cwd })`（CLI 的 `--resume` 早就通了，这里只是给它一个界面）。
-点击其它项目的「切换」= `restart({ cwd })`，即用新工作目录启一个新会话。
+点击会话 = `attach({ cwd, resume: id, reuse })`（CLI 的 `--resume` 早就通了，
+这里只是给它一个界面）。点击其它项目的「切换」= `attach({ cwd })`，
+即用新工作目录启一个新会话。`reuse` 的取值与「挂回」的语义见下一节。
 
 `title` 的正式来源是 `@deepseek-ai/dsh-session-title`（写 `session/title` 日志事件）。
 本项目**暂时没挂它**（它还需要 `dsh-invariants` 那套 companion 插件），
@@ -883,14 +888,42 @@ main.ts                                    host（sessions.ts）
 现在只列 `invocation === 'global'` 的技能，命令专用的一律走上面的命令入口
 （这段过滤在 `components/mention-menu.tsx` 的 `buildTriggers`/`buildMentions` 里）。
 
+### 多会话：切走不打断、切回就挂回
+
+一个会话一个 host 子进程（槽位），键是 `sessionKey(cwd, sessionId)`（`host/protocol.ts`）。
+`main.ts` 的 `attach(request)` 有三种走法：
+
+| 情形 | 走法 |
+| --- | --- |
+| 渲染进程见过这个会话，且这边还留着它的 host（多半是**后台还在跑**） | **挂回**：只换前台，不动进程 —— 后台进度一点不丢，也不经过「正在切换」 |
+| 目标空闲被回收了 / 从没打开过 | **重启**：起一个新 host，带 `--resume` 回放历史 |
+| 别的会话正在跑 | **原样留着**，跑完自己收掉（`spawnSlot` 的 `turn-end` 分支） |
+
+几条规则：
+
+- **空闲的立刻回收**：每次 `attach` 都会收掉「不是目标、又不在忙」的槽位 ——
+  每个槽位都是一整个内核，没有理由让空闲的占着。同时最多 `MAX_LIVE_SLOTS = 6` 个；
+  超了会**明确告诉用户**「这个后台任务已被中断」，不静默杀。
+- **`reuse` 由界面给**：界面知道「这个会话我有没有视图」（`knownViews`）。没有视图
+  （第一次打开、界面重载）就不谈挂回 —— 挂回一个空视图只会显示空白，不如重启回放历史。
+- **`activeBusy` 关掉一个竞态**：界面的 `busy` 是乐观状态（点发送就先置位），
+  主进程要等 `prompt` 请求到达才知道；用户「刚发出就切走」时靠这个提示保住那一轮。
+- **每一帧都打 `hostId`**：渲染进程按它把事件路由到各自的会话视图（`Store.views`），
+  对组件只暴露当前那一份（`project()`）—— 所以「多会话」对组件完全透明。
+- **`workspace` 帧的 `current` 标记不可信**：每个 host 都会把「它自己」标成当前会话；
+  而且挂回时压根不会来新的 `workspace` 帧。所以标记在**投影时**现算
+  （`markCurrent` / `markCurrentProject`）。
+- **界面重载而内核还活着**时走 `history:replay`（让 host 把落盘历史重发一遍），
+  而不是重启 —— 重启会杀掉还在跑的那一轮。
+
 ### 恢复会话：历史回放由 **host** 提供
 
-点侧栏里的一个会话 = 用 `--resume <会话 id>` 重启内核。内核恢复的是 **agent 的
-上下文**，界面这边还是空的（实时帧只描述「之后」发生的事），所以 host 会在
-`ready` 之后补一帧 `history`：
+点侧栏里的一个会话 = 用 `--resume <会话 id>` 起一个内核（能挂回就挂回，见上一节）。
+内核恢复的是 **agent 的上下文**，界面这边还是空的（实时帧只描述「之后」发生的事），
+所以 host 会在 `ready` 之后补一帧 `history`：
 
 ```
-点击会话 → IPC.restart({ resume }) → host 带 --resume 起来
+点击会话 → IPC.attach({ cwd, resume, reuse }) → 挂回活着的 host，或带 --resume 起一个
         → ready（内核就绪）→ workspace（侧栏清单）→ history（历史记录）
 ```
 
@@ -951,7 +984,8 @@ main.ts                                    host（sessions.ts）
    于是新会话永远等不到那一帧，只能靠 `restarting` 清空。
 2. **`switching` 由 `history` 帧解除，不由 `ready`**：`ready` 先到、历史后到，
    在 `ready` 就放开的话，用户此时按回车发的消息会被随后到达的历史覆盖掉。
-   （另有 3 秒超时兜底，避免那一帧永远不来时把界面锁住。）
+   挂回还活着的 host 时则由 `attached` 立刻解除（视图本来就是实时的），
+   另有 3 秒超时兜底，避免那一帧永远不来时把界面锁住。
 3. **点下去的那一行要有回应**：`.session--opening`（和 hover 同档的底色 + 压暗）。
    否则点完 0.5 秒内什么都没变，用户会以为没点上、再点一次。
 4. **内容替换时淡入**：`.messages__inner` 按 `sessionId` 换 key，配一条 160ms 的
@@ -973,14 +1007,15 @@ main.ts                                    host（sessions.ts）
 
 #### 连点两个会话：靠「代际」保证最后一次赢
 
-手快连点两个会话时，第一次的内核会被第二次 kill 掉，而它晚到的 `history` / `workspace`
-帧会盖到第二次的界面上（表现：先闪一下 A 的会话，或者干脆停在 A）。两处代际守卫：
+手快连点两个会话时，第一次的内核会被第二次收掉，而它晚到的 `history` / `workspace`
+帧会盖到第二次的界面上（表现：先闪一下 A 的会话，或者干脆停在 A）。两道守卫：
 
 - `main.ts` 的 `AgentHost.generation`：每次 start / stop 都 +1，回调里捕获自己那一代，
   **不是当前代就直接丢弃**（message / error / close 三处）——
   上一版只靠 `this.child !== child` 判断，那只覆盖了 close，覆盖不了 message；
-- `main.ts` 的 `restartGeneration`：被后一次切换取代的那次 `restartWith`，
-  它的 resolve/reject **都不写状态、不报错**（它的失败是我们自己 kill 出来的）。
+- `main.ts` 槽位上的 `dead` 标记 + 事件上的 `hostId`：被收掉的槽位不再转发任何帧，
+  即使转发了，渲染进程也只会把它们归到那个（已经没有前台的）会话视图上。
+  早先那个全局 `restartGeneration` 因此不再需要 —— 正确性现在由「槽位自己」保证。
 
 实测：先点「session B」、80ms 后再点「say hi」，+800ms 停在 **say hi**（最后一次点击），
 无报错、提示回到「就绪」。
@@ -1149,10 +1184,16 @@ cacheWriteTokens 写入缓存的输入
 也不是把 `totalTokens` 当分母（`totalTokens` 是含输出的整次调用总量）。
 没有输入 token 时返回 `null`，界面显示 `—` —— 不伪造 0%。
 
-展示上是**会话累计**（每帧累加），鼠标悬停看最近一次调用的明细
-（未命中 / 命中 / 写入 / 输出含推理 / 合计）。判定与累加都是纯函数
+展示上是**会话累计**（每帧累加），鼠标悬停（或 Tab 聚焦）统计条最左边那个胶囊会弹出
+**明细卡**（`composer.tsx` 的 `UsageDetail`）：未命中 / 命中 / 写入 / 计费输入合计 /
+输出（含推理）/ 命中率，再加一段「最近一次调用」的四个数。判定与累加都是纯函数
 （`billedInputTokens` / `cacheHitRate` / `accumulate`）—— 改这里时盯住两点：
 没有输入 token 时命中率是 `null`（显示 `—`），以及三种输入 token 都要进分母。
+
+明细卡的两个交互细节（都写在 CSS 注释里，别删）：
+弹出的卡片是 `.usage` 的**子元素**（指针移进去不触发 `mouseleave`，否则一闪就没），
+`::before` 再补一块**透明桥接区**跨过胶囊与卡片之间的空隙；
+`tabIndex={0}` 让键盘用户也能看到（`:focus-visible` 时给胶囊描一圈强调色）。
 
 ### 工作台布局（左侧工作区 + 右侧对话/轨迹）
 
@@ -1163,8 +1204,9 @@ cacheWriteTokens 写入缓存的输入
 │ ▾ 项目         │  对话面板：推理行 / Markdown /  ─┤ README.md  │
 │    ● 会话  时间 │  工具行 / 文件卡片（预览+打开） ─┤ 报告/代码/ │
 │ ▸ 另一个项目   ├───────────────────────────────┤ 图片/最近   │
-│ ─────────────  │  [+][完全访问][模型▾]   [发送]  │ 文件        │
+│ ─────────────  │ [+][完全访问][模型▾][强度▾][发送]│ 文件        │
 │ ● 就绪 设置 v1 │  3.2k in/88 out · 3.0s · 1 轮  │            │
+│  ● 会话运行中  │  （悬停 token 胶囊 → 明细卡）    │            │
 └───────────────┴───────────────────────────────┴────────────┘
                     ↑ 右侧一列「会话刻度尺」（对话太长时点刻度跳转）
 ```
@@ -1180,6 +1222,20 @@ cacheWriteTokens 写入缓存的输入
 | 预览面板（右侧列） | 「最近文件」= `recentFiles()`（倒着捞会话里碰过的文件，路径去重）；内容按扩展名分流渲染 |
 | 权限下拉 | **如实显示现状**：本地 provider 无沙箱无审批，所以只有「完全访问」一项 |
 | 模型下拉 | 内核 `ctx.llm.listModels(provider)`（`ready.info.models`），再按**本地清单**过滤 |
+| 强度下拉（`low` / `high` / `max`） | 适配器对**这个模型**申报的 `reasoning.efforts`（host 的 `modelEfforts` 调 `ctx.llm.resolveModelInfo`），只挑出三档「强度」；选中走 `set-effort` |
+
+##### 推理强度：走 `agent/request` waterfall，不重建 agent
+
+和换模型完全同一条路：host 里一个 `route: { model, effort }`，`agent/request` 的
+waterfall 监听者把它写进即将发出的请求配置（`reasoningEffort`），于是**正在跑的回合
+不受影响**，只有下一次请求用新档位。
+
+- 档位**来自模型**（`resolveModelInfo().reasoning.efforts`，DeepSeek 适配器申报
+  `off / low / high / max`），不是界面写死的常量；适配器不申报时退回内置的三档兜底；
+- 下拉里**只露 `low | high | max`**：`off` 是「关掉推理」，不是一档强度，
+  放进同一个下拉会让人以为它是最低档 —— 要它就用启动参数 `--effort off`；
+- host 侧对传进来的值做一次白名单校验（`EFFORTS`），非法值**保持原样**并回一帧
+  `effort-changed` —— 界面永远显示真实生效的档位，不会显示一个假的选择。
 
 ##### 模型清单：内核申报 + 本地白名单
 
@@ -1650,9 +1706,10 @@ Gatekeeper 拦，需要「右键 → 打开」或 `xattr -dr com.apple.quarantin
 - **不能打包**：目前只有开发态运行。出安装包需要补 `electron-builder` 配置与签名，
   可参考 DSH 的 `apps/desktop`（它的做法是把整个运行时打进 asar）。
 - **bundle 偏大（~10 MB）**：见第 1 节的说明与两条瘦身路线（去 code 插件 / 换 `app://` 协议）。
-- **只有一个会话窗口**：换会话 = 重启内核。要做多会话需要把 `host` 从「单例」改成
-  「按会话 id 管理多个子进程」，协议里再加会话维度。
-  （换会话本身带**历史回放**，见「恢复会话」一节；实测重启 + 历史可见 ≈ 300ms。）
+- **多会话有成本**：现在每个「切走但还在跑」的会话都是一个独立内核子进程。
+  空闲的会在切换时立刻回收，同时最多 6 个（超了会明确告知用户哪个后台任务被中断）。
+  真要做「几十个会话常驻」得换成更轻的形态（例如内核里支持会话切换，而不是一进程一会话）。
+  （挂回一个还活着的内核 < 1s 且不重启；重启 + 历史可见 ≈ 300ms~1s，见「多会话」一节。）
 - **跨项目列表靠一份「最近打开过」的登记**（不是靠共享会话库）：内核 `stateDir`
   默认 `<cwd>/.YuanMy`，每个项目一份库，所以桌面端维护
   `<userData>/projects.json` 并在启动 host 时把清单交过去，由 host 多扫几个根。
@@ -1668,4 +1725,5 @@ Gatekeeper 拦，需要「右键 → 打开」或 `xattr -dr com.apple.quarantin
   `markdown.tsx` 里补自定义 renderer。
 - **Windows / Linux 未验证**：磨砂玻璃、`titleBarOverlay`、菜单角色都按平台分了支，
   但只在 macOS 上跑过。
-  Linux 保留原生标题栏（否则没有关闭按钮），代码块与磨砂玻璃会自动退回不透明样式。
+  Linux 保留原生标题栏（否则没有关闭按钮），代码块与磨砂玻璃会自动退回不透明样式
+  （`html[data-vibrancy="none"]` 下主区保持原来的不透明淡紫黑）。

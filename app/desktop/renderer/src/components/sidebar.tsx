@@ -41,9 +41,16 @@ function SessionRow(props: {
   readonly subtitle?: string
   /** 正在打开的这一条（点下去到新内核就绪之间）。 */
   readonly opening?: boolean
+  /**
+   * 这个会话有回合在跑（**包括在后台跑的那个**）。
+   *
+   * 后台继续跑是本项目的既定行为，所以必须看得见 —— 否则用户会以为切走
+   * 就是把任务杀了（或者反过来，以为早就停了）。
+   */
+  readonly running?: boolean
   readonly onOpen: () => void
 }): ReactElement {
-  const { session, now, subtitle, opening, onOpen } = props
+  const { session, now, subtitle, opening, running, onOpen } = props
   const classes = ['session']
   if (session.current) classes.push('session--current')
   if (opening === true) classes.push('session--opening')
@@ -52,7 +59,7 @@ function SessionRow(props: {
       <button
         type="button"
         className={classes.join(' ')}
-        title={`${session.id}\n${String(session.turns)} 个回合 · ${new Date(session.updatedAt).toLocaleString()}`}
+        title={`${session.id}\n${String(session.turns)} 个回合 · ${new Date(session.updatedAt).toLocaleString()}${running === true ? '\n回合进行中（切走也不会中断）' : ''}`}
         onClick={() => { if (!session.current) onOpen() }}
       >
         <span className="session__icon"><IconChat size={12} /></span>
@@ -65,6 +72,7 @@ function SessionRow(props: {
             {session.title === '' ? '（暂无消息）' : session.title}
           </span>
           <span className="session__meta">
+            {running === true && <span className="session__live" aria-label="回合进行中" />}
             {relativeTime(session.updatedAt, now)}
           </span>
         </span>
@@ -77,6 +85,8 @@ export interface SidebarProps {
   readonly state: AgentState
   readonly appInfo: AppInfo | null
   readonly now: number
+  /** 有回合在跑的会话 id（含后台会话）——列表里给它们打运行标记。 */
+  readonly runningIds: readonly string[]
   readonly onNewSession: () => void
   readonly onOpenSession: (sessionId: string, cwd?: string) => void
   readonly onOpenProject: (path: string) => void
@@ -87,7 +97,7 @@ export interface SidebarProps {
 
 export function Sidebar(props: SidebarProps): ReactElement {
   const {
-    state, appInfo, now, onNewSession,
+    state, appInfo, now, runningIds, onNewSession,
     onOpenSession, onOpenProject, onLoadProjectSessions, onOpenSettings,
   } = props
   const [query, setQuery] = useState('')
@@ -244,6 +254,7 @@ export function Sidebar(props: SidebarProps): ReactElement {
                   now={now}
                   subtitle={hit.project}
                   opening={opening === hit.session.id}
+                  running={runningIds.includes(hit.session.id)}
                   onOpen={() => { setOpening(hit.session.id); onOpenSession(hit.session.id, hit.cwd) }}
                 />
               ))}
@@ -300,6 +311,7 @@ export function Sidebar(props: SidebarProps): ReactElement {
                             session={session}
                             now={now}
                             opening={opening === session.id}
+                            running={runningIds.includes(session.id)}
                             onOpen={() => {
                               setOpening(session.id)
                               onOpenSession(session.id, isCurrent ? undefined : project.path)

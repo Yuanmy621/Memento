@@ -35,16 +35,21 @@ import type {
   ToolBlock,
   TurnMeta,
 } from '../../host/protocol.ts'
-/** 预览面板的类型面同样只有一份：主进程 `readForPreview` 决定 kind，界面照着画。 */
-import type { PreviewPayload } from '../../ipc.ts'
+/**
+ * 会话视图键：**必须与主进程用同一个算法**（事件按它路由）。
+ * 值导入而不是类型导入 —— 这是一个纯函数，协议模块本身不依赖任何东西。
+ */
+import { sessionKey } from '../../host/protocol.ts'
+/** 预览面板与「切会话」的类型面同样只有一份。 */
+import type { AttachRequest, AttachResult, PreviewPayload } from '../../ipc.ts'
 /** 显示用的小工具（首行预览）；纯函数，界面与轨迹共用一套口径。 */
 import { firstLine } from './tool-names.ts'
 
 /** 重新导出协议里的类型，让组件只依赖本模块这一处「界面类型面」。 */
 export type {
   AssistantItem, Block, CommandBrief, CommandEntry, FileBrief, HostReadyInfo, HostToolInfo, Item,
-  LlmUsage, McpEntry, ModelInfo, ProjectSummary, SessionSummary, SkillBrief, SkillEntry, SteerItem,
-  TextBlock, ToolBlock, TurnMeta, TurnOutcome, UserItem,
+  LlmUsage, McpEntry, ModelEffortInfo, ModelInfo, ProjectSummary, SessionSummary, SkillBrief, SkillEntry,
+  SteerItem, TextBlock, ToolBlock, TurnMeta, TurnOutcome, UserItem,
 } from '../../host/protocol.ts'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -65,13 +70,23 @@ export type ShellEvent =
   | { readonly type: 'host-error'; readonly message: string }
 
 /** 界面能收到的一切事件。 */
-export type AgentEvent = HostEvent | ShellEvent
+export type AgentEvent = (HostEvent | ShellEvent) & {
+  /**
+   * 这一帧属于哪个会话视图（`sessionKey()`，由主进程打上）。
+   *
+   * 界面自己的动作没有它，落到当前会话。**必须**按它分发：主进程现在可以
+   * 同时持有多个 host（后台会话继续跑），没有它后台会话的正文就会串进前台。
+   */
+  readonly hostId?: string
+}
 
 /** shell / agent 状态快照（`YuanMy:state` 的返回）。 */
 export interface ShellState {
   readonly phase: 'booting' | 'ready' | 'error'
   readonly info?: HostReadyInfo
   readonly error?: string
+  /** 当前会话视图的键（界面重载后据此重新接管那个会话）。 */
+  readonly activeKey?: string
   /**
    * 主进程缓存的项目 / 会话清单。
    *
@@ -121,17 +136,6 @@ export interface AppInfo {
   readonly nativeMaterial?: boolean
 }
 
-/** 启动 host 时可覆盖的配置。 */
-export interface LaunchConfig {
-  readonly cwd?: string
-  readonly model?: string
-  readonly provider?: string
-  readonly effort?: string
-  readonly persist?: boolean
-  readonly sessionId?: string
-  readonly resume?: string
-}
-
 /** preload 通过 `contextBridge` 暴露的全部能力。 */
 export interface AgentApi {
   getState(): Promise<ShellState>
@@ -140,11 +144,25 @@ export interface AgentApi {
   sendPrompt(text: string): Promise<{ readonly turnId: string }>
   cancel(): Promise<void>
   setModel(model: string): Promise<void>
+  /** 运行中切换推理强度（`low | high | max`）：下一次请求生效。 */
+  setEffort(effort: string): Promise<void>
   pickDirectory(): Promise<string | null>
-  restart(config: LaunchConfig): Promise<ShellState>
-  newSession(): Promise<ShellState>
+  /**
+   * 切到某个会话。
+   *
+   * 主进程还留着它的 host（多半是后台回合还在跑）就直接挂回，**不重启**；
+   * 否则起一个新 host（必要时 `--resume` 回放历史）。
+   */
+  attach(request: AttachRequest): Promise<AttachResult>
   /** 让 host 重新扫描落盘会话（结果以 `workspace` 事件回来）。 */
   refreshSessions(): Promise<void>
+  /**
+   * 让当前会话重放一次历史（结果以 `history` 事件回来）。
+   *
+   * 界面重载后视图是空的，但内核还活着：重放就能把内容补回来，**不必重启**
+   * （后台还在跑的回合因此不受影响）。
+   */
+  replayHistory(): Promise<void>
   /** 用系统默认程序打开一个文件；返回错误信息（成功时空串）。 */
   openPath(path: string): Promise<string>
   /** 读文件给右侧预览面板（主进程按扩展名判断类型并有体积上限）。 */
@@ -452,8 +470,18 @@ export function recentFiles(items: readonly Item[], limit = 40): RecentFile[] {
   return files
 }
 
-/** 界面状态。 */
-export interface AgentState {
+/**
+ * 一个会话视图的状态。
+ *
+ * 界面按会话分开存：后台会话还在跑，它的流式增量必须落进**它自己的**那一份，
+ * 不能串进前台会话（见下面的 `locate`）。切会话就是换一个视图 ——
+ * 所以「切走再切回来」看到的还是原来那份，包括后台期间新长出来的内容。
+ */
+export interface SessionView {
+  /** 视图键（`sessionKey(cwd, sessionId)`）。 */
+  readonly key: string
+  /** 会话所属项目根目录。 */
+  readonly cwd: string
   readonly phase: 'booting' | 'ready' | 'error'
   readonly error: string | null
   readonly info: HostReadyInfo | null
@@ -467,6 +495,34 @@ export interface AgentState {
    * 显示「正在切换」并在切换期间挡掉提交（新内核还没就绪，发过去会失败）。
    */
   readonly switching: boolean
+  /** 本会话的 token 累计。 */
+  readonly usage: UsageTotals
+  /** 该 provider 申报的可选模型（来自内核，不是界面写死的）。 */
+  readonly models: readonly ModelInfo[]
+  /** 上一回合的墙钟耗时（毫秒）；还没跑过为 null。 */
+  readonly lastTurnMs: number | null
+  /** 本会话已完成的回合数。 */
+  readonly turns: number
+}
+
+/**
+ * 界面状态 = **当前会话的视图** + 全局部分（项目清单 / `#` 候选 / 设置）。
+ *
+ * 组件只读这一份（`useAgent` 把当前视图摊平上来），于是「多会话」这件事
+ * 对组件是透明的：`state.items` 永远就是当前会话的内容。
+ */
+export interface AgentState extends SessionView {
+  /** 当前视图的键；还没有任何会话时是空串。 */
+  readonly activeKey: string
+  /**
+   * 已经建立过视图的会话键。
+   *
+   * 切会话时用它决定「挂回」还是「重启」：只有见过的会话才谈得上挂回
+   * 主进程里还留着的 host（见 `resumeSession` 的 `reuse`）。
+   */
+  readonly knownViews: readonly string[]
+  /** 有回合在跑的会话 id（后台也算）—— 侧栏给这些行打运行标记。 */
+  readonly runningIds: readonly string[]
   /** 所有出现过的项目（当前项目排在最前）。 */
   readonly projects: readonly ProjectSummary[]
   /** **当前项目**的会话，按最近活动倒序。 */
@@ -480,14 +536,6 @@ export interface AgentState {
   readonly projectSessions: Readonly<Record<string, readonly SessionSummary[]>>
   /** 正在读取会话的项目路径（界面据此显示「读取中…」）；没有则是 null。 */
   readonly loadingProject: string | null
-  /** 本会话的 token 累计。 */
-  readonly usage: UsageTotals
-  /** 该 provider 申报的可选模型（来自内核，不是界面写死的）。 */
-  readonly models: readonly ModelInfo[]
-  /** 上一回合的墙钟耗时（毫秒）；还没跑过为 null。 */
-  readonly lastTurnMs: number | null
-  /** 本会话已完成的回合数。 */
-  readonly turns: number
   /** `#` 菜单的候选文件（响应 `files` 帧）。 */
   readonly files: readonly FileBrief[]
   /** 上面这批候选对应的查询串（界面据此丢弃过期结果）。 */
@@ -498,9 +546,33 @@ export interface AgentState {
   readonly settingsBusy: boolean
 }
 
+/**
+ * 归约器的内部状态：视图表 + 全局部分。
+ *
+ * 为什么不直接拿 {@link AgentState} 当归约状态：那个是**投影**（把当前视图摊平
+ * 给组件读），而这里要留下完整的那张表 —— 后台会话的视图不能因为「不是当前会话」
+ * 就被丢掉，否则切回去就只剩历史回放、丢掉了这期间滚动出来的内容。
+ */
+interface Store {
+  readonly activeKey: string
+  readonly views: Readonly<Record<string, SessionView>>
+  readonly projects: readonly ProjectSummary[]
+  readonly sessions: readonly SessionSummary[]
+  readonly projectSessions: Readonly<Record<string, readonly SessionSummary[]>>
+  readonly loadingProject: string | null
+  readonly files: readonly FileBrief[]
+  readonly filesQuery: string
+  readonly settings: SettingsData | null
+  readonly settingsBusy: boolean
+}
+
 /** 归约动作：来自 host 的事件，或界面自己的动作。 */
 export type Action =
   | AgentEvent
+  /** 换前台会话（只挪视角，数据不动）。 */
+  | { readonly type: 'activate'; readonly key: string; readonly cwd: string }
+  /** 直接挂回了活着的 host：视图本来就是最新的。 */
+  | { readonly type: 'attached'; readonly key: string }
   | { readonly type: 'user-send'; readonly text: string }
   | { readonly type: 'adopt-turn'; readonly turnId: string }
   | { readonly type: 'user-error'; readonly message: string }
@@ -513,26 +585,150 @@ export type Action =
 // 纯函数工具
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** 初始状态。 */
-export const initialState: AgentState = {
-  phase: 'booting',
-  error: null,
-  info: null,
-  items: [],
-  busy: false,
-  switching: false,
+/** 空视图（还没见过 / 还没就绪的会话）。 */
+function emptyView(key: string, cwd: string): SessionView {
+  return {
+    key,
+    cwd,
+    phase: 'booting',
+    error: null,
+    info: null,
+    items: [],
+    busy: false,
+    switching: false,
+    usage: emptyUsage,
+    models: [],
+    lastTurnMs: null,
+    turns: 0,
+  }
+}
+
+/** 归约器的初始状态：一张空的视图表。 */
+export const initialState: Store = {
+  activeKey: '',
+  views: {},
   projects: [],
   sessions: [],
   projectSessions: {},
   loadingProject: null,
-  usage: emptyUsage,
-  models: [],
-  lastTurnMs: null,
-  turns: 0,
-  settings: null,
-  settingsBusy: false,
   files: [],
   filesQuery: '',
+  settings: null,
+  settingsBusy: false,
+}
+
+/**
+ * 一帧该落到哪个会话。
+ *
+ * `hostId` 由主进程打在每一帧上（见 `ipc.ts` 的 `BridgeEvent`）；界面自己的动作
+ * 没有它，落到当前会话。视图不存在就先建一个空视图 —— 冷启动时主进程自己起的
+ * 第一个 host 就是这样「凭空」把第一帧送进来的。
+ * @param state - 当前内部状态。
+ * @param hostId - 帧上的会话键；缺省表示当前会话。
+ * @param cwd - 新建视图时用的项目目录（只有 `restarting` / `ready` 带得回来）。
+ * @returns 目标键与它当前的视图。
+ */
+function locate(state: Store, hostId: string | undefined, cwd?: string): { key: string; view: SessionView } {
+  const key = hostId ?? state.activeKey
+  const existing = state.views[key]
+  return existing === undefined ? { key, view: emptyView(key, cwd ?? '') } : { key, view: existing }
+}
+
+/** 写回一个视图；顺手在「还没有当前会话」时把它设为当前（冷启动第一帧）。 */
+function put(state: Store, key: string, view: SessionView): Store {
+  return {
+    ...state,
+    activeKey: state.activeKey === '' ? key : state.activeKey,
+    views: { ...state.views, [key]: view },
+  }
+}
+
+/** 给某个会话的旧视图算新视图再写回；算出来还是同一个对象就原样返回。 */
+function withView(state: Store, key: string, update: (view: SessionView) => SessionView): Store {
+  const view = locate(state, key).view
+  const next = update(view)
+  return next === view ? state : put(state, key, next)
+}
+
+/**
+ * 按界面自己的当前会话重写列表里的 `current` 标记。
+ *
+ * 为什么要重写而不用 host 给的那份：
+ *   1. 多个 host 同时活着时，每一帧 `workspace` 都带着**它自己**的
+ *      `currentSessionId`，先到的那一帧会把「当前会话」标错；
+ *   2. 切到一个**还活着**的会话（挂回，不重启）压根不会来新的 `workspace` 帧，
+ *      光靠帧上的标记会让侧栏一直高亮着上一个会话。
+ *
+ * 所以标记一律在**投影时**现算（见 {@link project}），存储里只留 host 给的原始列表。
+ * @param sessions - host 给的会话列表。
+ * @param currentId - 界面当前会话的 id；null 表示还不知道（原样返回）。
+ * @returns 修正过 `current` 的列表（没变化时返回原数组，避免无谓的重渲染）。
+ */
+function markCurrent(
+  sessions: readonly SessionSummary[],
+  currentId: string | null,
+): readonly SessionSummary[] {
+  if (currentId === null) return sessions
+  let changed = false
+  const next = sessions.map((session) => {
+    const want = session.id === currentId
+    if (session.current === want) return session
+    changed = true
+    return { ...session, current: want }
+  })
+  return changed ? next : sessions
+}
+
+/** 同上，作用于「当前项目」那一列（当前项目 = 当前视图的 cwd）。 */
+function markCurrentProject(
+  projects: readonly ProjectSummary[],
+  currentCwd: string,
+): readonly ProjectSummary[] {
+  if (currentCwd === '') return projects
+  let changed = false
+  const next = projects.map((project) => {
+    const want = project.path === currentCwd
+    if (project.current === want) return project
+    changed = true
+    return { ...project, current: want }
+  })
+  return changed ? next : projects
+}
+
+/**
+ * 把内部状态投影成组件读的那一份（当前会话的视图摊平 + 全局部分）。
+ *
+ * 导出是给冒烟脚本用的：`reducer` 只产出内部状态，`current` 标记这类
+ * 「看起来该是状态、其实是视图」的东西都在这里现算，得能单独验。
+ */
+export function project(store: Store): AgentState {
+  const view = store.views[store.activeKey] ?? emptyView(store.activeKey, '')
+  const currentId = view.info?.sessionId ?? null
+  const runningIds: string[] = []
+  for (const item of Object.values(store.views)) {
+    const id = item.info?.sessionId
+    if (item.busy && id !== undefined && !runningIds.includes(id)) runningIds.push(id)
+  }
+  const projectSessions: Record<string, readonly SessionSummary[]> = {}
+  for (const [path, list] of Object.entries(store.projectSessions)) {
+    projectSessions[path] = markCurrent(list, currentId)
+  }
+  return {
+    ...view,
+    activeKey: store.activeKey,
+    knownViews: Object.keys(store.views),
+    runningIds,
+    // `current` 标记在这里现算：切到一个还活着的会话不会来新的 `workspace` 帧，
+    // 只靠帧上的标记会让侧栏一直高亮着上一个会话（见 `markCurrent`）。
+    projects: markCurrentProject(store.projects, view.cwd),
+    sessions: markCurrent(store.sessions, currentId),
+    projectSessions,
+    loadingProject: store.loadingProject,
+    files: store.files,
+    filesQuery: store.filesQuery,
+    settings: store.settings,
+    settingsBusy: store.settingsBusy,
+  }
 }
 
 /** 生成条目 id（渲染列表的 key）。 */
@@ -612,61 +808,102 @@ function replaceItem(items: readonly Item[], index: number, next: Item): Item[] 
  * @param state - 当前状态。
  * @param action - 事件或本地动作。
  */
-export function reducer(state: AgentState, action: Action): AgentState {
+/**
+ * 归约器：事件与界面动作 → 新状态。
+ *
+ * 与上一版最大的区别：**一切都是「按会话」的**。每个 host 帧带着 `hostId`，
+ * 归约到对应会话的视图上（见 `locate`）；当前会话只是「正在看的那个视图」。
+ * 于是后台会话还在跑的时候，它的增量照样落进它自己那份，切回去就是完整的。
+ * @param state - 当前状态（内部是「视图表 + 全局」）。
+ * @param action - 事件或本地动作。
+ */
+export function reducer(state: Store, action: Action): Store {
   switch (action.type) {
-    // ── 内核生命周期 ──────────────────────────────────────────────────
-    case 'ready':
+    // ── 会话视图的定位 ────────────────────────────────────────────────
+    /**
+     * 换前台会话：只挪视角，**不动任何数据**（每个视图本来就各自留着）。
+     *
+     * `switching` 先置上：目标可能是没见过 / 已被回收的会话，要等新内核回放历史；
+     * 若主进程回的是「挂回活着的 host」，紧接着的 `attached` 会立刻把它放开。
+     */
+    case 'activate': {
+      const view = state.views[action.key] ?? emptyView(action.key, action.cwd)
       return {
         ...state,
-        phase: 'ready',
-        error: null,
-        info: action.info,
-        busy: false,
-        models: action.info.models ?? [],
+        activeKey: action.key,
+        views: { ...state.views, [action.key]: { ...view, cwd: action.cwd, switching: true } },
       }
+    }
+
+    /** 挂回了活着的 host：视图一直是实时更新的，放开切换标记即可。 */
+    case 'attached':
+      return withView(state, action.key, (view) => ({ ...view, switching: false }))
+
+    // ── 内核生命周期 ──────────────────────────────────────────────────
+    case 'ready': {
+      const info = action.info
+      const from = action.hostId ?? state.activeKey
+      const { view } = locate(state, from, info.cwd)
+      /**
+       * 新建会话：host 在 `ready` 里才给出真正的会话 id，于是**占位键**
+       * （`cwd\n`）在这里换成带 id 的键 —— 主进程同时也在做同一件事。
+       * 不换的话「切走再切回来」会按真实 id 找不到这个视图、另起一个 host，
+       * 两个内核就会写同一份会话日志。
+       */
+      const key = sessionKey(info.cwd, info.sessionId)
+      const views: Record<string, SessionView> = {
+        ...state.views,
+        [key]: {
+          ...view,
+          key,
+          cwd: info.cwd,
+          phase: 'ready',
+          error: null,
+          info,
+          busy: false,
+          switching: false,
+          models: info.models ?? [],
+        },
+      }
+      if (from !== key) delete views[from]
+      return {
+        ...state,
+        activeKey: state.activeKey === '' || state.activeKey === from ? key : state.activeKey,
+        views,
+      }
+    }
 
     /**
      * 换会话 / 换项目 / 重启内核。
      *
-     * 两条路，判据是「界面上有没有内容」：
-     *
-     * | 情形 | 做什么 |
-     * | --- | --- |
-     * | **冷启动**（还没有内核） | 老路：清空 + `booting`，界面上本来就是空的 |
-     * | **已经有内容**（切会话/切项目/重启内核） | **什么都不清**，只打 `switching` 标记；内容等 `history` 帧整段替换 |
-     *
-     * 第二条是「切换丝滑」的关键。早先这里无条件清空，于是点一下侧栏会连着抖四下：
-     * 消息区白掉并闪出「正在启动内核…」、token 统计与轮次归零、模型下拉变空、
-     * 已展开项目的会话列表显示「读取中…」。这些数据在切换前后其实都还有效
-     * （模型来自内核配置、内容马上就会被历史覆盖），没有理由先抹掉再填回来。
+     * **什么都不清**，只打 `switching` 标记：内容等 `history` 帧整段替换。
+     * 早先这里无条件清空，于是点一下侧栏会连着抖四下（消息区白掉并闪出
+     * 「正在启动内核…」、token 统计归零、模型下拉变空、已展开项目的会话列表
+     * 显示「读取中…」）—— 那些数据在切换前后其实都还有效。
      */
-    case 'restarting':
-      if (state.phase === 'ready' && state.info !== null) {
-        // 回合状态要清：内核正在被杀，那一轮不可能再继续（内容由历史帧接管）。
-        return { ...state, switching: true, busy: false }
-      }
-      // 新内核 = 新会话：对话、token 累计、已展开项目的会话缓存都要归零；
-      // 项目清单等新一帧 `workspace` 覆盖。
-      return {
-        ...state,
-        phase: 'booting',
-        switching: false,
-        error: null,
-        info: null,
-        items: [],
+    case 'restarting': {
+      const { key } = locate(state, action.hostId, action.cwd)
+      return withView(state, key, (view) => ({
+        ...view,
+        cwd: action.cwd,
+        switching: true,
+        // 回合状态要清：内核正在被杀 / 换，那一轮不可能再继续（内容由历史帧接管）。
         busy: false,
-        projectSessions: {},
-        loadingProject: null,
-        usage: emptyUsage,
-        models: [],
-        lastTurnMs: null,
-        turns: 0,
-      }
+      }))
+    }
 
     /** 切换超时兜底：宁可放开标记（顶多显示旧内容），也别把界面永远锁在「正在切换」。 */
     case 'switch-timeout':
-      return state.switching ? { ...state, switching: false } : state
+      return state.activeKey === ''
+        ? state
+        : withView(state, state.activeKey, (view) => ({ ...view, switching: false }))
 
+    /**
+     * 项目与会话清单。
+     *
+     * 原样存下来：里面的 `current` 标记**以投影时现算的为准**（见 `markCurrent`）——
+     * 多个 host 都会推这一帧、各自把「它自己」标成 current，所以帧上的值不可信。
+     */
     case 'workspace':
       return { ...state, projects: action.projects, sessions: action.sessions }
 
@@ -698,18 +935,11 @@ export function reducer(state: AgentState, action: Action): AgentState {
      * 正在跑的那条助手消息还在写，凭空插一个占位会把它的流式增量引到新气泡上。
      */
     case 'steer-send':
-      return {
-        ...state,
-        items: [...state.items, { id: newId(), kind: 'steer', text: action.text }],
-      }
+      return withView(state, state.activeKey, (view) => ({
+        ...view,
+        items: [...view.items, { id: newId(), kind: 'steer', text: action.text }],
+      }))
 
-    /**
-     * 历史回放：恢复会话时 host 读日志送来的完整记录。
-     *
-     * **整段替换**而不是追加 —— 回放与实时是两条独立路径，混起来会重复。
-     * `usage` 同样按「历史总和」重置（`last` 置空：历史里没有「最近一次调用」的
-     * 明细，硬凑一个反而误导）。
-     */
     /**
      * 历史回放（host 在每次就绪后**一定会**发一帧，新建会话发的是空历史）。
      *
@@ -718,15 +948,15 @@ export function reducer(state: AgentState, action: Action): AgentState {
      * 一个「内容马上要被历史覆盖」的界面，那条消息会被覆盖掉。
      */
     case 'history':
-      return {
-        ...state,
+      return withView(state, action.hostId ?? state.activeKey, (view) => ({
+        ...view,
         switching: false,
         items: action.items,
         usage: { ...emptyUsage, ...action.usage, last: null },
         turns: action.turns,
         // 耗时是「上一回合」的量，历史里没有记录 → 保持未知，不伪造。
         lastTurnMs: null,
-      }
+      }))
 
     /** 某个折叠项目的会话明细到了（也可能是「读不到」的空结果）。 */
     case 'project-sessions':
@@ -737,162 +967,181 @@ export function reducer(state: AgentState, action: Action): AgentState {
       }
 
     case 'usage':
-      return { ...state, usage: accumulate(state.usage, action.usage) }
+      return withView(state, action.hostId ?? state.activeKey, (view) => ({
+        ...view,
+        usage: accumulate(view.usage, action.usage),
+      }))
 
     case 'host-error':
     case 'fatal':
-      return {
-        ...state,
+      return withView(state, action.hostId ?? state.activeKey, (view) => ({
+        ...view,
         phase: 'error',
         error: action.message,
         busy: false,
-        items: [...state.items, { id: newId(), kind: 'note', level: 'error', text: action.message }],
-      }
+        items: [...view.items, { id: newId(), kind: 'note', level: 'error', text: action.message }],
+      }))
 
     case 'notice':
       // 子进程输出不可信：主进程只做了浅校验，这里补齐缺省值。
-      return {
-        ...state,
-        items: [...state.items, { id: newId(), kind: 'note', level: action.level ?? 'info', text: action.message }],
-      }
+      return withView(state, action.hostId ?? state.activeKey, (view) => ({
+        ...view,
+        items: [...view.items, { id: newId(), kind: 'note', level: action.level ?? 'info', text: action.message }],
+      }))
 
     case 'model-changed':
-      return { ...state, info: state.info === null ? null : { ...state.info, model: action.model } }
+      return withView(state, action.hostId ?? state.activeKey, (view) => ({
+        ...view,
+        info: view.info === null ? null : { ...view.info, model: action.model },
+      }))
+
+    /** 推理强度已切换（下一次请求生效）—— 与 `model-changed` 同一条路。 */
+    case 'effort-changed':
+      return withView(state, action.hostId ?? state.activeKey, (view) => ({
+        ...view,
+        info: view.info === null ? null : { ...view.info, effort: action.effort },
+      }))
 
     // ── 本地动作：用户点了发送 ────────────────────────────────────────
     case 'user-send':
-      return {
-        ...state,
+      return withView(state, state.activeKey, (view) => ({
+        ...view,
         busy: true,
         items: [
-          ...state.items,
+          ...view.items,
           { id: newId(), kind: 'user', text: action.text },
           // 先建好助手条目再发请求：首个流式帧可能比 invoke 的响应先到。
           { id: newId(), kind: 'assistant', turnId: null, reasoning: '', blocks: [], meta: null },
         ],
-      }
+      }))
 
     /** 助手占位条目认领主进程返回的 turnId。 */
-    case 'adopt-turn': {
-      const index = activeAssistant(state.items, null)
-      const current = asAssistant(state.items[index])
-      if (current === null || current.turnId !== null) return state
-      return { ...state, items: replaceItem(state.items, index, { ...current, turnId: action.turnId }) }
-    }
+    case 'adopt-turn':
+      return withView(state, state.activeKey, (view) => {
+        const index = activeAssistant(view.items, null)
+        const current = asAssistant(view.items[index])
+        if (current === null || current.turnId !== null) return view
+        return { ...view, items: replaceItem(view.items, index, { ...current, turnId: action.turnId }) }
+      })
 
-    // ── 流式增量 ──────────────────────────────────────────────────────
-    case 'text-delta': {
-      const [items, index] = ensureAssistant(state.items, action.turnId)
-      const current = asAssistant(items[index])
-      if (current === null) return state
-      const next: AssistantItem = {
-        ...current,
-        blocks: appendText(current.blocks, action.text),
-      }
-      return { ...state, items: replaceItem(items, index, next) }
-    }
+    // ── 流式增量（按帧上的会话键分发：后台会话的增量落在它自己那条上）──
+    case 'text-delta':
+      return withView(state, action.hostId ?? state.activeKey, (view) => {
+        const [items, index] = ensureAssistant(view.items, action.turnId)
+        const current = asAssistant(items[index])
+        if (current === null) return view
+        const next: AssistantItem = { ...current, blocks: appendText(current.blocks, action.text) }
+        return { ...view, items: replaceItem(items, index, next) }
+      })
 
-    case 'reasoning-delta': {
-      const [items, index] = ensureAssistant(state.items, action.turnId)
-      const current = asAssistant(items[index])
-      if (current === null) return state
-      /**
-       * 两处都写，但用途不同：
-       *   - `blocks` 里按位置存（界面渲染用，见 `appendReasoning`）；
-       *   - `reasoning` 是整回合的拼接（刻度尺提示框、轨迹兜底用）。
-       * 只留后者就会退回「所有思考堆在消息最上方」的老样子。
-       */
-      const next: AssistantItem = {
-        ...current,
-        reasoning: current.reasoning + action.text,
-        blocks: appendReasoning(current.blocks, action.text),
-      }
-      return { ...state, items: replaceItem(items, index, next) }
-    }
+    case 'reasoning-delta':
+      return withView(state, action.hostId ?? state.activeKey, (view) => {
+        const [items, index] = ensureAssistant(view.items, action.turnId)
+        const current = asAssistant(items[index])
+        if (current === null) return view
+        /**
+         * 两处都写，但用途不同：
+         *   - `blocks` 里按位置存（界面渲染用，见 `appendReasoning`）；
+         *   - `reasoning` 是整回合的拼接（刻度尺提示框、轨迹兜底用）。
+         * 只留后者就会退回「所有思考堆在消息最上方」的老样子。
+         */
+        const next: AssistantItem = {
+          ...current,
+          reasoning: current.reasoning + action.text,
+          blocks: appendReasoning(current.blocks, action.text),
+        }
+        return { ...view, items: replaceItem(items, index, next) }
+      })
 
     // ── 工具调用 ──────────────────────────────────────────────────────
-    case 'tool-call': {
-      const [items, index] = ensureAssistant(state.items, action.turnId)
-      const current = asAssistant(items[index])
-      if (current === null) return state
-      const block: ToolBlock = {
-        type: 'tool',
-        callId: action.callId,
-        name: action.name,
-        args: action.summary,
-        result: null,
-        output: null,
-        isError: false,
-      }
-      const next: AssistantItem = { ...current, blocks: [...current.blocks, block] }
-      return { ...state, items: replaceItem(items, index, next) }
-    }
-
-    case 'tool-result': {
-      const [items, index] = ensureAssistant(state.items, action.turnId)
-      const current = asAssistant(items[index])
-      if (current === null) return state
-      let matched = false
-      const blocks: Block[] = current.blocks.map((block) => {
-        if (block.type !== 'tool' || block.callId !== action.callId) return block
-        matched = true
-        // 摘要给折叠行、`output` 给展开明细：两个都收，点开就有完整内容
-        return { ...block, result: action.summary, output: action.output, isError: action.isError === true }
-      })
-      // 结果先于调用到达（或缺了调用帧）：补一张卡片，信息别丢。
-      if (!matched) {
-        blocks.push({
+    case 'tool-call':
+      return withView(state, action.hostId ?? state.activeKey, (view) => {
+        const [items, index] = ensureAssistant(view.items, action.turnId)
+        const current = asAssistant(items[index])
+        if (current === null) return view
+        const block: ToolBlock = {
           type: 'tool',
           callId: action.callId,
           name: action.name,
-          args: '',
-          result: action.summary,
-          output: action.output,
-          isError: action.isError === true,
-        })
-      }
-      return { ...state, items: replaceItem(items, index, { ...current, blocks }) }
-    }
+          args: action.summary,
+          result: null,
+          output: null,
+          isError: false,
+        }
+        return { ...view, items: replaceItem(items, index, { ...current, blocks: [...current.blocks, block] }) }
+      })
 
-    // ── 回合收尾 ──────────────────────────────────────────────────────
-    case 'turn-end': {
-      const index = activeAssistant(state.items, action.turnId)
-      const next: AgentState = { ...state, busy: false }
-      const current = asAssistant(state.items[index])
-      if (current === null) return next
-      // 流式增量是正文的权威来源；真丢了帧才用 turn-end 的汇总补。
-      const fallbackText = action.text ?? ''
-      const blocks: readonly Block[] = current.blocks.length === 0 && fallbackText !== ''
-        ? [{ type: 'text', text: fallbackText }]
-        : current.blocks
-      const meta: TurnMeta = { outcome: action.outcome, error: action.error, toolCalls: action.toolCalls ?? 0 }
-      return {
-        ...next,
-        items: replaceItem(state.items, index, { ...current, blocks, meta }),
-        // 统计条用的「上一轮耗时 / 已完成轮次」
-        lastTurnMs: action.durationMs ?? null,
-        turns: state.turns + 1,
-      }
-    }
+    case 'tool-result':
+      return withView(state, action.hostId ?? state.activeKey, (view) => {
+        const [items, index] = ensureAssistant(view.items, action.turnId)
+        const current = asAssistant(items[index])
+        if (current === null) return view
+        let matched = false
+        const blocks: Block[] = current.blocks.map((block) => {
+          if (block.type !== 'tool' || block.callId !== action.callId) return block
+          matched = true
+          // 摘要给折叠行、`output` 给展开明细：两个都收，点开就有完整内容
+          return { ...block, result: action.summary, output: action.output, isError: action.isError === true }
+        })
+        // 结果先于调用到达（或缺了调用帧）：补一张卡片，信息别丢。
+        if (!matched) {
+          blocks.push({
+            type: 'tool',
+            callId: action.callId,
+            name: action.name,
+            args: '',
+            result: action.summary,
+            output: action.output,
+            isError: action.isError === true,
+          })
+        }
+        return { ...view, items: replaceItem(items, index, { ...current, blocks }) }
+      })
+
+    // ── 回合收尾（后台会话的收尾也走这里，所以按帧上的会话键分发）────
+    case 'turn-end':
+      return withView(state, action.hostId ?? state.activeKey, (view) => {
+        const next: SessionView = { ...view, busy: false }
+        const index = activeAssistant(view.items, action.turnId)
+        const current = asAssistant(view.items[index])
+        if (current === null) return next
+        // 流式增量是正文的权威来源；真丢了帧才用 turn-end 的汇总补。
+        const fallbackText = action.text ?? ''
+        const blocks: readonly Block[] = current.blocks.length === 0 && fallbackText !== ''
+          ? [{ type: 'text', text: fallbackText }]
+          : current.blocks
+        const meta: TurnMeta = { outcome: action.outcome, error: action.error, toolCalls: action.toolCalls ?? 0 }
+        return {
+          ...next,
+          items: replaceItem(view.items, index, { ...current, blocks, meta }),
+          // 统计条用的「上一轮耗时 / 已完成轮次」
+          lastTurnMs: action.durationMs ?? null,
+          turns: view.turns + 1,
+        }
+      })
 
     case 'user-error':
-      return {
-        ...state,
+      return withView(state, state.activeKey, (view) => ({
+        ...view,
         busy: false,
-        items: [...state.items, { id: newId(), kind: 'note', level: 'error', text: action.message }],
-      }
+        items: [...view.items, { id: newId(), kind: 'note', level: 'error', text: action.message }],
+      }))
 
     // ── 本地动作：展开一个折叠的项目 ──────────────────────────────────
     /** 开始读：标记「读取中」，界面此刻显示占位而不是空列表。 */
     case 'project-sessions-loading':
       return { ...state, loadingProject: action.path }
 
-    case 'project-sessions-error':
-      return {
+    case 'project-sessions-error': {
+      const cleared: Store = {
         ...state,
         loadingProject: state.loadingProject === action.path ? null : state.loadingProject,
-        items: [...state.items, { id: newId(), kind: 'note', level: 'warn', text: action.message }],
       }
+      return withView(cleared, state.activeKey, (view) => ({
+        ...view,
+        items: [...view.items, { id: newId(), kind: 'note', level: 'warn', text: action.message }],
+      }))
+    }
 
     default:
       return state
@@ -909,16 +1158,18 @@ export interface AgentController {
   readonly send: (text: string) => Promise<void>
   readonly cancel: () => Promise<void> | undefined
   readonly setModel: (model: string) => Promise<void> | undefined
-  readonly newSession: () => Promise<ShellState> | undefined
+  /** 运行中切换推理强度（`low | high | max`）：下一次请求生效。 */
+  readonly setEffort: (effort: string) => Promise<void> | undefined
+  /** 在当前项目里开一个新会话（别的会话照跑）。 */
+  readonly newSession: () => Promise<void>
   /**
    * 恢复一个已落盘的会话。
    * @param sessionId - 会话 id。
    * @param cwd - 该会话所属的项目；省略表示当前项目。
    */
   readonly resumeSession: (sessionId: string, cwd?: string) => Promise<void>
-  /** 切到另一个项目（换工作目录 = 用新 cwd 重启内核）。 */
+  /** 切到另一个项目：在新工作目录里开一个新会话。 */
   readonly openProject: (path: string) => Promise<void>
-  /** 重新扫描会话列表。 */
   /** 读一个折叠项目的会话明细（结果以 `project-sessions` 事件回来）。 */
   readonly loadProjectSessions: (path: string) => Promise<void>
   /** 用系统默认程序打开一个文件（文件卡片的「打开」按钮）。 */
@@ -930,12 +1181,12 @@ export interface AgentController {
    */
   readonly previewRead: (path: string) => Promise<PreviewPayload>
   /**
-   * 用当前配置重启内核。
+   * 用当前配置重启**当前会话**的内核。
    *
    * 用途：改完 MCP 配置（`<cwd>/.YuanMy/mcp.json`）后让它生效 ——
    * MCP 服务器是启动时挂的，不重启不会变。
    */
-  readonly restartKernel: () => Promise<ShellState> | undefined
+  readonly restartKernel: () => Promise<void>
   /**
    * 中途调整目标：把这段话插给正在跑的回合。
    *
@@ -960,13 +1211,32 @@ export interface AgentController {
  *
  * 订阅 + 拉快照**两条腿**：先订阅再 `getState()`，这样无论内核在界面订阅之前
  * 还是之后就绪，都不会漏掉 `ready`。
+ *
+ * 状态本身是**按会话分开**的（`Store.views`），对组件只暴露当前会话那一份
+ * （`project`）—— 于是「后台会话继续跑」这件事对组件完全透明。
  * @returns 状态与可调用的动作。
  */
 export function useAgent(): AgentController {
-  const [state, dispatch] = useReducer(reducer, initialState)
+  const [store, dispatch] = useReducer(reducer, initialState)
+  /** 组件读的那一份：当前会话的视图摊平 + 全局部分。 */
+  const state = project(store)
   /** 事件回调放在 ref 里，避免订阅在每次渲染时重建。 */
   const dispatchRef = useRef<Dispatch<Action>>(dispatch)
   dispatchRef.current = dispatch
+
+  /** 内部状态的最新快照（启动自愈要判断「这个会话的视图是不是已经有内容了」）。 */
+  const storeRef = useRef<Store>(store)
+  storeRef.current = store
+
+  /**
+   * 最新状态的 ref。
+   *
+   * 那些「切会话」的动作要用它读**现在**的场景（当前在哪个会话、它忙不忙、
+   * 目标键有没有视图），而不是被 `useCallback` 的依赖钉在过去那一帧 ——
+   * 钉住的后果是把「后台还在跑的会话」当成空闲的，直接切掉。
+   */
+  const stateRef = useRef<AgentState>(state)
+  stateRef.current = state
 
   /**
    * 切换会话的兜底：`switching` 正常由 `history` 帧解除，
@@ -986,7 +1256,7 @@ export function useAgent(): AgentController {
       return undefined
     }
 
-    // host 事件与主进程自产事件共用一条通道，形状由协议保证。
+    // host 事件与主进程自产事件共用一条通道，形状由协议保证（每一帧都带 hostId）。
     const off = api.onEvent((event) => { dispatchRef.current(event) })
 
     /*
@@ -1005,7 +1275,30 @@ export function useAgent(): AgentController {
           dispatchRef.current({ type: 'workspace', ...current.workspace })
         }
         if (current.phase === 'ready' && current.info !== undefined) {
-          dispatchRef.current({ type: 'ready', info: current.info })
+          /*
+           * 界面比内核晚到（重载、或者 bundle 解析得比内核启动还慢）：
+           * 视图是空的，但主进程那边 host 还活着。
+           *
+           * 这里**不重启**（会把还跑着的回合杀掉）：挂回活着的 host，再让它重放
+           * 一次历史把内容补上。挂不上（host 已经收了）就走正常的启动路径 ——
+           * 主进程会带 `--resume` 起一个新的，然后自己发历史帧。
+           */
+          const key = current.activeKey ?? sessionKey(current.info.cwd, current.info.sessionId)
+          dispatchRef.current({ type: 'ready', info: current.info, hostId: key })
+          void api.attach({ cwd: current.info.cwd, resume: current.info.sessionId, reuse: true }).then(
+            (result) => {
+              if (!result.attached) return
+              dispatchRef.current({ type: 'attached', key: result.key })
+              /*
+               * 只在视图还是空的时补历史：如果界面其实**比内核先到**（实时帧已经在收了），
+               * 再来一次回放会用盘上的旧内容盖掉刚收到的流式正文。
+               */
+              if ((storeRef.current.views[result.key]?.items.length ?? 0) === 0) {
+                void api.replayHistory()
+              }
+            },
+            () => { /* 挂不上就等用户点一个会话 */ },
+          )
         } else if (current.phase === 'error') {
           dispatchRef.current({ type: 'host-error', message: current.error ?? '内核不可用' })
         }
@@ -1042,29 +1335,82 @@ export function useAgent(): AgentController {
 
   const cancel = useCallback(() => api?.cancel(), [api])
   const setModel = useCallback((model: string) => api?.setModel(model), [api])
-  const newSession = useCallback(() => api?.newSession(), [api])
+  const setEffort = useCallback((effort: string) => api?.setEffort(effort), [api])
+
+  /**
+   * 换前台会话的公共入口。
+   *
+   * 顺序要紧：**先 `activate`（换视角）再 `attach`**，这样主进程回的第一帧
+   * （`restarting` / `ready`）一定落在已经存在的视图上。
+   *
+   * `reuse` 取「界面见没见过这个会话」：见过才谈得上挂回主进程里还留着的 host；
+   * 没见过（第一次打开）让主进程直接起新的 —— 反正没有内容可保。
+   * @param key - 目标会话视图键。
+   * @param cwd - 目标项目根目录。
+   * @param resume - 要恢复的会话 id；新会话省略。
+   * @returns 目标键（主进程算出来的，正常情况下与传入的一致）。
+   */
+  const switchTo = useCallback(async (
+    key: string,
+    cwd: string,
+    resume: string | undefined,
+  ): Promise<string> => {
+    const current = stateRef.current
+    const reuse = current.knownViews.includes(key)
+    dispatch({ type: 'activate', key, cwd })
+    if (api === undefined) return key
+    const result = await api.attach({
+      cwd,
+      ...(resume === undefined ? {} : { resume }),
+      reuse,
+      // 「我刚离开的会话还在跑」：主进程可能还没收到 prompt，先替它记上（见 ipc.ts）。
+      activeBusy: current.busy,
+    })
+    if (result.attached) dispatch({ type: 'attached', key: result.key })
+    return result.key
+  }, [api])
+
   /**
    * 恢复会话：`--resume` 要求开启持久化，桌面端默认是开的。
    *
    * 跨项目恢复必须带上 `cwd`：会话 id 只在它自己的项目里有效，否则会得到
-   * 「会话不存在」（`main.js` 换目录时也会主动丢掉 resume）。
+   * 「会话不存在」。
    */
   const resumeSession = useCallback(async (sessionId: string, cwd?: string): Promise<void> => {
-    dispatch({ type: 'restarting', cwd: cwd ?? '' })
+    const current = stateRef.current
+    const target = cwd ?? current.info?.cwd ?? current.cwd
+    if (target === '') {
+      dispatch({ type: 'user-error', message: '恢复会话失败：还不知道它在哪个项目里' })
+      return
+    }
     try {
-      await api?.restart({ cwd, resume: sessionId, sessionId: undefined })
+      await switchTo(sessionKey(target, sessionId), target, sessionId)
     } catch (error) {
       dispatch({ type: 'user-error', message: `恢复会话失败：${String((error as Error | undefined)?.message ?? error)}` })
     }
-  }, [api])
+  }, [switchTo])
+
+  /** 切到另一个项目：在新工作目录里开一个新会话。 */
   const openProject = useCallback(async (path: string): Promise<void> => {
-    dispatch({ type: 'restarting', cwd: path })
     try {
-      await api?.restart({ cwd: path, resume: undefined, sessionId: undefined })
+      await switchTo(sessionKey(path, undefined), path, undefined)
     } catch (error) {
       dispatch({ type: 'user-error', message: `切换项目失败：${String((error as Error | undefined)?.message ?? error)}` })
     }
-  }, [api])
+  }, [switchTo])
+
+  /** 在当前项目里开一个新会话。 */
+  const newSession = useCallback(async (): Promise<void> => {
+    const current = stateRef.current
+    const cwd = current.info?.cwd ?? current.cwd
+    if (cwd === '') return
+    try {
+      await switchTo(sessionKey(cwd, undefined), cwd, undefined)
+    } catch (error) {
+      dispatch({ type: 'user-error', message: `新建会话失败：${String((error as Error | undefined)?.message ?? error)}` })
+    }
+  }, [switchTo])
+
   /**
    * 展开一个折叠的项目：让 host 去读它的会话。
    * 读盘发生在 host 侧，界面这一侧只负责发请求与标记「读取中」。
@@ -1081,11 +1427,19 @@ export function useAgent(): AgentController {
       })
     }
   }, [api])
+
   const pickDirectory = useCallback(async (): Promise<string | null> => {
     const picked = await api?.pickDirectory()
-    if (typeof picked === 'string' && picked !== '') await api?.restart({ cwd: picked })
+    if (typeof picked === 'string' && picked !== '') {
+      try {
+        await switchTo(sessionKey(picked, undefined), picked, undefined)
+      } catch (error) {
+        dispatch({ type: 'user-error', message: `切换工作目录失败：${String((error as Error | undefined)?.message ?? error)}` })
+      }
+    }
     return picked ?? null
-  }, [api])
+  }, [api, switchTo])
+
   const openPath = useCallback(async (path: string): Promise<void> => {
     const result = await api?.openPath(path)
     // 主进程返回错误字符串（例如文件不存在），成功时空字符串
@@ -1093,17 +1447,40 @@ export function useAgent(): AgentController {
       dispatch({ type: 'user-error', message: `打开失败：${result}` })
     }
   }, [api])
+
+  /**
+   * 重启**当前会话**的内核（同一个 cwd + 同一个会话 id，只是换一个进程）。
+   *
+   * `reuse: false` 是刻意的：这里是「按新配置重启」，不是「切过去看看」——
+   * 即使主进程里还留着这个会话的 host，也必须换掉。
+   */
+  const restartKernel = useCallback(async (): Promise<void> => {
+    const current = stateRef.current
+    const cwd = current.info?.cwd ?? current.cwd
+    const resume = current.info?.sessionId
+    if (cwd === '' || resume === undefined) return
+    const key = sessionKey(cwd, resume)
+    dispatch({ type: 'activate', key, cwd })
+    if (api === undefined) return
+    await api.attach({ cwd, resume, reuse: false, activeBusy: current.busy })
+  }, [api])
+
   /**
    * 拉一次设置数据。
    *
    * 刻意**不**缓存到 state 以外的地方：每次打开设置面板都重新拉，
    * 这样「改完文件切回来」看到的一定是盘上的现状。
    */
-  const restartKernel = useCallback((): Promise<ShellState> | undefined => {
-    const cwd = state.info?.cwd
-    dispatch({ type: 'restarting', cwd: cwd ?? '' })
-    return api?.restart(cwd === undefined ? {} : { cwd })
-  }, [api, state.info?.cwd])
+  const loadSettings = useCallback(async (): Promise<void> => {
+    if (api === undefined) return
+    dispatch({ type: 'settings-loading' })
+    try {
+      await api.settingsList()
+    } catch (error) {
+      dispatch({ type: 'settings-loading' })
+      dispatch({ type: 'user-error', message: `读设置失败：${String((error as Error | undefined)?.message ?? error)}` })
+    }
+  }, [api])
 
   const steer = useCallback(async (text: string): Promise<void> => {
     const trimmed = text.trim()
@@ -1122,17 +1499,6 @@ export function useAgent(): AgentController {
       await api.listFiles(query)
     } catch {
       // 文件索引拿不到就是菜单空着，不值得打断输入
-    }
-  }, [api])
-
-  const loadSettings = useCallback(async (): Promise<void> => {
-    if (api === undefined) return
-    dispatch({ type: 'settings-loading' })
-    try {
-      await api.settingsList()
-    } catch (error) {
-      dispatch({ type: 'settings-loading' })
-      dispatch({ type: 'user-error', message: `读设置失败：${String((error as Error | undefined)?.message ?? error)}` })
     }
   }, [api])
 
@@ -1156,6 +1522,7 @@ export function useAgent(): AgentController {
     send,
     cancel,
     setModel,
+    setEffort,
     newSession,
     resumeSession,
     openProject,

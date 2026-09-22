@@ -25,8 +25,17 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { readFile, stat, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { IPC, type BridgeEvent, type LaunchConfig, type PreviewKind, type PreviewPayload, type ShellState } from './ipc.ts'
-import { isHostEvent, type HostReadyInfo, type HostRequest } from './host/protocol.ts'
+import {
+  IPC,
+  type AttachRequest,
+  type AttachResult,
+  type BridgeEvent,
+  type LaunchConfig,
+  type PreviewKind,
+  type PreviewPayload,
+  type ShellState,
+} from './ipc.ts'
+import { isHostEvent, sessionKey, type HostReadyInfo, type HostRequest } from './host/protocol.ts'
 import type { WorkspaceListing } from './host/sessions.ts'
 
 /** host 子进程入口（TS 文件，由系统 node 的类型擦除能力直接运行）。 */
@@ -175,10 +184,13 @@ function rememberProject(path: string): void {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * 「重启/切换」的序号：只有最后一次切换的结果会被采纳（见 `restartWith`）。
- * 连着点两个会话时，前一次的子进程会被后一次 kill，它的 resolve/reject 都不算数。
+ * 同时活着的 host 上限。
+ *
+ * 每个 host 都是一整个内核（10MB 级 bundle + 插件树 + 可能的 MCP 子进程），
+ * 所以「后台继续跑」不能等于「永远不回收」。超过这个数就牺牲最老的那个后台会话，
+ * 并且**明确告诉用户**（而不是静默杀掉）。
  */
-let restartGeneration = 0
+const MAX_LIVE_SLOTS = 6
 
 /**
  * 找到用来跑 host 的运行时（可执行文件 + 它需要的环境变量）。
@@ -474,62 +486,266 @@ function assertSender(event: Electron.IpcMainInvokeEvent): void {
   }
 }
 
-/** host 退出 / 启动失败时统一把状态推给界面。 */
-function reportHostFailure(error: Error): void {
-  state = { phase: 'error', error: error.message }
-  sendToRenderer({ type: 'host-error', message: error.message })
+/**
+ * host 退出 / 启动失败时统一把状态推给界面。
+ * @param error - 失败原因。
+ * @param hostId - 出问题的会话视图键（渲染进程据此把错误挂到那个会话上）。
+ */
+function reportHostFailure(error: Error, hostId?: string): void {
+  state = { phase: 'error', error: error.message, ...(hostId === undefined ? {} : { activeKey: hostId }) }
+  sendToRenderer({ type: 'host-error', message: error.message, ...(hostId === undefined ? {} : { hostId }) })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 会话槽位：一个会话一个 host
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * 一个会话的 host 槽位。
+ *
+ * 为什么不再是一个全局 host：切换会话如果直接把 host 杀掉，**正在跑的回合就没了**
+ * （用户报的就是这件事）。现在按会话（`cwd + sessionId`）持有 host：
+ *
+ *   - 切到别的会话时，**还有回合在跑的 host 原样留着**，它继续跑完并落盘；
+ *   - 空闲的 host 在切换时收掉（省内存），切回来用 `--resume` 回放历史；
+ *   - 每个 host 的每一帧都打上 `hostId = slot.key`，渲染进程按它把事件路由到
+ *     各自会话的视图 —— 后台会话的正文不会串进前台会话。
+ */
+interface HostSlot {
+  /** 会话视图键（`sessionKey(cwd, sessionId)`）；新建会话就绪后会改名。 */
+  key: string
+  /** 项目根目录（绝对路径）。 */
+  readonly cwd: string
+  /** 启动配置（挂回 / 重启时以它为基线）。 */
+  readonly config: LaunchConfig
+  /** 子进程封装。 */
+  readonly host: AgentHost
+  /** `ready` 帧带回的真实会话 id；未就绪为 null。 */
+  sessionId: string | null
+  /** 就绪信息。 */
+  info: HostReadyInfo | null
+  /** 主进程侧记录的「有回合在跑」：`prompt` 之后到 `turn-end` 之前。 */
+  busy: boolean
+  /** 已经收掉：它的帧一律不再转发。 */
+  dead: boolean
+}
+
+/** 活着的 host 槽位（按启动顺序，最早的在前）。 */
+const slots: HostSlot[] = []
+/** 当前会话的键；还没有任何会话时为 null。 */
+let activeKey: string | null = null
+
+/** 当前会话的槽位。 */
+function activeSlot(): HostSlot | null {
+  return slots.find((slot) => slot.key === activeKey) ?? null
 }
 
 /**
- * 用给定配置重启 agent host。
- * @param {import('./ipc.ts').LaunchConfig} config - 启动配置。
- * @returns {Promise<import('./ipc.ts').ShellState>} 新的 shell 状态。
+ * 当前会话的 host，拿不到就抛。
+ *
+ * 界面上除了「切会话」以外的每一个动作都发给**当前会话** —— 后台会话继续跑，
+ * 但用户能操作（发消息 / 纠偏 / 中断 / 换模型）的只有前台这一个。
+ * @returns 当前会话的子进程封装。
  */
-async function restartWith(config: LaunchConfig): Promise<ShellState> {
+function requireActiveHost(): AgentHost {
+  const slot = activeSlot()
+  if (slot === null) throw new Error('还没有可用的会话')
+  return slot.host
+}
+
+/** 把当前槽位的状态同步到全局 `state`（`YuanMy:state` / `appInfo` 读它）。 */
+function syncState(): void {
+  const slot = activeSlot()
+  const key = activeKey === null ? undefined : activeKey
+  if (slot === null || slot.info === null) {
+    state = { phase: 'booting', ...(key === undefined ? {} : { activeKey: key }) }
+    return
+  }
+  state = { phase: 'ready', info: slot.info, ...(key === undefined ? {} : { activeKey: key }) }
+}
+
+/**
+ * 收掉一个槽位。
+ *
+ * 立刻从表里摘掉（后续帧一律丢弃，见 `slot.dead`），再让子进程自己优雅退出 ——
+ * **不 await**：切换会话不该被一个正在收敛的内核拖住。
+ * @param slot - 要收掉的槽位。
+ */
+function retire(slot: HostSlot): void {
+  if (slot.dead) return
+  slot.dead = true
+  const index = slots.indexOf(slot)
+  if (index >= 0) slots.splice(index, 1)
+  void slot.host.stop()
+}
+
+/**
+ * 造一个槽位并接上它的两条回调。
+ *
+ * `slot` 用「先声明后赋值」是因为 host 的帧回调要引用槽位本身（`ready` 帧要把
+ * 占位键改成真实会话 id 的键）—— 而 `new AgentHost()` 只是构造，不会同步产生帧。
+ * @param config - 启动配置。
+ * @param resume - 要恢复的会话 id；新会话为 undefined。
+ * @returns 新槽位（已入表）。
+ */
+function spawnSlot(config: LaunchConfig, resume: string | undefined): HostSlot {
+  const cwd = config.cwd
+  let slot!: HostSlot
+  const host = new AgentHost(
+    (event) => {
+      // 子进程输出按不可信处理：不认识的帧直接丢，别让它进渲染进程的归约器。
+      if (slot.dead || !isHostEvent(event)) return
+      const frame = event
+      if (frame.type === 'workspace') {
+        workspaceSnapshot = { projects: frame.projects, sessions: frame.sessions }
+      }
+      // ⚠️ 顺序要紧：**先转发、再改名**。`ready` 必须带着旧键出去，
+      // 渲染进程才知道「这个新会话 id 对应的是刚才那个占位视图」，两边各自改名。
+      sendToRenderer({ ...frame, hostId: slot.key })
+      if (frame.type === 'ready') adoptReady(slot, frame.info)
+      if (frame.type === 'turn-end' && slot.busy) {
+        slot.busy = false
+        // 后台会话跑完了：它已经没有继续留着的理由，收掉。
+        // （下次切回去走 `--resume` 历史回放，结果一点不少。）
+        if (slot.key !== activeKey) retire(slot)
+      }
+    },
+    ({ code }) => {
+      // 不是我们主动收的：host 自己退了。
+      if (slot.dead) return
+      const message = `agent host 异常退出 (code ${String(code)})，可在菜单里新建会话重试`
+      if (slot.key === activeKey) reportHostFailure(new Error(message), slot.key)
+      else sendToRenderer({ type: 'notice', level: 'warn', message, hostId: slot.key })
+      // ⚠️ 无论哪种都要把槽位摘掉：留着它会让下一次 `attach(reuse: true)` 挂到一个
+      // 已经死掉的子进程上（表现是「切回来一片空白、发消息没反应」）。
+      retire(slot)
+    },
+  )
+  slot = {
+    key: sessionKey(cwd, resume),
+    cwd,
+    config,
+    host,
+    sessionId: null,
+    info: null,
+    busy: false,
+    dead: false,
+  }
+  slots.push(slot)
+  return slot
+}
+
+/**
+ * `ready` 帧到了：记下真实会话 id，并把「新会话」的占位键换成带 id 的键。
+ *
+ * 两边（主进程与渲染进程）都要做这次改名，否则「切走再切回同一个新会话」时
+ * 键对不上，就会为一个会话起两个 host —— 两个内核写同一份会话日志。
+ * @param slot - 就绪的槽位。
+ * @param info - 就绪信息。
+ */
+function adoptReady(slot: HostSlot, info: HostReadyInfo): void {
+  slot.info = info
+  slot.sessionId = info.sessionId
+  const next = sessionKey(slot.cwd, info.sessionId)
+  if (next !== slot.key) {
+    // 理论上不会有两个槽位抢同一个键；真出现就收掉旧的那个，保持「一键一 host」。
+    const clash = slots.find((other) => other !== slot && other.key === next)
+    if (clash !== undefined) retire(clash)
+    if (slot.key === activeKey) activeKey = next
+    slot.key = next
+  }
+  syncState()
+}
+
+/**
+ * 切到某个会话。
+ *
+ * 三种走法：
+ *   1. **挂回**：渲染进程已有视图 + 这边还留着它的 host（多半是后台还在跑）→
+ *      只换前台，不动进程，后台进度一点不丢；
+ *   2. **挂不上就重启**：目标会话已空闲被收掉 / 从没打开过 → 起一个新 host，
+ *      需要时带 `--resume` 回放历史；
+ *   3. **正在跑的别的会话原样留着**，跑完自己收掉（见 {@link spawnSlot}）。
+ * @param request - 目标项目 / 会话与复用策略。
+ * @returns 是否直接挂回了活着的 host，以及目标会话视图键。
+ */
+async function attach(request: AttachRequest): Promise<AttachResult> {
+  const cwd = typeof request.cwd === 'string' && request.cwd !== '' ? request.cwd : launchConfig.cwd
+  const resume = typeof request.resume === 'string' && request.resume !== '' ? request.resume : undefined
+  const key = sessionKey(cwd, resume)
+
+  /**
+   * 「我刚离开的那个会话有回合在跑」：主进程可能还没收到 `prompt`（同一个 tick 里
+   * 先发指令再切走），先按忙处理，别把刚发出去的那一轮当成空闲收掉。
+   *
+   * ⚠️ 必须排在下面「挂回」之前：挂回那条路也会回收空闲槽位。
+   */
+  if (request.activeBusy === true) {
+    const leaving = activeSlot()
+    if (leaving !== null && leaving.key !== key) leaving.busy = true
+  }
+
+  // ① 直接挂回还活着的 host（切走再切回一个仍在跑的会话）。
+  const live = slots.find((slot) => !slot.dead && slot.key === key)
+  if (request.reuse && live !== undefined) {
+    // 顺手把**空闲**的槽位收掉（多半是刚才那个前台会话）—— 每个槽位都是一整个内核，
+    // 没有理由让一个空闲的继续占着。正在跑的照样留着。
+    for (const slot of [...slots]) {
+      if (slot === live || slot.busy) continue
+      retire(slot)
+    }
+    activeKey = key
+    launchConfig = { ...live.config }
+    syncState()
+    return { attached: true, key }
+  }
+
+  // ② 回收：目标键上的旧槽位无论如何都收掉（要么重启，要么被新 host 取代）；
+  //    其他会话**在跑的留着**，空闲的收掉。
+  for (const slot of [...slots]) {
+    if (slot.key === key) { retire(slot); continue }
+    if (slot.busy) continue
+    retire(slot)
+  }
+  // 兜底上限：全都在跑时不静默杀，但要给用户一句话。
+  while (slots.length >= MAX_LIVE_SLOTS) {
+    const victim = slots.find((slot) => slot.key !== activeKey) ?? slots[0]
+    if (victim === undefined) break
+    sendToRenderer({
+      type: 'notice',
+      level: 'warn',
+      message: '同时进行的会话太多，这个后台任务已被中断（上限 '
+        + `${String(MAX_LIVE_SLOTS)} 个内核）。`,
+      hostId: victim.key,
+    })
+    retire(victim)
+  }
+
+  const config: LaunchConfig = { cwd, ...(resume === undefined ? {} : { resume }) }
+  launchConfig = { ...config }
+  activeKey = key
   // 新内核的清单要重新扫，先作废旧快照。
   workspaceSnapshot = null
-  // 会话只属于它的项目：换工作目录时，**上一个**会话的 resume / sessionId 必须丢掉，
-  // 否则会拿着旧项目的会话 id 去新项目里找，得到「会话不存在」。
-  //
-  // ⚠️ 但「恢复另一个项目里的会话」是**合法**的组合：调用方（侧栏）会同时给出
-  // 目标 cwd 和该项目的会话 id（`onOpenSession(id, project.path)`）。
-  // 早先这里只要 cwd 变了就无条件清掉 resume，于是点别的项目下的会话时
-  // 内核会用新 cwd 开一个**全新会话** —— 界面一片空白，
-  // 正是「切换工作区中的会话后读不到历史」的根因。
-  // 判据因此是「调用方有没有**明确**要求恢复」，而不是「cwd 变没变」：
-  //   - pickDirectory / openProject：没给 resume（或显式 undefined）→ 清掉继承来的旧值；
-  //   - 侧栏点会话：显式给了 resume → 保留，它就是目标项目里的会话。
-  const cwdChanged = config.cwd !== launchConfig.cwd
-  const wantsResume = typeof config.resume === 'string' && config.resume !== ''
-  const next = cwdChanged && !wantsResume
-    ? { ...config, resume: undefined, sessionId: undefined }
-    : config
-  launchConfig = { ...next }
-  config = next
-  state = { phase: 'booting' }
-  sendToRenderer({ type: 'restarting', cwd: config.cwd })
-  /**
-   * 这次切换的序号。
-   *
-   * 连着点两个会话时，第一次的 `host.start()` 会被第二次打断（它的子进程被 kill），
-   * 于是它要么 reject、要么更晚 resolve。**两种都不该影响界面**：
-   *   - 被取代的那次不算「启动失败」，不能弹错误；
-   *   - 也不能把它的 ready 写进 state（那会让界面认错会话）。
-   * 所以每次进来先领一个号，await 回来发现号变了就直接收工。
-   */
-  const generation = ++restartGeneration
+  state = { phase: 'booting', activeKey: key }
+  sendToRenderer({ type: 'restarting', cwd, hostId: key })
+
+  const slot = spawnSlot(config, resume)
   try {
-    const info = await host.start(config)
-    if (generation !== restartGeneration) return state
-    state = { phase: 'ready', info }
+    const info = await slot.host.start(config)
+    // 起来之前又被切走了：这一代的结果不再影响界面（它的 host 已被 `retire`）。
+    if (slot.dead) return { attached: false, key }
+    slot.info = info
+    slot.sessionId = info.sessionId
+    syncState()
     // 起来了才算「打开过」：这样登记表里不会攒下一堆启动失败的路径。
-    rememberProject(config.cwd)
+    rememberProject(cwd)
   } catch (error) {
-    // 被后一次切换取代的那一次：它的失败是「我们自己 kill 的」，不报。
-    if (generation !== restartGeneration) return state
-    reportHostFailure(error instanceof Error ? error : new Error(String(error)))
+    // 被后一次切换取代的那一次不算失败（它的失败是「我们自己 kill 的」）。
+    if (slot.dead) return { attached: false, key }
+    retire(slot)
+    reportHostFailure(error instanceof Error ? error : new Error(String(error)), key)
   }
-  return state
+  return { attached: false, key }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -672,7 +888,8 @@ function buildMenu() {
         {
           label: '新建会话',
           accelerator: 'CmdOrCtrl+N',
-          click: () => { void restartWith({ ...launchConfig, sessionId: undefined, resume: undefined }) },
+          // 菜单是「当前项目里开一个新会话」：不 resume，也不动别的会话。
+          click: () => { void attach({ cwd: launchConfig.cwd, reuse: false, activeBusy: activeSlot()?.busy === true }) },
         },
         {
           label: '打开工作目录…',
@@ -696,7 +913,7 @@ function buildMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template as MenuItemConstructorOptions[]))
 }
 
-/** 打开原生目录选择框，选定后用它重启 host。 */
+/** 打开原生目录选择框，选定后把前台切到那个项目（新会话）。 */
 async function openWorkspace() {
   if (win === null) return
   const result = await dialog.showOpenDialog(win, {
@@ -706,7 +923,7 @@ async function openWorkspace() {
     buttonLabel: '选它',
   })
   if (result.canceled || result.filePaths.length === 0) return
-  await restartWith({ ...launchConfig, cwd: result.filePaths[0], sessionId: undefined, resume: undefined })
+  await attach({ cwd: result.filePaths[0], reuse: false, activeBusy: activeSlot()?.busy === true })
   return result.filePaths[0]
 }
 
@@ -812,21 +1029,6 @@ async function readForPreview(raw: unknown): Promise<PreviewPayload> {
 // IPC 处理器
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** host 实例（下面所有 IPC handler 共用一个）。 */
-const host = new AgentHost(
-  (event) => {
-    // 子进程输出按不可信处理：不认识的帧直接丢，别让它进渲染进程的归约器。
-    if (!isHostEvent(event)) return
-    const frame = event
-    if (frame.type === 'workspace') {
-      workspaceSnapshot = { projects: frame.projects, sessions: frame.sessions }
-    }
-    sendToRenderer(frame)
-  },
-  ({ code }) => { reportHostFailure(new Error(`agent host 异常退出 (code ${String(code)})，可在菜单里新建会话重试`)) },
-)
-
-/** 注册全部 IPC handler。channel 名与 `preload.js` 必须一致。 */
 /**
  * 设置界面允许读写的根目录。
  *
@@ -868,10 +1070,12 @@ function allowedSettingsPath(path: unknown): { ok: true; path: string } | { ok: 
   return { ok: false, error: `不允许读写这个路径（只允许配置与技能/命令目录）：${target}` }
 }
 
+/** 注册全部 IPC handler。channel 名与 `preload.js` 必须一致。 */
 function registerIpc() {
   ipcMain.handle(IPC.state, (event) => {
     assertSender(event)
     // 把缓存的清单一起给出去：界面可能在首帧推送之后才订阅。
+    // `state.activeKey` 让界面知道这份状态属于哪个会话（见 `syncState`）。
     return workspaceSnapshot === null ? state : { ...state, workspace: workspaceSnapshot }
   })
 
@@ -885,7 +1089,7 @@ function registerIpc() {
       node: process.versions.node,
       platform: process.platform,
       arch: process.arch,
-      hostNode: host.readyInfo?.nodeVersion,
+      hostNode: activeSlot()?.info?.nodeVersion,
       /** 窗口是否启用了原生磨砂玻璃（渲染进程据此决定侧栏背景策略）。 */
       nativeMaterial: NATIVE_MATERIAL,
     }
@@ -894,22 +1098,37 @@ function registerIpc() {
   ipcMain.handle(IPC.prompt, (event, text) => {
     assertSender(event)
     if (typeof text !== 'string' || text.trim() === '') throw new Error('提示内容为空')
-    if (state.phase !== 'ready') throw new Error('agent 尚未就绪')
+    const slot = activeSlot()
+    if (slot === null || slot.info === null) throw new Error('agent 尚未就绪')
     // 回合 id 由主进程生成，界面据此把流式帧归到同一条消息。
     const turnId = randomUUID()
-    if (!host.send({ type: 'prompt', turnId, text })) throw new Error('agent host 不可用')
+    if (!slot.host.send({ type: 'prompt', turnId, text })) throw new Error('agent host 不可用')
+    // 主进程侧也记一份「在忙」：切走时靠它决定要不要留着这个 host（见 `attach`）。
+    slot.busy = true
     return { turnId }
   })
 
   ipcMain.handle(IPC.cancel, (event) => {
     assertSender(event)
-    host.send({ type: 'cancel' })
+    activeSlot()?.host.send({ type: 'cancel' })
   })
 
   ipcMain.handle(IPC.setModel, (event, model) => {
     assertSender(event)
     if (typeof model !== 'string' || model.trim() === '') throw new Error('模型 id 为空')
-    if (!host.send({ type: 'set-model', model: model.trim() })) throw new Error('agent host 不可用')
+    const host = activeSlot()?.host
+    if (host === undefined || !host.send({ type: 'set-model', model: model.trim() })) {
+      throw new Error('agent host 不可用')
+    }
+  })
+
+  ipcMain.handle(IPC.setEffort, (event, effort) => {
+    assertSender(event)
+    if (typeof effort !== 'string' || effort.trim() === '') throw new Error('推理强度为空')
+    const host = activeSlot()?.host
+    if (host === undefined || !host.send({ type: 'set-effort', effort: effort.trim() })) {
+      throw new Error('agent host 不可用')
+    }
   })
 
   ipcMain.handle(IPC.pickDirectory, async (event) => {
@@ -924,15 +1143,22 @@ function registerIpc() {
     return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0]
   })
 
-  ipcMain.handle(IPC.restart, async (event, config) => {
+  /**
+   * 切到某个会话。
+   *
+   * 旧的 `restart` / `new-session` 两个频道合并成了这一个：它们的区别只是
+   * 「要不要 resume」，而**要不要真的重启**现在由主进程看着会话忙不忙决定
+   * （见 `attach`）—— 界面不需要、也不应该知道这件事。
+   */
+  ipcMain.handle(IPC.attach, async (event, request) => {
     assertSender(event)
-    const cwd = typeof config?.cwd === 'string' && config.cwd !== '' ? config.cwd : launchConfig.cwd
-    return restartWith({ ...launchConfig, ...config, cwd })
-  })
-
-  ipcMain.handle(IPC.newSession, async (event) => {
-    assertSender(event)
-    return restartWith({ ...launchConfig, sessionId: undefined, resume: undefined })
+    const raw = (request ?? {}) as Partial<AttachRequest>
+    return await attach({
+      ...(typeof raw.cwd === 'string' && raw.cwd !== '' ? { cwd: raw.cwd } : {}),
+      ...(typeof raw.resume === 'string' && raw.resume !== '' ? { resume: raw.resume } : {}),
+      reuse: raw.reuse === true,
+      activeBusy: raw.activeBusy === true,
+    })
   })
 
   ipcMain.handle(IPC.previewRead, async (event, path) => {
@@ -982,19 +1208,19 @@ function registerIpc() {
   ipcMain.handle(IPC.settingsList, (event) => {
     assertSender(event)
     // 数据由 host 收集（它才知道内核里真正加载了哪些 skill），以 `settings` 事件回来。
-    if (!host.send({ type: 'settings:list' })) throw new Error('agent host 不可用')
+    if (!requireActiveHost().send({ type: 'settings:list' })) throw new Error('agent host 不可用')
   })
 
   ipcMain.handle(IPC.steer, (event, text) => {
     assertSender(event)
     if (typeof text !== 'string' || text.trim() === '') throw new Error('目标调整内容为空')
     // 走 host 的 steer：内核会在下一个 step 边界消费它（不排队、不打断已发出的请求）。
-    if (!host.send({ type: 'steer', text })) throw new Error('agent host 不可用')
+    if (!requireActiveHost().send({ type: 'steer', text })) throw new Error('agent host 不可用')
   })
 
   ipcMain.handle(IPC.listFiles, (event, query) => {
     assertSender(event)
-    if (!host.send({ type: 'files:list', query: typeof query === 'string' ? query : '' })) {
+    if (!requireActiveHost().send({ type: 'files:list', query: typeof query === 'string' ? query : '' })) {
       throw new Error('agent host 不可用')
     }
   })
@@ -1002,14 +1228,20 @@ function registerIpc() {
   ipcMain.handle(IPC.listSessions, (event) => {
     assertSender(event)
     // 清单由 host 扫描磁盘后以 `workspace` 事件推回来，这里只负责触发。
-    if (!host.send({ type: 'list-sessions' })) throw new Error('agent host 不可用')
+    if (!requireActiveHost().send({ type: 'list-sessions' })) throw new Error('agent host 不可用')
+  })
+
+  ipcMain.handle(IPC.replayHistory, (event) => {
+    assertSender(event)
+    // 当前会话把落盘历史重发一遍（界面重载后补内容，不重启内核）。
+    if (!requireActiveHost().send({ type: 'history:replay' })) throw new Error('agent host 不可用')
   })
 
   ipcMain.handle(IPC.listProjectSessions, (event, path) => {
     assertSender(event)
     if (typeof path !== 'string' || path.trim() === '') throw new Error('项目路径为空')
     // 明细同样由 host 扫描磁盘后以 `project-sessions` 事件推回来。
-    if (!host.send({ type: 'list-project-sessions', path })) throw new Error('agent host 不可用')
+    if (!requireActiveHost().send({ type: 'list-project-sessions', path })) throw new Error('agent host 不可用')
   })
 }
 
@@ -1024,7 +1256,7 @@ async function onReady() {
   createWindow()
 
   // 窗口先出来，内核随后就绪：冷启动时不会有空白等待。
-  void restartWith(launchConfig)
+  void attach({ cwd: launchConfig.cwd, reuse: false })
 }
 
 app.setName('YuanMy Agent')
@@ -1058,7 +1290,10 @@ if (!app.requestSingleInstanceLock()) {
   })
 
   // 退出前让内核收敛（子进程会自己 dispose 插件树）；不等它，但也不留孤儿进程。
-  app.on('before-quit', () => { void host.stop() })
+  // **所有**槽位都要收：后台会话的 host 也是独立子进程，漏一个就是孤儿。
+  app.on('before-quit', () => {
+    for (const slot of [...slots]) void slot.host.stop()
+  })
 
   // ⚠️ 这里**故意不用顶层 `await app.whenReady()`**：
   //   Electron 的 ESM 主进程入口是异步加载的，在模块顶层 await `ready`

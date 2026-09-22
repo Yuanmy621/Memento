@@ -37,7 +37,7 @@ type Tab = 'chat' | 'trace'
 
 export function App(): ReactElement {
   const {
-    state, send, cancel, setModel, newSession, pickDirectory, getAppInfo,
+    state, send, cancel, setModel, setEffort, newSession, pickDirectory, getAppInfo,
     resumeSession, openProject, loadProjectSessions, openPath, previewRead,
     loadSettings, readFile, writeFile, restartKernel, steer, listFiles,
   } = useAgent()
@@ -100,9 +100,12 @@ export function App(): ReactElement {
    *
    * 不清的后果：新会话的面板里还挂着上一个项目的文件，看着像「这个会话产出的」——
    * 而且那个路径在新工作目录下多半根本不存在。
+   *
+   * 用当前**视图的键**当依赖（而不是会话 id）：新建会话在就绪前还没有 id，
+   * 那时切换也必须清（`state.activeKey` 一直在变）。
    */
-  const sessionKey = state.info?.sessionId ?? 'cold'
-  useEffect(() => { setPreviewPath(null) }, [sessionKey])
+  const activeViewKey = state.activeKey
+  useEffect(() => { setPreviewPath(null) }, [activeViewKey])
 
   /** 在预览面板里看一个文件（对话里的文件卡片点一下就走到这里）。 */
   const openPreview = useCallback((path: string): void => {
@@ -122,6 +125,7 @@ export function App(): ReactElement {
         state={state}
         appInfo={appInfo}
         now={now}
+        runningIds={state.runningIds}
         onNewSession={() => { void newSession() }}
         onOpenSession={(sessionId, cwd) => { void resumeSession(sessionId, cwd) }}
         onOpenProject={(path) => { void openProject(path) }}
@@ -184,8 +188,11 @@ export function App(): ReactElement {
               切换会话时换 key：内容整段替换的那一刻做一次很轻的淡入 + 3px 上浮，
               让「换了一批消息」看起来是一次过渡而不是一次闪变。
               代价是内层 DOM 重建 —— 滚动位置由上面那个 effect 按「贴底」规则重算。
+
+              键取**会话视图的键**而不是 `info.sessionId`：新建会话就绪前还没有 id，
+              那时从别的会话切过来也得换一次 key（否则动画不跑、DOM 也不重建）。
             */}
-            <div className="messages__inner" key={state.info?.sessionId ?? 'cold'}>
+            <div className="messages__inner" key={state.activeKey}>
               {state.items.length === 0 && (
                 state.phase === 'ready'
                   ? <div className="msg__note">描述一个任务开始对话。</div>
@@ -221,6 +228,7 @@ export function App(): ReactElement {
           onSend={(text) => { void send(text) }}
           onCancel={() => { void cancel() }}
           onSetModel={(model) => { void setModel(model) }}
+          onSetEffort={(effort) => { void setEffort(effort) }}
           onNewSession={() => { void newSession() }}
           onPickDirectory={() => { void pickDirectory() }}
         />

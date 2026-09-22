@@ -364,6 +364,15 @@ html[data-vibrancy="native"] .app-shell {
    * 再低侧栏上的次级文字在浅色壁纸上会糊。
    */
   --ym-sidebar-tint: color-mix(in srgb, var(--dsw-static-violet-900) 47%, transparent);
+  /*
+   * 主界面（对话区 / 顶栏 / 预览面板）的玻璃染色层。
+   *
+   * 比侧栏**更深也更实**：侧栏是 47% 的 violet-900，这里是 78% 的 violet-950。
+   * 主区是阅读区，字压在玻璃上要足够稳（太透会让正文和壁纸互相干扰），
+   * 但也不能刷成不透明 —— 那样「整窗都是磨砂玻璃」就只在左半边成立。
+   * 深浅差本身还是层级：侧栏浮起、主区下沉。
+   */
+  --ym-main-tint: color-mix(in srgb, var(--dsw-static-violet-950) 78%, transparent);
   /* 柱面表面（还在曲面上的那些小方块） */
   --ym-surface: color-mix(in srgb, var(--ink) 55%, transparent);
   /* 被切下来、正在向右滚的碎屑：略偏强调色，和「表面」区分开 */
@@ -403,6 +412,25 @@ html[data-vibrancy="native"] .sidebar {
 /* 搜索框用的是主区的基础底色（不透明）—— 玻璃上要单独换掉 */
 html[data-vibrancy="native"] .sidebar__search {
   background: rgba(255, 255, 255, 0.07);
+}
+
+/*
+ * 主界面也要玻璃，只是**颜色比侧栏深**（见 `--ym-main-tint`）。
+ *
+ * 三处一起改才是一整块玻璃：
+ *   - `.main-column`：主列本体，铺一层更深的同族染色；
+ *   - `.topbar`：它在主列**内部**，自己再刷一遍不透明底色就等于在玻璃上贴了条
+ *     实心带 —— 所以这里让它透明，露出的就是同一层；
+ *   - `.preview`：右侧预览面板本来刷 `--canvas`（另一个色系的暗色），
+ *     跟着换成同一层染色，否则展开面板时右边会「换一种黑」。
+ */
+html[data-vibrancy="native"] .main-column,
+html[data-vibrancy="native"] .preview {
+  background: var(--ym-main-tint);
+}
+
+html[data-vibrancy="native"] .topbar {
+  background: transparent;
 }
 
 .main-column {
@@ -860,6 +888,24 @@ html[data-platform="darwin"] .sidebar__brand {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/*
+ * 「这个会话有回合在跑」的小圆点（含**在后台跑**的那个）。
+ *
+ * 后台继续跑是本项目的既定行为，所以一定要看得见：否则用户切走之后不知道
+ * 任务还在不在跑（或者反过来，以为早就停了）。呼吸动画与刻度尺的运行刻度
+ * 同一套（`ym-rail-breath`）—— 界面里所有「活的」东西一个语汇。
+ */
+.session__live {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: var(--ym-accent);
+  vertical-align: middle;
+  animation: ym-rail-breath 1.6s ease-in-out infinite;
 }
 
 .session-empty {
@@ -2578,6 +2624,119 @@ html[data-platform="darwin"] .sidebar__brand {
 
 
 .stats__spacer { flex: 1; }
+
+/* ── token 用量明细卡（悬停 / 聚焦统计条最左边那个胶囊）────────────────
+ * 位置：贴在胶囊**上方**。统计条在窗口底部，往下弹会出画面。
+ *
+ * 交互：弹层是 `.usage` 的**子元素**，指针移进卡片不会触发 `mouseleave`
+ * （否则刚碰到就关）；`::before` 再补一块透明桥接区，跨过胶囊与卡片之间
+ * 那 6px 空隙时也不会关。这些细节由 composer.tsx 的 UsageDetail 承担。
+ */
+.usage {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* 胶囊本身是 span，不是按钮：只借用 `:focus-visible` 画一圈焦点环，
+   不显示浏览器默认的那个大框（弹层已经等于「看得见」）。 */
+.usage:focus-visible { outline: none; }
+
+.usage:focus-visible .stats__pill {
+  box-shadow: 0 0 0 1px var(--ym-accent);
+}
+
+.usage__pop {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 272px;
+  padding: 9px 10px 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow-raised);
+  color: var(--ink-2);
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
+  line-height: 15px;
+  text-align: left;
+  cursor: default;
+  animation: ym-menu-in 120ms var(--ds-ease-in-out);
+}
+
+/* 透明桥接：卡片与胶囊之间那 6px 也算卡片的一部分，指针穿过去不关门 */
+.usage__pop::before {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  height: 8px;
+}
+
+.usage__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--line-soft);
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.usage__head--sub {
+  margin-top: 3px;
+  border-bottom: none;
+  padding-bottom: 0;
+  color: var(--ink-3);
+  font-weight: 400;
+}
+
+.usage__sub { color: var(--ink-3); font-weight: 400; }
+
+.usage__grid {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.usage__row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 1px 0;
+}
+
+.usage__row--strong .usage__key,
+.usage__row--strong .usage__val { color: var(--ink); }
+
+.usage__key {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-3);
+}
+
+.usage__val { font-variant-numeric: tabular-nums; }
+
+.usage__note { flex: none; color: var(--ink-3); font-size: 10.5px; }
+
+.usage__foot {
+  margin-top: 4px;
+  padding-top: 5px;
+  border-top: 1px solid var(--line-soft);
+  color: var(--ink-3);
+  font-size: 10px;
+  line-height: 14px;
+  white-space: normal;
+}
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * 输入框的触发符补全（`/` 命令与技能 · `@` MCP 工具 · `#` 文件）

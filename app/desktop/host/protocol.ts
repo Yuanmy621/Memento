@@ -19,6 +19,26 @@
 /** 协议版本：主进程与 host 对不上时直接报错，避免静默错位。 */
 export const PROTOCOL_VERSION = 1
 
+/**
+ * 会话视图的键。
+ *
+ * **主进程与渲染进程必须用同一个算法**：主进程给每个 host 的帧打上这个键，
+ * 渲染进程按它把事件路由到对应会话的视图（后台会话的事件不能落进前台会话里）。
+ *
+ * 用 `cwd + sessionId` 而不是单看 sessionId：会话 id 只在它自己的项目里唯一
+ * （每个项目的会话库是 `<cwd>/.YuanMy`，两份库互不可见）。
+ *
+ * 新建但还没就绪的会话没有 id，用空串占位；`ready` 帧带回真实 id 后，
+ * 两边各自把键改名为带真实 id 的那个（见 `main.ts` 的 `renameSlot` 与
+ * 渲染进程的 `ready` 分支）—— 于是「切走再切回来」能重新挂到同一个 host 上。
+ * @param cwd - 会话所属项目根目录（绝对路径）。
+ * @param sessionId - 会话 id；新建会话尚未就绪时传 `undefined`。
+ * @returns 会话视图键。
+ */
+export function sessionKey(cwd: string, sessionId: string | undefined): string {
+  return `${cwd}\n${sessionId ?? ''}`
+}
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 会话记录（transcript）的词表
@@ -219,6 +239,25 @@ export interface ModelInfo {
   readonly name: string
   /** 可选的补充说明（同一 provider 下相似模型的区分）。 */
   readonly description?: string
+  /**
+   * 这个模型可选的**推理强度**（来自适配器的 exact-route 元数据
+   * `ctx.llm.resolveModelInfo().reasoning.efforts`）。
+   *
+   * 适配器没申报时为 `undefined`（界面退回内置的 `low | high | max` 兜底，
+   * 见 `composer.tsx` 的 `effortChoices`）—— 这是刻意的：强度是**模型能力**，
+   * 不该由界面写死。
+   */
+  readonly efforts?: readonly ModelEffortInfo[]
+}
+
+/** 一个可选的推理强度（与适配器申报的 `ReasoningEffortId` 对齐）。 */
+export interface ModelEffortInfo {
+  /** 稳定取值（`off` / `low` / `high` / `max`）。 */
+  readonly id: string
+  /** 给人看的名字。 */
+  readonly name: string
+  /** 可选的说明（什么时候该用它）。 */
+  readonly description?: string
 }
 
 /**
@@ -321,6 +360,8 @@ export interface HostReadyInfo {
   readonly provider: string
   /** 模型 id。 */
   readonly model: string
+  /** 当前生效的推理强度（`--effort`，可由界面在运行中改）。 */
+  readonly effort: string
   /** 工作目录（绝对路径）。 */
   readonly cwd: string
   /** 会话是否落盘。 */
@@ -434,9 +475,27 @@ export type HostRequest =
     readonly model: string
   }
   | {
+    /**
+     * 运行中切换**推理强度**（`off | low | high | max`）：下一次请求生效。
+     *
+     * 和 `set-model` 同一条路 —— 都是改「下一次请求的 header」，不重建 agent、
+     * 不打断正在跑的回合（正在飞的那一次请求已经带着旧强度出去了）。
+     */
+    readonly type: 'set-effort'
+    readonly effort: string
+  }
+  | {
     /** 卸载内核并退出；主进程在窗口关闭时发送。 */
     readonly type: 'shutdown'
   }
+  /**
+   * 重放当前会话的历史（回一个 `history` 帧）。
+   *
+   * 用途：界面重载后视图是空的，但内核（和它内存里的会话）还活着 ——
+   * 与其重启一遍，不如让它把落盘的记录再发一次。**不重启**是重点：
+   * 后台还在跑的回合不受影响。
+   */
+  | { readonly type: 'history:replay' }
 
 /** host → 主进程的事件。 */
 export type HostEvent =
@@ -479,6 +538,8 @@ export type HostEvent =
   }
   /** 模型已切换。 */
   | { readonly type: 'model-changed'; readonly model: string }
+  /** 推理强度已切换（下一次请求生效）。 */
+  | { readonly type: 'effort-changed'; readonly effort: string }
   /**
    * 历史回放：恢复一个已落盘的会话时，host 读日志产出的完整记录。
    *
@@ -547,7 +608,7 @@ export type HostEvent =
 const HOST_EVENT_TYPES: ReadonlySet<string> = new Set([
   'ready', 'history', 'text-delta', 'reasoning-delta', 'tool-call', 'tool-result',
   'usage', 'turn-end', 'notice', 'fatal', 'workspace', 'project-sessions',
-  'settings', 'files', 'model-changed',
+  'settings', 'files', 'model-changed', 'effort-changed',
 ])
 
 /**

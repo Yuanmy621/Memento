@@ -40,10 +40,11 @@ const CHANNEL = Object.freeze({
   prompt: 'YuanMy:prompt',
   cancel: 'YuanMy:cancel',
   setModel: 'YuanMy:set-model',
+  setEffort: 'YuanMy:set-effort',
   pickDirectory: 'YuanMy:pick-directory',
-  restart: 'YuanMy:restart',
-  newSession: 'YuanMy:new-session',
+  attach: 'YuanMy:attach',
   listSessions: 'YuanMy:list-sessions',
+  replayHistory: 'YuanMy:replay-history',
   openPath: 'YuanMy:open-path',
   listProjectSessions: 'YuanMy:list-project-sessions',
   appInfo: 'YuanMy:app-info',
@@ -62,15 +63,18 @@ export interface FileResult {
   readonly error?: string
 }
 
-/** 重启内核时允许覆盖的字段。 */
-export interface RestartConfig {
+/** 「切到某个会话」的请求（与 `ipc.ts` 的 `AttachRequest` 逐字对应）。 */
+export interface AttachRequest {
   readonly cwd?: string
-  readonly model?: string
-  readonly provider?: string
-  readonly effort?: string
-  readonly persist?: boolean
-  readonly sessionId?: string
   readonly resume?: string
+  readonly reuse: boolean
+  readonly activeBusy?: boolean
+}
+
+/** `attach` 的结果。 */
+export interface AttachResult {
+  readonly attached: boolean
+  readonly key: string
 }
 
 /** 渲染进程可见的 API（`window.YuanMy` 的形状）。 */
@@ -144,15 +148,28 @@ const api = {
    */
   setModel: (model: string): Promise<unknown> => ipcRenderer.invoke(CHANNEL.setModel, model),
   /**
+   * 切换推理强度（下一次请求生效）。
+   * @param effort - `off | low | high | max`。
+   */
+  setEffort: (effort: string): Promise<unknown> => ipcRenderer.invoke(CHANNEL.setEffort, effort),
+  /**
    * 打开原生目录选择框。
    * @returns 选中的目录，取消时为 null。
    */
   pickDirectory: (): Promise<string | null> => ipcRenderer.invoke(CHANNEL.pickDirectory),
   /**
-   * 用新配置重启 agent host。
-   * @param config - 允许覆盖的字段。
+   * 切到某个会话：主进程还留着它的 host 就直接挂回（后台回合不被打断），
+   * 否则起一个新的（必要时用 `--resume` 回放历史）。
+   * @param request - 目标项目 / 会话与复用策略。
+   * @returns 是否直接挂回了活着的 host，以及目标会话视图键。
    */
-  restart: (config: RestartConfig): Promise<unknown> => ipcRenderer.invoke(CHANNEL.restart, config),
+  attach: (request: AttachRequest): Promise<AttachResult> => ipcRenderer.invoke(CHANNEL.attach, request),
+  /**
+   * 让当前会话重放一次历史（结果以 `history` 事件回来）。
+   *
+   * 给「界面重载」用：视图没了但内核还活着，重放就能把内容补回来，**不必重启**。
+   */
+  replayHistory: (): Promise<unknown> => ipcRenderer.invoke(CHANNEL.replayHistory),
   /**
    * 读一个文件用于右侧预览面板。
    *
@@ -161,8 +178,6 @@ const api = {
    * @param path - 绝对路径或相对工作目录的路径。
    */
   previewRead: (path: string): Promise<PreviewPayload> => ipcRenderer.invoke(CHANNEL.previewRead, path),
-  /** 新建一个空会话（重启 host，不恢复旧会话）。 */
-  newSession: (): Promise<unknown> => ipcRenderer.invoke(CHANNEL.newSession),
 }
 
 contextBridge.exposeInMainWorld('YuanMy', Object.freeze(api))

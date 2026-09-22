@@ -84,19 +84,28 @@ npm run desktop          # 打开 Electron 窗口
 
 界面里可以做：发任务、看着正文流式输出（推理过程可折叠）、Markdown 正式渲染
 （标题/列表/表格/代码高亮）、逐条查看工具调用与结果、随时中断当前回合、
-切换模型（下一次请求生效）、新建会话、查看已注册工具。
+切换模型与**推理强度**（`low` / `high` / `max`，都只对下一次请求生效）、新建会话、
+查看已注册工具。
 
 左侧栏是**「项目 → 会话」两级树**：会话归纳在它所属的项目下面，点项目折叠/展开
 （展开才去读盘，项目再多也不拖慢首屏），点会话就用 `--resume` 恢复，当前会话有竖线标记。
 标题与轮数直接来自落盘日志（第一条用户消息 + `turn/end` 计数）。
-侧栏只保留真正需要常驻的东西（项目树 + 模型切换 + 一行底栏），
+侧栏只保留真正需要常驻的东西（项目树 + 模型 / 强度切换 + 一行底栏），
 状态点/工具数/版本挤在底栏一行里，凭据**只在缺失时**才提示。
-输入框下面常驻一行 **token 统计**：未命中输入 / 输出 / 缓存命中 / 命中率，
-悬停可看最近一次调用的明细（含缓存写入与推理 token）。
 
-外观是 Codex 风格：近单色深色主题、无渐变；左侧栏用**系统原生材质**做磨砂玻璃
-（macOS `vibrancy` / Windows `acrylic`，不是 CSS `backdrop-filter`）；系统标题栏隐藏，
-拖拽区由界面自己提供。改界面时用 `npm run desktop:watch` 起监听重建。
+**切换会话不会中断正在跑的任务**：每个会话有自己的内核子进程，切走只是换前台 ——
+还在跑的那个继续跑完并落盘，侧栏给它的行打一个呼吸点；等它跑完（或不忙时）再切回，
+内核会被回收，内容走 `--resume` 历史回放。切回一个**仍在跑**的会话则直接挂回同一个内核
+（不重启、不丢流式内容）。空闲内核在切换时立刻回收，同时最多留 6 个（每个都是一整个内核）。
+
+输入框下面常驻一行 **token 统计**：未命中输入 / 输出 / 缓存命中 / 命中率，
+鼠标悬停（或 Tab 聚焦）弹出**明细卡**：未命中 / 缓存命中 / 缓存写入 / 计费输入合计 /
+输出（含推理）/ 命中率，以及**最近一次调用**的四个数。
+
+外观是 Codex 风格：近单色深色主题、无渐变；**整个窗口**都用**系统原生材质**做磨砂玻璃
+（macOS `vibrancy` / Windows `acrylic`，不是 CSS `backdrop-filter`）——
+侧栏一层同族染色、主界面与顶栏同一层但**颜色更深**（深浅差本身就是层级：侧栏浮起、主区下沉）。
+系统标题栏隐藏，拖拽区由界面自己提供。改界面时用 `npm run desktop:watch` 起监听重建。
 
 改完代码至少跑一次类型检查（三个 tsconfig 一起）：
 
@@ -348,8 +357,10 @@ ctx.tools.register(defineTool({
 | 加一个命令（`/名字`） | 在 `.agents/commands/<名字>.md` 写 frontmatter + 指令；`include` 可内联技能正文，仅触发那一回合生效 | `.agents/commands/` |
 | 把技能改成命令专用 | 在 `SKILL.md` 的 frontmatter 加 `disable-model-invocation: true`（内核原生政策，不进模型目录） | `.agents/skills/<名字>/SKILL.md` |
 | 接一个 MCP 服务器 | `YuanMy_MCP=<名字> npm start`（默认不挂）；内置的在 `app/cli/kernel.ts` 的 `mcpSpecs()`，也可以丢一个 `<cwd>/.YuanMy/mcp/<名字>.ts` | `app/mcp/` |
-| 回放一个会话的历史 | 恢复会话 = `--resume <id>` 重启内核；界面侧由 host 读日志发 `history` 帧（实时路径与回放路径共用 `protocol.ts` 的词表与 `toOutcome`） | `app/desktop/host/history.ts` |
+| 回放一个会话的历史 | 恢复会话 = `--resume <id>` 重启内核；界面侧由 host 读日志发 `history` 帧（实时路径与回放路径共用 `protocol.ts` 的词表与 `toOutcome`）。界面重载而内核还活着时走 `history:replay`，不必重启 | `app/desktop/host/history.ts` |
 | 拿 token 计量 | `session/event` 的 `assistant/message` 带 `usage`（计数互斥：未命中/命中/写入分开记） | `bridge.ts` 的 `usage` 帧 |
+| 切会话而不打断正在跑的任务 | 主进程按 `sessionKey(cwd, sessionId)` 持有多个 host 槽位：忙的留着、闲的收掉；每一帧打上 `hostId`，渲染进程按会话分视图归约（`Store.views`），对组件只暴露当前那一份 | `main.ts` 的 `attach` + `renderer/src/use-agent.ts` 的 `reducer`/`project` |
+| 改推理强度 | `agent/request` waterfall 里改 `reasoningEffort`（与改模型同一条路，不重建 agent）；档位来自适配器对**这个模型**申报的 `reasoning.efforts` | `host/index.ts` 的 `route` / `set-effort` |
 
 ---
 
@@ -360,14 +371,16 @@ ctx.tools.register(defineTool({
 - **桌面端还不能打包**：只做了开发态运行（`npm run desktop`）。要出安装包需要再补 `electron-builder` 配置与签名流程，参考 DSH 自己的 `apps/desktop`。
 - **改桌面端布局时注意**：`.app-shell` 的 `grid-template-rows: minmax(0, 1fr)` 与子项的 `min-height: 0` 不能删 —— 少了它，内容会把整个外壳撑高（侧栏被拉长、失去内部滚动，长内容卡死渲染进程）。**改这一块时手动展开一段长推理确认**：外壳高度不该超过视口，滚动条应在 `.messages` 内部。
 - **桌面端会话列表不生成标题**：标题取会话日志里的第一条用户消息。正式标题应由 `@deepseek-ai/dsh-session-title` 生成（写 `session/title` 事件），但那个插件还需要 `dsh-invariants` 一整套 companion 插件，暂时没挂；读取端已经优先认这个事件。
-- **token 统计是会话累计的估算口径**：DSH 的 `inputTokens` 只算**未命中缓存**的部分，命中部分在 `cacheReadTokens`，所以「输入」一栏看起来会比直觉小 —— 界面里的「计费输入」才是这次请求的完整提示词量。
+- **token 统计是会话累计的估算口径**：DSH 的 `inputTokens` 只算**未命中缓存**的部分，命中部分在 `cacheReadTokens`，所以「输入」一栏看起来会比直觉小 —— 悬停明细卡里的「计费输入合计」才是这次请求的完整提示词量。
+- **多内核是有上限的**：每个「后台继续跑」的会话都是一整个内核子进程（10MB 级 bundle + 插件 + 可能的 MCP 子进程），所以空闲的会在切换时立刻回收，同时最多 6 个；超了会明确告诉用户「这个后台任务已被中断」，而不是静默杀掉。
+- **推理强度下拉只露 `low | high | max`**：适配器还会申报 `off`（关掉推理），但它是「关」不是「一档强度」，放进同一个下拉会让人以为它是最低档。要 `off` 就用启动参数 `--effort off`。
 - **技能不扫描全局目录**：默认只看项目里的 `.agents/skills` 与 `.dsh/skills`，`~/.dsh/skills` 里那几十个飞书/记忆类技能不会进编码 agent 的目录（想要就用 `includeDefaultRoots: true` 或 `$YuanMy_SKILL_DIRS`）。
 - **三个 tsconfig，各管一层**：`tsconfig.json`（Node 侧 TS：`app/cli` + `app/desktop/host` + `app/mcp`）、`app/desktop/renderer/tsconfig.json`（渲染进程 TSX，DOM+JSX）、`tsconfig.js.json`（Node 侧 **.js**：Electron 入口与冒烟脚本，`checkJs: false`，只管「被认领」与语法）。
   新增源码目录时**必须把 glob 加进对应的 include** —— 漏了的话 `npm run typecheck` 根本不会检查它，编辑器还会另建推断项目、报出极具误导性的「找不到名称 "node:fs/promises"，请安装 @types/node」（真踩过）。自查办法：`npm run typecheck` 之后确认新文件确实被某个项目收进来了
 （`npx tsc --noEmit --listFiles -p <项目> | grep <文件名>`）。
 - **MCP 客户端插件用的是过期发布线**：npm 上 `@deepseek-ai/dsh-mcp-client` 只有 `0.0.1-rc.1`（其它 dsh 包锁在 `0.1.5-rc.2`），peer 范围全都对不上。已逐条核对过它实际用到的 API 在 0.1.5-rc.2 上成立，并用 `peerDependencyRules.allowedVersions` 声明；升级到同一条线时要回来清掉这段。细节见 `app/mcp/README.md`。
 - **桌面端渲染进程的 bundle 约 10 MB**：其中约 9 MB 是 shiki 的 200 多种语言语法定义（单文件 IIFE 会把「按需加载」全部内联）。实测冷启动到窗口可见约 235–400 ms，暂不处理；瘦身路线见 `app/desktop/README.md`。
-- **磨砂玻璃与隐藏标题栏只在 macOS 上验证过**：Windows 走 `backgroundMaterial: 'acrylic'` + `titleBarOverlay`，Linux 保留原生标题栏（否则没有关闭按钮），都还没实机跑过。
+- **磨砂玻璃与隐藏标题栏只在 macOS 上验证过**：Windows 走 `backgroundMaterial: 'acrylic'` + `titleBarOverlay`，Linux 保留原生标题栏（否则没有关闭按钮），都还没实机跑过。材质覆盖**整窗**（侧栏 + 主界面），渲染进程这边按 `html[data-vibrancy]` 分支让出背景并各刷一层同族染色（`--ym-sidebar-tint` / `--ym-main-tint`）。
 - **模型目录**：默认 `deepseek-v4-flash`；用 `--model` 或 `/model` 切换。适配器申报 4 款，但 YuanMy 只对用户暴露 `deepseek-v4-flash` 与 `deepseek-v4-pro` 两款主力（清单在 `app/cli/options.ts` 的 `SUPPORTED_MODELS`，CLI 默认值与桌面端下拉框共用它）。
 - **依赖版本锁定**：所有 `@deepseek-ai/dsh-*` 固定在 **`0.1.5-rc.2`**，即标准发布线 —— 官方 CLI `@deepseek-ai/dsh`（npm `latest`）依赖 `^0.1.5-rc.1`，解析结果正是它。安装时请认准这条线：
   - 不要按各**子包**自己的 `latest` 标签装：那些标签是过期的（核心停在 `0.1.0-rc.6`，`dsh-tool-fs` / `dsh-fs-local` / `dsh-llm-deepseek` 停在 `0.0.1-rc.1`），混装会因 `inject` 列表不一致而静默停在 PENDING；

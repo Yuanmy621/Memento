@@ -15,10 +15,13 @@
  * `editor/doc-text.ts` —— **别用 `editor.getText()`**：chip 是 atom，没有文本，
  * `getText()` 会把它整个丢掉，命令就等于没发。
  *
- * ## 三个下拉里只有一个「真的能改东西」
+ * ## 四个下拉里有两个「真的能改东西」
  *
  *   - **模型**：真下拉。选项来自内核 `ctx.llm.listModels(provider)`（`state.models`），
  *     不是界面写死的常量；选中即 `setModel`，下一次请求生效。
+ *   - **强度**：真下拉（low / high / max）。档位来自适配器对**这个模型**申报的
+ *     推理强度（`ModelInfo.efforts`），只挑出「强度」三档（`off` 是关掉推理，
+ *     不算强度，见 `effortChoices`）；选中即 `setEffort`，同样下一次请求生效。
  *   - **权限**：YuanMy 的本地 provider **没有沙箱、没有审批**（见根 README「已知边界」），
  *     所以这里只如实显示「完全访问」，**不做成一个能选的假开关** ——
  *     一个假的安全控件比没有控件更糟：它会让人以为有沙箱。
@@ -45,17 +48,52 @@ import { docToText } from './editor/doc-text.ts'
 import { createComposerExtensions } from './editor/kit.ts'
 import { SuggestController, type SuggestSource, type SuggestView } from './editor/suggestions.ts'
 import { TRIGGER_TITLE } from './editor/triggers.ts'
-import { billedInputTokens, cacheHitRate, type AgentState } from '../use-agent.ts'
+import {
+  billedInputTokens, cacheHitRate,
+  type AgentState, type ModelEffortInfo, type ModelInfo, type UsageTotals,
+} from '../use-agent.ts'
 import { Menu, type MenuEntry } from './menu.tsx'
 import { Button } from '../ui/beautifului/atoms/Button.tsx'
 import { ValuePill } from '../ui/beautifului/atoms/ValuePill.tsx'
-import { IconClock, IconPlus, IconSend, IconShield, IconToken, IconTurns } from '../icons.tsx'
+import { IconClock, IconGauge, IconPlus, IconSend, IconShield, IconToken, IconTurns } from '../icons.tsx'
 
 /** 空输入框里的提示语 **/
 const PLACEHOLDER = '说点什么开始我们的学习吧～'
 
 /** 输入框最高长到多少像素，超过就内部滚动。 */
 const MAX_INPUT_HEIGHT = 190
+
+/**
+ * 推理强度的**兜底档位**（适配器不申报时用）。
+ *
+ * 名字与 DSH 的 `Effort` 对齐（`off | low | high | max`）。刻意**不带 `off`**：
+ * `off` 是「关掉推理」，不是一种强度，放进这个下拉会让人以为它是最低一档。
+ * 真要它，启动时给 `--effort off`（见 README 的参数表）。
+ */
+const EFFORT_FALLBACK: readonly ModelEffortInfo[] = [
+  { id: 'low', name: 'Low', description: '常规任务：更快、更省。' },
+  { id: 'high', name: 'High', description: '默认档：大多数任务的质量 / 成本平衡点。' },
+  { id: 'max', name: 'Max', description: '最难的题：质量优先，最慢也最贵。' },
+]
+
+/** 下拉里露哪三档（顺序即显示顺序）。 */
+const EFFORT_IDS: readonly string[] = ['low', 'high', 'max']
+
+/**
+ * 当前模型可选的「强度」档位。
+ *
+ * 优先用适配器对**这个模型**申报的档位（host 的 `modelEfforts` 会带上，
+ * 见 `host/index.ts`），只挑出 low / high / max；申报了但一个都没挑中
+ * （比如 thinking 被关掉，只剩 `off`）就退回内置兜底 —— 下拉永远不是空的。
+ * @param model - 当前模型（可能还没就绪）。
+ * @returns 至少一项的档位列表。
+ */
+function effortChoices(model: ModelInfo | undefined): readonly ModelEffortInfo[] {
+  const declared = model?.efforts
+  if (declared === undefined || declared.length === 0) return EFFORT_FALLBACK
+  const picked = declared.filter((effort) => EFFORT_IDS.includes(effort.id))
+  return picked.length > 0 ? picked : EFFORT_FALLBACK
+}
 
 /** 紧凑数字：1234 → 1.2k，1234567 → 1.2M。 */
 function formatTokens(value: number): string {
@@ -71,24 +109,101 @@ function formatDuration(ms: number | null): string {
   return `${(ms / 1000).toFixed(1)}s`
 }
 
-/** 会话统计：token 用量 / 耗时 / 轮次。 */
-function StatsBar({ state }: { readonly state: AgentState }): ReactElement {
-  const usage = state.usage
-  const rate = cacheHitRate(usage)
-  const provider = state.info === null ? '' : state.info.provider
-  const model = state.info === null ? '' : state.info.model
+/** 明细卡里的一行：左边标签、右边数字（可选一行小字说明）。 */
+function UsageRow(props: {
+  readonly label: string
+  readonly value: string
+  readonly note?: string
+  /** 关心程度更高的一行（计费输入 / 输出）用更亮的字色。 */
+  readonly strong?: boolean
+  readonly title?: string
+}): ReactElement {
   return (
-    <div className="stats">
-      <ValuePill
-        className="stats__pill"
-        title={`未命中 ${String(usage.inputTokens)} · 命中缓存 ${String(usage.cacheReadTokens)} · 计费输入 ${String(billedInputTokens(usage))}`}
-      >
+    <span className={`usage__row${props.strong === true ? ' usage__row--strong' : ''}`} title={props.title}>
+      <span className="usage__key">{props.label}</span>
+      <span className="usage__val">{props.value}</span>
+      {props.note !== undefined && <span className="usage__note">{props.note}</span>}
+    </span>
+  )
+}
+
+/**
+ * 「用量 + 缓存命中」胶囊，悬停 / 聚焦时弹出**明细卡**。
+ *
+ * 为什么不用原生 `title`：那个只有一行、跟不了样式、也没法分组，而这里要一口气
+ * 说清 7 个数（未命中 / 命中 / 写入 / 计费输入 / 输出 / 推理 / 命中率）+
+ * 最近一次调用的明细。`title` 早期版本就是那么干的，读起来是一串数字。
+ *
+ * 交互细节：弹出的卡片是 `.usage` 的**子元素**，所以指针移进卡片不会触发
+ * `mouseleave`（那会一闪就没了）；卡片下沿还有一块透明桥接区，跨过胶囊与卡片
+ * 之间那几像素的空隙时也不会关。键盘用户 `Tab` 聚焦同样能看（`tabIndex`）。
+ * @param props - 会话累计用量。
+ */
+function UsageDetail({ usage }: { readonly usage: UsageTotals }): ReactElement {
+  const [open, setOpen] = useState(false)
+  const billed = billedInputTokens(usage)
+  const rate = cacheHitRate(usage)
+  const last = usage.last
+  /** 占「计费输入」的比例；没有输入时给 `—` 而不是假的 0%。 */
+  const share = (part: number): string => (billed <= 0 ? '—' : `${((part / billed) * 100).toFixed(0)}%`)
+  return (
+    <span
+      className="usage"
+      tabIndex={0}
+      aria-label="token 用量明细"
+      onMouseEnter={() => { setOpen(true) }}
+      onMouseLeave={() => { setOpen(false) }}
+      onFocus={() => { setOpen(true) }}
+      onBlur={() => { setOpen(false) }}
+    >
+      <ValuePill className="stats__pill">
         <IconToken size={13} />
         {formatTokens(usage.inputTokens + usage.cacheReadTokens)} in
         <span className="stats__dim">/</span>
         {formatTokens(usage.outputTokens)} out
         {rate !== null && <span className="stats__dim">· 命中 {(rate * 100).toFixed(0)}%</span>}
       </ValuePill>
+      {open && (
+        <span className="usage__pop" role="tooltip">
+          <span className="usage__head">
+            本会话累计
+            <span className="usage__sub">{`${String(usage.calls)} 次模型调用`}</span>
+          </span>
+          <span className="usage__grid">
+            <UsageRow label="输入（未命中缓存）" value={String(usage.inputTokens)} />
+            <UsageRow label="缓存命中（读取）" value={String(usage.cacheReadTokens)} note={share(usage.cacheReadTokens)} />
+            <UsageRow label="缓存写入" value={String(usage.cacheWriteTokens)} note={share(usage.cacheWriteTokens)} />
+            <UsageRow label="计费输入合计" value={String(billed)} strong title="未命中 + 命中 + 写入：这次会话真正送进模型的提示词总量" />
+            <UsageRow label="输出" value={String(usage.outputTokens)} strong note={usage.reasoningTokens > 0 ? `含推理 ${formatTokens(usage.reasoningTokens)}` : undefined} />
+            <UsageRow label="命中率" value={rate === null ? '—' : `${(rate * 100).toFixed(1)}%`} title="命中缓存 ÷ 计费输入" />
+          </span>
+          {last !== null && (
+            <>
+              <span className="usage__head usage__head--sub">最近一次调用</span>
+              <span className="usage__grid">
+                <UsageRow label="输入（未命中）" value={String(last.inputTokens)} />
+                <UsageRow label="缓存命中" value={String(last.cacheReadTokens ?? 0)} />
+                <UsageRow label="缓存写入" value={String(last.cacheWriteTokens ?? 0)} />
+                <UsageRow label="输出" value={String(last.outputTokens)} />
+              </span>
+            </>
+          )}
+          <span className="usage__foot">
+            DSH 的计数是互斥的：未命中 / 命中 / 写入分开记，「计费输入合计」才是完整提示词量。
+          </span>
+        </span>
+      )}
+    </span>
+  )
+}
+
+/** 会话统计：token 用量 / 耗时 / 轮次。 */
+function StatsBar({ state }: { readonly state: AgentState }): ReactElement {
+  const provider = state.info === null ? '' : state.info.provider
+  const model = state.info === null ? '' : state.info.model
+  return (
+    <div className="stats">
+      <UsageDetail usage={state.usage} />
       <ValuePill className="stats__pill" title="上一回合的墙钟耗时">
         <IconClock size={13} />
         {formatDuration(state.lastTurnMs)}
@@ -108,6 +223,8 @@ export interface ComposerProps {
   readonly onSend: (text: string) => void
   readonly onCancel: () => void
   readonly onSetModel: (model: string) => void
+  /** 改推理强度（low / high / max），下一次请求生效。 */
+  readonly onSetEffort: (effort: string) => void
   /** 中途调整目标（插给正在跑的回合）。 */
   readonly onSteer: (text: string) => void
   /** 要一批 `#` 候选文件。 */
@@ -125,7 +242,7 @@ function ACTION_ENTRIES(onNewSession: () => void, onPickDirectory: () => void): 
 }
 
 export function Composer(props: ComposerProps): ReactElement {
-  const { state, onSend, onCancel, onSteer, onListFiles, onSetModel, onNewSession, onPickDirectory } = props
+  const { state, onSend, onCancel, onSteer, onListFiles, onSetModel, onSetEffort, onNewSession, onPickDirectory } = props
   const ime = useImeGuard()
   /** 触发符菜单当前该显示什么（由 SuggestController 推过来）。 */
   const [suggest, setSuggest] = useState<SuggestView | null>(null)
@@ -290,6 +407,16 @@ export function Composer(props: ComposerProps): ReactElement {
 
   const currentModel = state.info?.model ?? ''
   const currentName = state.models.find((model) => model.id === currentModel)?.name ?? currentModel
+  /**
+   * 强度档位与当前值。
+   *
+   * 档位跟着**当前模型**走（适配器可能只给某个模型开高档位）；当前值来自
+   * `ready` / `effort-changed` 帧。取不到（老 host 没有这个字段）时按默认档显示。
+   */
+  const modelInfo = state.models.find((model) => model.id === currentModel)
+  const efforts = effortChoices(modelInfo)
+  const currentEffort = state.info?.effort ?? 'high'
+  const effortLabel = efforts.find((effort) => effort.id === currentEffort)?.name ?? currentEffort
 
   return (
     <div className="composer">
@@ -343,6 +470,24 @@ export function Composer(props: ComposerProps): ReactElement {
                 hint: model.description ?? model.id,
                 active: model.id === currentModel,
                 onSelect: () => { onSetModel(model.id) },
+              }))}
+            />
+
+            {/* 推理强度：档位来自适配器对这个模型的申报（见 effortChoices） */}
+            <Menu
+              icon={<IconGauge size={14} />}
+              label={effortLabel}
+              title={`推理强度：${currentEffort}（下一次请求生效）`}
+              caret
+              width={260}
+              disabled={state.phase !== 'ready' || state.switching}
+              entries={efforts.map((effort): MenuEntry => ({
+                key: effort.id,
+                label: effort.name,
+                note: effort.description,
+                hint: effort.description ?? effort.id,
+                active: effort.id === currentEffort,
+                onSelect: () => { onSetEffort(effort.id) },
               }))}
             />
 
