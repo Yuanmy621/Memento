@@ -311,13 +311,26 @@ ctx.tools.register(defineTool({
 
 要点：`defineTool` 会**先**按 `parameters` 校验模型给的参数再进 `execute`；返回值必须能通过 `output.schema`；`render` 的输出必须可 JSON 序列化。工具的注册时机也灵活 —— DSH 在**每次组装 prompt 时**才汇总工具表，所以运行中注册的新工具下一次请求就能用。
 
+### 6.1 决策原语：`app/plugins/system-one/`（TypeSafe / Jev 的架构移植）
+
+同一个 `defineTool` 机制还挂了两个「判断」类工具，把 [TypeSafe System One](https://docs.typesafe.ai/introduction)
+的分工搬进来：**模型给判断（带概率与置信度），代码做决策**。
+
+- `sysone_ask` —— 一份 state + 一组原子问题（`choice` / `score` / `noul`），一次请求
+  全部评估，直接走官方 Jev；`TYPESAFE_API_KEY` 没配或调用失败就明确报错，**没有本地兜底**；
+- `sysone_compose` —— 确定性组合：加权总分（Composite scoring）或置信度门控路由
+  （`act` / `review` / `escalate`），**不再花 token**。
+
+默认挂载（两个工具，上下文开销很小）。
+接口契约、工具语义、错误行为与实测证据见 `app/plugins/system-one/README.md`。
+
 ---
 
 ## 7. 扩展点速查
 
 | 想做的事 | DSH 的做法 | 本项目中的例子 |
 | --- | --- | --- |
-| 加一个工具 | `ctx.tools.register(defineTool({…}))` | `app/cli/tools.ts` |
+| 加一个工具 | `ctx.tools.register(defineTool({…}))` | `app/cli/tools.ts`（`tree` / `fetch_url`）、`app/plugins/system-one/`（`sysone_ask` / `sysone_compose`） |
 | 加一个技能 | 在 `.agents/skills/<名字>/SKILL.md` 写 frontmatter + 正文，无需改代码 | `.agents/skills/` |
 | 改系统提示词 | `ctx.systemPrompt.section({ name, order, text })`，`order` 决定位置 | `app/cli/prompt.ts`（300 / 1950） |
 | 运行中改模型 / 请求参数 | 监听 `agent/request` waterfall，`return { ...config, model }` | CLI 的 `/model`、桌面端 host 的 `set-model` |

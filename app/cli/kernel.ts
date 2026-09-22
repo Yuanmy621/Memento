@@ -60,6 +60,8 @@ import * as McpClient from '@deepseek-ai/dsh-mcp-client'
 
 // —— YuanMy 自己的扩展 ——
 import * as customTools from './tools.ts'
+// System One 决策原语
+import * as SystemOne from '../plugins/system-one/index.ts'
 import { installPromptSections, personaText } from './prompt.ts'
 import { readMcpConfig, type McpConfigEntry } from './mcp-config.ts'
 import type { Options } from './options.ts'
@@ -451,6 +453,8 @@ export async function bootKernel(options: Options): Promise<Kernel> {
   await mount(ctx, 'dsh-tool-bash', ToolBash, { enableRunInBackground: true })
   await mount(ctx, 'dsh-tool-jobs', ToolJobs)
   await mount(ctx, 'YuanMy-tools', customTools, { cwd: options.cwd })
+  // System One：默认挂载决策模型
+  await mount(ctx, 'YuanMy-system-one', SystemOne, {})
   // 模型侧的入口：在首个请求前投递一份「可用技能目录」，并注册 `skill` 工具按需加载正文。
   await mount(ctx, 'dsh-tool-skill', ToolSkill)
 
