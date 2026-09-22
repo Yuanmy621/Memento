@@ -16,3 +16,9 @@ build/
 
 # Electron Forge 的产物（.app / .zip / .dmg）
 out/
+
+# scratch 工作区：临时脚本、实验日志、浏览器 profile、评审截图。
+/.tmp/*
+# 例外：这是 `/ip-as-logo` 命令（`.agents/commands/ip-as-logo.md`）明确引用的
+# 可复现工具链 —— 它不进构建，但少了它那条命令就跑不起来，所以留在仓库里。
+!/.tmp/ip-as-logo/
