@@ -63,6 +63,13 @@ export interface MenuProps {
   readonly label?: string
   /** 触发器和图标后面要不要那个小三角（侧栏的「N 工具」不要）。 */
   readonly caret?: boolean
+  /**
+   * 菜单**打开**时通知调用方（关闭时不通知）。
+   *
+   * 给「菜单里的数据会过期」的用法：面包屑的分支列表可能刚被 agent 或用户在终端里
+   * 改掉，打开时重新探测一次比展示一份过期列表强。
+   */
+  readonly onOpen?: () => void
   readonly disabled?: boolean
   /** 菜单从触发器的哪一侧弹出。 */
   readonly side?: 'top' | 'bottom'
@@ -178,7 +185,11 @@ export function Menu(props: MenuProps): ReactElement {
         aria-expanded={open}
         disabled={props.disabled ?? false}
         title={props.title}
-        onClick={() => { setOpen((value) => !value) }}
+        onClick={() => {
+          // 只在**打开**时通知：关闭时再拉一次数据没有意义。
+          if (!open) props.onOpen?.()
+          setOpen(!open)
+        }}
       >
         {props.icon}
         {props.label !== undefined && props.label !== '' && <span className="menu__label">{props.label}</span>}

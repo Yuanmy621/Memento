@@ -31,7 +31,7 @@
  */
 
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
-import type { PreviewPayload } from './ipc.ts'
+import type { GitStatus, GitSwitchResult, PreviewPayload } from './ipc.ts'
 
 /** 与 `ipc.ts` 的 `IPC` 表逐字对应。 */
 const CHANNEL = Object.freeze({
@@ -54,6 +54,8 @@ const CHANNEL = Object.freeze({
   settingsRead: 'Memento:settings-read',
   settingsWrite: 'Memento:settings-write',
   previewRead: 'Memento:preview-read',
+  gitStatus: 'Memento:git-status',
+  gitSwitch: 'Memento:git-switch',
 })
 
 /** 读/写配置文件的结果。 */
@@ -178,6 +180,19 @@ const api = {
    * @param path - 绝对路径或相对工作目录的路径。
    */
   previewRead: (path: string): Promise<PreviewPayload> => ipcRenderer.invoke(CHANNEL.previewRead, path),
+  /**
+   * 读当前工作目录的 git 情况（面包屑的分支段）。
+   *
+   * ⚠️ 不接受路径参数：目录由主进程按**当前会话**的工作目录决定。
+   * 这不是省事，是边界 —— 否则等于给网页开了一个「在任意目录执行 git」的口子。
+   */
+  gitStatus: (): Promise<GitStatus> => ipcRenderer.invoke(CHANNEL.gitStatus),
+  /**
+   * 切分支。
+   * @param branch - 分支名，必须来自上一次 `gitStatus()` 给出的列表（主进程会校验）。
+   * @returns 是否成功、失败原因，以及切换后的最新状态。
+   */
+  gitSwitch: (branch: string): Promise<GitSwitchResult> => ipcRenderer.invoke(CHANNEL.gitSwitch, branch),
 }
 
 contextBridge.exposeInMainWorld('Memento', Object.freeze(api))

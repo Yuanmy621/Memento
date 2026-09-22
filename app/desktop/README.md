@@ -1166,6 +1166,39 @@ StarterKit 的其余部分（标题、列表、引用、代码块、加粗…）
 > （真实名字是 `--ds-font-family-code`），于是「文件路径用等宽」这条一直是空转 ——
 > 无效值在计算时退化成 `inherit`，看起来跟没写一样。现在四处引用都改成真名字了。
 
+### 面包屑：工作目录 + git 分支
+
+输入框**正上方**那一行（`.crumbs`，24px）回答两个最常被问的问题：**在哪个目录、哪个分支**。
+它取代了原来顶栏右端那一整行绝对路径（`topbar__sub`）。
+
+落位方式是**长在 `.composer__inner` 里**（`App` 通过 `Composer` 的 `above` 插槽传进来），
+不是主区的一条网格行 —— 这样水平度量全部白拿：与输入卡同宽同中心，连
+「有刻度尺时输入框让位 58px」（`.main-column--rail .composer`）都自动跟上。
+自己算一套就会出现「面包屑比输入卡偏 13px」。因此它也不再需要顶栏那套平台留白
+（macOS 红绿灯 / Windows 窗口控件都在窗口上方，这里用不着）。
+
+| 部分 | 数据来自 | 为什么不这样做 |
+| --- | --- | --- |
+| 路径段 | 当前会话的 `cwd`，按 `/` 切段 | 不用主进程再探测一次 —— 界面本来就知道 |
+| 分支段 | 主进程 `readGit()`：`rev-parse --is-inside-work-tree` / `--abbrev-ref HEAD` / `for-each-ref` / `status --porcelain -uno` | 不返回 diff、不返回文件列表：只回答「在哪个分支」，大仓库也快 |
+| 切换 | 主进程 `switchGitBranch()`：`git checkout`，**分支名必须在刚列出的名单里** | 不用 shell、不接受渲染进程传目录，注入面在协议层就关掉 |
+
+几处刻意的地方：
+
+- **非仓库 / 没装 git 都不是错误**：`repo: false` 只意味着「没有分支段」，路径照常显示。
+  只有「进程起不来」才是 `error`。
+- **detached HEAD**：`abbrev-ref` 输出字面量 `HEAD`，界面显示成 `detached@<短 SHA>`
+  （仍可切回某个分支）。仓库还没有第一次提交时是另一种「没有分支」，同样处理。
+- **远程分支切换会建本地跟踪分支**（`checkout -b <short> --track <remote>`）：
+  直接 `checkout origin/x` 会进 detached HEAD，那几乎从来不是用户想要的。
+- **失败原因原样显示**：git 的 stderr 比我们编的文案准，贴在面包屑右端（长文本省略）。
+  **不**往会话里塞系统提示 —— 这是面包屑上的局部动作，不该污染对话记录。
+- **重新探测的时机**：换会话 / 换项目（`activeKey` 变），以及**每个回合结束**
+  （agent 自己可能用 bash `git checkout` 过）。另外打开分支菜单时会再探一次
+  （菜单为此在 `MenuProps` 上加了 `onOpen`）—— 分支被外部改掉时，过期列表比报错更烦人。
+- **git 状态带 `cwd`**：`GitRead = { cwd, status }`。切会话后旧仓库的分支不能挂到
+  新会话上，所以界面只在「探测目录 === 当前目录」时才显示分支段。
+
 ### 输入框下的 token 统计
 
 数字来自 `assistant/message` 事件上的 `TokenUsage`（`bridge.ts` 发 `usage` 帧）。
@@ -1255,6 +1288,7 @@ host 侧（`host/index.ts` 的 `listModels`）的规则：
 ⚠️ 默认模型必须落在清单里，否则下拉框显示不出自己的当前值。
 第一版的默认是 `deepseek-flash`，而白名单一过滤就把它删掉了 —— 两处必须一起改。
 | 会话统计 | token 来自 `usage` 帧；耗时来自 `turn-end.durationMs`；轮次由归约器计数 |
+| 面包屑（输入框正上方） | 路径段来自当前会话的 `cwd`（家目录缩写成 `~`，超长折叠中间）；分支段来自主进程的 `git-status`（`rev-parse` + `for-each-ref`），切换走 `git-switch`（白名单校验） |
 
 两处刻意的取舍：
 

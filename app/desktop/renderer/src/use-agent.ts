@@ -40,8 +40,9 @@ import type {
  * 值导入而不是类型导入 —— 这是一个纯函数，协议模块本身不依赖任何东西。
  */
 import { sessionKey } from '../../host/protocol.ts'
-/** 预览面板与「切会话」的类型面同样只有一份。 */
-import type { AttachRequest, AttachResult, PreviewPayload } from '../../ipc.ts'
+/** 预览面板、git 与「切会话」的类型面同样只有一份。 */
+export type { GitStatus, GitSwitchResult } from '../../ipc.ts'
+import type { AttachRequest, AttachResult, GitStatus, GitSwitchResult, PreviewPayload } from '../../ipc.ts'
 /** 显示用的小工具（首行预览）；纯函数，界面与轨迹共用一套口径。 */
 import { firstLine } from './tool-names.ts'
 
@@ -131,6 +132,8 @@ export interface AppInfo {
   readonly node: string
   readonly platform: string
   readonly arch: string
+  /** 家目录：面包屑用它把绝对路径缩写成一个 `~` 段（见 `breadcrumb.tsx` 的 `crumbsOf`）。 */
+  readonly home: string
   readonly hostNode?: string
   /** 窗口是否启用了原生磨砂玻璃。 */
   readonly nativeMaterial?: boolean
@@ -146,6 +149,10 @@ export interface AgentApi {
   setModel(model: string): Promise<void>
   /** 运行中切换推理强度（`low | high | max`）：下一次请求生效。 */
   setEffort(effort: string): Promise<void>
+  /** 读当前工作目录的 git 情况（面包屑的分支段）。 */
+  gitStatus(): Promise<GitStatus>
+  /** 切分支；分支名必须来自上一次 `gitStatus()` 的列表。 */
+  gitSwitch(branch: string): Promise<GitSwitchResult>
   pickDirectory(): Promise<string | null>
   /**
    * 切到某个会话。
@@ -544,6 +551,23 @@ export interface AgentState extends SessionView {
   readonly settings: SettingsData | null
   /** 正在等 host 回 `settings` 帧。 */
   readonly settingsBusy: boolean
+  /** 当前工作目录的 git 情况；null = 还没探测到或探测失败。 */
+  readonly git: GitRead | null
+  /** 正在探测 git / 正在切分支。 */
+  readonly gitBusy: boolean
+}
+
+/**
+ * 一次 git 探测的结果 **以及它探测的是哪个目录**。
+ *
+ * 为什么要带上 `cwd`：git 状态是**目录**的属性，而界面随时可能切到另一个会话
+ * （另一个项目）。渲染进程据此只在「探测的目录 === 当前会话的目录」时才显示分支，
+ * 免得把上一个仓库的分支挂在刚切过来的会话上。
+ */
+export interface GitRead {
+  /** 这次探测针对的工作目录。 */
+  readonly cwd: string
+  readonly status: GitStatus
 }
 
 /**
@@ -564,6 +588,8 @@ interface Store {
   readonly filesQuery: string
   readonly settings: SettingsData | null
   readonly settingsBusy: boolean
+  readonly git: GitRead | null
+  readonly gitBusy: boolean
 }
 
 /** 归约动作：来自 host 的事件，或界面自己的动作。 */
@@ -580,6 +606,12 @@ export type Action =
   | { readonly type: 'project-sessions-error'; readonly path: string; readonly message: string }
   | { readonly type: 'settings-loading' }
   | { readonly type: 'steer-send'; readonly text: string }
+  /** 开始探测 git（面包屑转一下「读取中」）。 */
+  | { readonly type: 'git-loading' }
+  /** git 探测回来了；`cwd` 是它探测的那个目录。 */
+  | { readonly type: 'git-status'; readonly cwd: string; readonly status: GitStatus }
+  /** git 探测失败（主进程不可用之类）：把分支段收起来。 */
+  | { readonly type: 'git-failed' }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 纯函数工具
@@ -615,6 +647,8 @@ export const initialState: Store = {
   filesQuery: '',
   settings: null,
   settingsBusy: false,
+  git: null,
+  gitBusy: false,
 }
 
 /**
@@ -728,6 +762,8 @@ export function project(store: Store): AgentState {
     filesQuery: store.filesQuery,
     settings: store.settings,
     settingsBusy: store.settingsBusy,
+    git: store.git,
+    gitBusy: store.gitBusy,
   }
 }
 
@@ -1143,6 +1179,17 @@ export function reducer(state: Store, action: Action): Store {
       }))
     }
 
+    // ── git（面包屑的分支段）：与 host 无关，主进程直接给结果 ────────────
+    case 'git-loading':
+      return { ...state, gitBusy: true }
+
+    case 'git-status':
+      return { ...state, gitBusy: false, git: { cwd: action.cwd, status: action.status } }
+
+    case 'git-failed':
+      // 拿不到就**什么都不显示**：面包屑只画路径，分支段不出现。
+      return { ...state, gitBusy: false, git: null }
+
     default:
       return state
   }
@@ -1160,6 +1207,14 @@ export interface AgentController {
   readonly setModel: (model: string) => Promise<void> | undefined
   /** 运行中切换推理强度（`low | high | max`）：下一次请求生效。 */
   readonly setEffort: (effort: string) => Promise<void> | undefined
+  /** 重新探测一次当前会话工作目录的 git 情况（面包屑打开菜单时也调它）。 */
+  readonly loadGit: () => Promise<void>
+  /**
+   * 切分支。
+   * @param branch - 目标分支（来自面包屑菜单里的列表）。
+   * @returns 成功时空串，失败时是要显示给用户的原因（git 的原话）。
+   */
+  readonly switchBranch: (branch: string) => Promise<string>
   /** 在当前项目里开一个新会话（别的会话照跑）。 */
   readonly newSession: () => Promise<void>
   /**
@@ -1336,6 +1391,53 @@ export function useAgent(): AgentController {
   const cancel = useCallback(() => api?.cancel(), [api])
   const setModel = useCallback((model: string) => api?.setModel(model), [api])
   const setEffort = useCallback((effort: string) => api?.setEffort(effort), [api])
+
+  /**
+   * 探测一次**当前会话工作目录**的 git 情况。
+   *
+   * 目录取「内核报的 cwd」优先、退回视图上记的 cwd：前者是权威值（`--cwd` 解析后的
+   * 绝对路径），后者在新会话还没就绪时是唯一的线索。
+   */
+  const loadGit = useCallback(async (): Promise<void> => {
+    const current = stateRef.current
+    const cwd = current.info?.cwd ?? current.cwd
+    if (api === undefined || cwd === '') return
+    dispatch({ type: 'git-loading' })
+    try {
+      const status = await api.gitStatus()
+      dispatch({ type: 'git-status', cwd, status })
+    } catch {
+      // 主进程不可用 / IPC 断了：不显示分支段，也不打断用户（这是装饰性信息）。
+      dispatch({ type: 'git-failed' })
+    }
+  }, [api])
+
+  const switchBranch = useCallback(async (branch: string): Promise<string> => {
+    const current = stateRef.current
+    const cwd = current.info?.cwd ?? current.cwd
+    if (api === undefined || cwd === '') return '还没有可用的工作目录'
+    dispatch({ type: 'git-loading' })
+    try {
+      const result = await api.gitSwitch(branch)
+      // 无论成功失败都吃下最新状态：切换失败（工作区脏）时分支没变，
+      // 但界面得知道自己还停在哪儿。
+      dispatch({ type: 'git-status', cwd, status: result.status })
+      return result.ok ? '' : (result.error ?? '切换分支失败')
+    } catch (error) {
+      dispatch({ type: 'git-failed' })
+      return String((error as Error | undefined)?.message ?? error)
+    }
+  }, [api])
+
+  /**
+   * git 什么时候重新探测：
+   *   - **换会话 / 换项目**（`activeKey` 变）—— 另一个项目可能是另一个仓库；
+   *   - **一个回合结束**（`busy` 由 true 变 false）—— agent 自己可能用 bash
+   *     `git checkout` 过，这时候界面还在显示旧分支就是错的。
+   */
+  useEffect(() => {
+    void loadGit()
+  }, [loadGit, state.activeKey, state.busy])
 
   /**
    * 换前台会话的公共入口。
@@ -1523,6 +1625,8 @@ export function useAgent(): AgentController {
     cancel,
     setModel,
     setEffort,
+    loadGit,
+    switchBranch,
     newSession,
     resumeSession,
     openProject,

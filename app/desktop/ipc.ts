@@ -34,10 +34,6 @@ export const IPC = Object.freeze({
   pickDirectory: 'Memento:pick-directory',
   /** 渲染进程 → 主进程：切到某个会话（可能直接挂回活着的 host，也可能起一个新的）。 */
   attach: 'Memento:attach',
-  /** 渲染进程 → 主进程：用新的配置重启**当前会话**的内核。 */
-  restart: 'Memento:restart',
-  /** 渲染进程 → 主进程：新建一个空会话（重启 host，不恢复旧会话）。 */
-  newSession: 'Memento:new-session',
   /** 渲染进程 → 主进程：让 host 重新扫描落盘会话。 */
   listSessions: 'Memento:list-sessions',
   /** 渲染进程 → 主进程：让当前会话重放一次历史（界面重载后补内容）。 */
@@ -60,6 +56,10 @@ export const IPC = Object.freeze({
   appInfo: 'Memento:app-info',
   /** 渲染进程 → 主进程：读一个文件用于**右侧预览面板**（有类型判断与体积上限）。 */
   previewRead: 'Memento:preview-read',
+  /** 渲染进程 → 主进程：读**当前工作目录**的 git 情况（面包屑的分支段）。 */
+  gitStatus: 'Memento:git-status',
+  /** 渲染进程 → 主进程：切分支（白名单 = 上一次 `git-status` 列出的分支）。 */
+  gitSwitch: 'Memento:git-switch',
 })
 
 /**
@@ -172,4 +172,39 @@ export interface PreviewPayload {
   readonly bytes?: number
   /** 文件太大 / 读失败时的说明。 */
   readonly error?: string
+}
+
+/**
+ * 当前工作目录的 git 情况（面包屑的分支段要的全部信息）。
+ *
+ * 一次探测把所有要的东西都拿回来（见 `main.ts` 的 `readGit`）：分支名、可选分支、
+ * 脏文件数。**刻意不返回 diff / 文件列表** —— 界面只用得着「在哪个分支」，
+ * 拉更多东西只会让每次切会话变慢。
+ */
+export interface GitStatus {
+  /** 是不是 git 仓库（`rev-parse --is-inside-work-tree`）。 */
+  readonly repo: boolean
+  /** 仓库根目录；非仓库时为空串。 */
+  readonly root: string
+  /** 当前分支名；detached HEAD 时为空串。 */
+  readonly branch: string
+  /** detached HEAD 时的短 SHA；不是 detached 时为空串。 */
+  readonly detached: string
+  /** 本地分支（`refs/heads`）。 */
+  readonly local: readonly string[]
+  /** 远程分支（`refs/remotes`，已滤掉 `origin/HEAD` 这类符号引用）。 */
+  readonly remote: readonly string[]
+  /** 工作区里**已跟踪文件**的改动数（`status --porcelain -uno` 的行数）。 */
+  readonly dirty: number
+  /** 探测失败的原因（没装 git 之类）；**不是仓库不算失败**。 */
+  readonly error: string | null
+}
+
+/** `Memento:git-switch` 的结果。 */
+export interface GitSwitchResult {
+  readonly ok: boolean
+  /** 失败原因：git 自己的 stderr，原样给界面显示。 */
+  readonly error?: string
+  /** 切换后的最新状态（失败时也给，界面据此保持准确）。 */
+  readonly status: GitStatus
 }

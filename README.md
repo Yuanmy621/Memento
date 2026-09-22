@@ -98,6 +98,11 @@ npm run desktop          # 打开 Electron 窗口
 内核会被回收，内容走 `--resume` 历史回放。切回一个**仍在跑**的会话则直接挂回同一个内核
 （不重启、不丢流式内容）。空闲内核在切换时立刻回收，同时最多留 6 个（每个都是一整个内核）。
 
+输入框正上方是一条 **面包屑**：当前会话的工作目录按段展开，**在 git 仓库里还会多出
+一段当前分支**，点开就能切（本地分支直接切，远程分支会新建同名的本地跟踪分支）。
+不是仓库、没装 git 都只是「没有这一段」，路径照常显示。切分支只改工作区，
+agent 的上下文不受影响。
+
 输入框下面常驻一行 **token 统计**：未命中输入 / 输出 / 缓存命中 / 命中率，
 鼠标悬停（或 Tab 聚焦）弹出**明细卡**：未命中 / 缓存命中 / 缓存写入 / 计费输入合计 /
 输出（含推理）/ 命中率，以及**最近一次调用**的四个数。
@@ -374,6 +379,7 @@ ctx.tools.register(defineTool({
 - **token 统计是会话累计的估算口径**：DSH 的 `inputTokens` 只算**未命中缓存**的部分，命中部分在 `cacheReadTokens`，所以「输入」一栏看起来会比直觉小 —— 悬停明细卡里的「计费输入合计」才是这次请求的完整提示词量。
 - **多内核是有上限的**：每个「后台继续跑」的会话都是一整个内核子进程（10MB 级 bundle + 插件 + 可能的 MCP 子进程），所以空闲的会在切换时立刻回收，同时最多 6 个；超了会明确告诉用户「这个后台任务已被中断」，而不是静默杀掉。
 - **推理强度下拉只露 `low | high | max`**：适配器还会申报 `off`（关掉推理），但它是「关」不是「一档强度」，放进同一个下拉会让人以为它是最低档。要 `off` 就用启动参数 `--effort off`。
+- **切分支不做保护**：面包屑里的分支菜单直接调 `git checkout`，工作区脏的时候 git 会拒绝，界面把那句原话贴在面包屑右端（不去动 agent 的上下文）。也就是说**回合进行中也能切分支** —— 那样 agent 正在改的文件会突然换一份，出问题时先看这里。
 - **技能不扫描全局目录**：默认只看项目里的 `.agents/skills` 与 `.dsh/skills`，`~/.dsh/skills` 里那几十个飞书/记忆类技能不会进编码 agent 的目录（想要就用 `includeDefaultRoots: true` 或 `$Memento_SKILL_DIRS`）。
 - **三个 tsconfig，各管一层**：`tsconfig.json`（Node 侧 TS：`app/cli` + `app/desktop/host` + `app/mcp`）、`app/desktop/renderer/tsconfig.json`（渲染进程 TSX，DOM+JSX）、`tsconfig.js.json`（Node 侧 **.js**：Electron 入口与冒烟脚本，`checkJs: false`，只管「被认领」与语法）。
   新增源码目录时**必须把 glob 加进对应的 include** —— 漏了的话 `npm run typecheck` 根本不会检查它，编辑器还会另建推断项目、报出极具误导性的「找不到名称 "node:fs/promises"，请安装 @types/node」（真踩过）。自查办法：`npm run typecheck` 之后确认新文件确实被某个项目收进来了

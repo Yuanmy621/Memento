@@ -435,6 +435,7 @@ html[data-vibrancy="native"] .topbar {
 
 .main-column {
   display: grid;
+  /* 三行：顶栏 / 对话（可滚动）/ 输入区（面包屑长在输入区里面，不占网格行） */
   grid-template-rows: auto minmax(0, 1fr) auto;
   /* 第一列永远是对话区；预览面板展开时才有第二列（见 --preview） */
   grid-template-columns: minmax(0, 1fr);
@@ -499,15 +500,6 @@ html[data-platform="win32"] .topbar {
   padding-right: 148px;
 }
 
-.topbar__sub {
-  font-family: var(--ds-font-family-code);
-  font-size: 11px;
-  color: var(--dsw-alias-label-caption);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .topbar__spacer {
   flex: 1;
 }
@@ -537,6 +529,89 @@ html[data-platform="win32"] .topbar {
 .topbar__icon--on {
   background: var(--ym-accent-soft);
   color: var(--ym-accent-text);
+}
+
+/* ── 面包屑：工作目录 + git 分支 ────────────────────────────────────────
+ *
+ * 它是**输入框正上方的一行**，所以长在 `.composer__inner` 里（不是主区的一个网格行）。
+ * 水平度量因此白拿：同宽、同居中，连「有刻度尺时输入框让位 58px」那条
+ * （`.main-column--rail .composer`）都自动跟上 —— 自己算一套就会差半个身位。
+ *
+ * 24px + 上下 4/6px 外边距：贴着输入卡，但不黏住，也不多吃消息区。
+ * 整条 `overflow: hidden` + 段内省略 —— 路径再长也只影响它自己。
+ */
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 24px;
+  min-width: 0;
+  /* 左右 4px：路径文字落在输入卡外沿稍内，与卡内 12px 的文字形成「贴住卡片」的观感 */
+  padding: 0 4px;
+  margin: 4px 0 6px;
+  color: var(--dsw-alias-label-caption);
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
+  line-height: 16px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.crumbs__path {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* 路径段能收缩、超长省略；**末段（当前目录）不收缩** —— 它才是「我在哪」 */
+.crumbs__seg {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.crumbs__seg[aria-current='location'] {
+  flex: none;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.crumbs__gap {
+  flex: none;
+  opacity: 0.45;
+}
+
+/* 路径与分支之间的竖线：两者来源不同，别让人误读成一整条路径 */
+.crumbs__divider {
+  flex: none;
+  width: 1px;
+  height: 12px;
+  background: var(--dsw-alias-border-l3);
+}
+
+/* 分支段：比输入区那排下拉再小一号（22px 高）—— 它只是「状态 + 入口」 */
+.crumbs .menu { flex: none; }
+
+.crumbs .menu__trigger {
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 11px;
+}
+
+/* 分支图标用强调色：一眼能认出「这一段是 git，不是路径」 */
+.crumbs__branch-icon { color: var(--ym-accent-text); }
+
+/* 切换失败的原因（工作区脏之类）：贴右端、超长省略，全文在 title 里 */
+.crumbs__error {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--dsw-alias-state-error-primary);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════

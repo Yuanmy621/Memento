@@ -20,7 +20,7 @@
 
 import {
   ArrowLeft, ChevronDown, Clock, Coins, Copy, ExternalLink,
-  FileCode, FileImage, FileQuestionMark, FileText, FolderOpen, Gauge, ListTree,
+  FileCode, FileImage, FileQuestionMark, FileText, FolderOpen, Gauge, GitBranch, ListTree,
   LoaderCircle, MessageSquare, PanelRightClose, PanelRightOpen, Plus,
   Repeat, Search, SendHorizontal, ShieldCheck, Sparkles, X,
 } from 'lucide-react'
@@ -58,6 +58,8 @@ export const IconClock = icon(Clock)
 export const IconTurns = icon(Repeat)
 /** 推理强度（模型「思考多少」）—— 输入区那一排的强度下拉用。 */
 export const IconGauge = icon(Gauge)
+/** git 分支：面包屑的分支段用。 */
+export const IconBranch = icon(GitBranch)
 export const IconClose = icon(X)
 export const IconCopy = icon(Copy)
 export const IconSpinner = icon(LoaderCircle)

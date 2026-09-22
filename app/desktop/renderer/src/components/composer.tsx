@@ -231,6 +231,15 @@ export interface ComposerProps {
   readonly onListFiles: (query: string) => void
   readonly onNewSession: () => void
   readonly onPickDirectory: () => void
+  /**
+   * 输入卡**正上方**那一行（`app.tsx` 把面包屑塞进来）。
+   *
+   * 为什么做成插槽、而不是让这里直接 import 面包屑：数据（cwd / git 状态 /
+   * 切分支的动作）都在 `App` 手里。这里只出一个「行位」—— 于是面包屑自动拿到
+   * 输入卡的全部水平度量（同宽、同居中，连「有刻度尺时输入框让位 58px」那条
+   * `.main-column--rail .composer` 都跟上），不会和输入框错开半个身位。
+   */
+  readonly above?: ReactElement
 }
 
 /** 加号菜单的两项（真实动作，不是占位）。函数放模块级，免得每次渲染现拼数组。 */
@@ -242,7 +251,7 @@ function ACTION_ENTRIES(onNewSession: () => void, onPickDirectory: () => void): 
 }
 
 export function Composer(props: ComposerProps): ReactElement {
-  const { state, onSend, onCancel, onSteer, onListFiles, onSetModel, onSetEffort, onNewSession, onPickDirectory } = props
+  const { state, onSend, onCancel, onSteer, onListFiles, onSetModel, onSetEffort, onNewSession, onPickDirectory, above } = props
   const ime = useImeGuard()
   /** 触发符菜单当前该显示什么（由 SuggestController 推过来）。 */
   const [suggest, setSuggest] = useState<SuggestView | null>(null)
@@ -421,6 +430,8 @@ export function Composer(props: ComposerProps): ReactElement {
   return (
     <div className="composer">
       <div className="composer__inner">
+        {/* 面包屑（工作目录 + git 分支）：贴着输入卡上沿，跟卡片同宽同中心 */}
+        {above}
         {/* 组字事件从 contenteditable 冒泡到这里：输入法守卫的第三个信号靠它（见 composition.ts） */}
         <div className="composer__box" {...ime.compositionProps}>
           <EditorContent className="composer__editor" editor={editor} />

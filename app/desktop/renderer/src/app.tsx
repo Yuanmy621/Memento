@@ -30,6 +30,7 @@ import LoadingState from './ui/beautifului/primitives/LoadingState.tsx'
 import { PreviewPanel } from './components/preview-panel.tsx'
 import { TraceView } from './components/trace.tsx'
 import { SettingsPanel } from './components/settings-panel.tsx'
+import { Breadcrumb } from './components/breadcrumb.tsx'
 import { IconChat, IconPanelClose, IconPanelOpen, IconTrace } from './icons.tsx'
 
 /** 主区顶部的两个面板。 */
@@ -40,6 +41,7 @@ export function App(): ReactElement {
     state, send, cancel, setModel, setEffort, newSession, pickDirectory, getAppInfo,
     resumeSession, openProject, loadProjectSessions, openPath, previewRead,
     loadSettings, readFile, writeFile, restartKernel, steer, listFiles,
+    loadGit, switchBranch,
   } = useAgent()
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null)
   const [tab, setTab] = useState<Tab>('chat')
@@ -119,6 +121,15 @@ export function App(): ReactElement {
     void loadSettings()
   }, [loadSettings])
 
+  /**
+   * 面包屑的输入。
+   *
+   * 目录取「内核报的 cwd」优先（权威值），退回视图上记的 cwd（新会话还没就绪时
+   * 只有它有）。git 状态**必须**核对探测目录：切会话之后旧仓库的分支不能挂上来。
+   */
+  const cwd = state.info?.cwd ?? state.cwd
+  const git = state.git !== null && state.git.cwd === cwd ? state.git.status : null
+
   return (
     <div className="app-shell">
       <Sidebar
@@ -160,9 +171,6 @@ export function App(): ReactElement {
             </button>
           </nav>
           <span className="topbar__spacer" />
-          <span className="topbar__sub" title={state.info?.cwd ?? ''}>
-            {state.phase === 'ready' ? state.info?.cwd : ''}
-          </span>
           <button
             type="button"
             className={`topbar__icon no-drag${showPreview ? ' topbar__icon--on' : ''}`}
@@ -231,6 +239,18 @@ export function App(): ReactElement {
           onSetEffort={(effort) => { void setEffort(effort) }}
           onNewSession={() => { void newSession() }}
           onPickDirectory={() => { void pickDirectory() }}
+          /* 面包屑（工作目录 + git 分支）走输入区那个「上方插槽」：贴着输入卡、
+             跟它同宽同中心 —— 放主区网格里会多出一条自己算水平度量的规则。 */
+          above={(
+            <Breadcrumb
+              cwd={cwd}
+              home={appInfo?.home ?? ''}
+              git={git}
+              busy={state.gitBusy}
+              onRefresh={() => { void loadGit() }}
+              onSwitch={switchBranch}
+            />
+          )}
         />
 
         {showPreview && (

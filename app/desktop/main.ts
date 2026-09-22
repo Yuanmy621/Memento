@@ -19,7 +19,7 @@
 
 import { app, BrowserWindow, Menu, dialog, ipcMain, shell } from 'electron'
 import type { BrowserWindowConstructorOptions, MenuItemConstructorOptions } from 'electron'
-import { spawn, type ChildProcess } from 'node:child_process'
+import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { readFile, stat, writeFile } from 'node:fs/promises'
@@ -30,6 +30,8 @@ import {
   type AttachRequest,
   type AttachResult,
   type BridgeEvent,
+  type GitStatus,
+  type GitSwitchResult,
   type LaunchConfig,
   type PreviewKind,
   type PreviewPayload,
@@ -1070,6 +1072,154 @@ function allowedSettingsPath(path: unknown): { ok: true; path: string } | { ok: 
   return { ok: false, error: `不允许读写这个路径（只允许配置与技能/命令目录）：${target}` }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// git：面包屑要的「当前分支 + 可切换的分支列表」
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** git 探测的超时与输出上限：大仓库的 `status` 会慢，但绝不能拖住界面。 */
+const GIT_TIMEOUT_MS = 5_000
+const GIT_MAX_BUFFER = 1 << 20
+
+/**
+ * 跑一条 git 命令。
+ *
+ * 三条硬约束，都是安全/稳定性要求：
+ *   1. **参数数组、不拼 shell**（`execFile` 而不是 `exec`）—— 分支名这类外部输入
+ *      因此不可能变成 shell 元字符；
+ *   2. `cwd` 由**主进程**决定（当前会话的工作目录），不接受渲染进程传路径；
+ *   3. **失败也 resolve**：`code !== 0` + `stderr` 正是界面要显示的那句话
+ *      （例如「Your local changes would be overwritten」），不是异常。
+ * @param args - git 的子命令与参数（不含 `git` 本身）。
+ * @param cwd - 在哪个目录里执行。
+ * @returns 退出码、两路输出，以及「进程根本没跑起来」时的原因（超时 / 没装 git）。
+ */
+function runGit(
+  args: readonly string[],
+  cwd: string,
+): Promise<{ code: number; stdout: string; stderr: string; error: string | null }> {
+  return new Promise((resolve) => {
+    execFile('git', [...args], {
+      cwd,
+      timeout: GIT_TIMEOUT_MS,
+      maxBuffer: GIT_MAX_BUFFER,
+      windowsHide: true,
+      encoding: 'utf8',
+    }, (error, stdout, stderr) => {
+      // `error.code` 是数字（git 的退出码）或字符串（ENOENT、超时）；统一压成数字。
+      const raw = (error as { code?: unknown } | null)?.code
+      resolve({
+        code: error === null ? 0 : (typeof raw === 'number' ? raw : 1),
+        stdout: stdout ?? '',
+        stderr: stderr ?? '',
+        error: error === null ? null : error.message,
+      })
+    })
+  })
+}
+
+/** 把命令输出按行切开（去掉空行与首尾空白）。 */
+function gitLines(output: string): string[] {
+  return output.split('\n').map((line) => line.trim()).filter((line) => line !== '')
+}
+
+/**
+ * 探测当前工作目录的 git 情况。
+ *
+ * 几条判断都是刻意的：
+ *   - **不是仓库不算错误**（`repo: false`、`error: null`）：绝大多数目录不是仓库，
+ *     那是正常状态，界面据此不显示分支段而已；
+ *   - 没装 git / 目录被删才是 `error`（`runGit` 的 `error` 字段有值）；
+ *   - `HEAD` 有两种「不是分支」的形态：仓库还没有第一次提交（`abbrev-ref` 直接报错）
+ *     与 detached HEAD（输出字面量 `HEAD`）—— 两种都记成 `branch: ''`，
+ *     后者额外带上短 SHA 供界面显示 `detached@abc1234`。
+ * @param cwd - 要探测的工作目录（当前会话的）。
+ * @returns git 情况。
+ */
+async function readGit(cwd: string): Promise<GitStatus> {
+  const none = {
+    repo: false, root: '', branch: '', detached: '',
+    local: [], remote: [], dirty: 0,
+  } as const
+
+  const inside = await runGit(['rev-parse', '--is-inside-work-tree'], cwd)
+  if (inside.error !== null) return { ...none, error: `读不到 git：${inside.error}` }
+  if (inside.code !== 0 || inside.stdout.trim() !== 'true') return { ...none, error: null }
+
+  const [top, head, short, local, remote, status] = await Promise.all([
+    runGit(['rev-parse', '--show-toplevel'], cwd),
+    runGit(['rev-parse', '--abbrev-ref', 'HEAD'], cwd),
+    runGit(['rev-parse', '--short', 'HEAD'], cwd),
+    runGit(['for-each-ref', '--format=%(refname:short)', 'refs/heads'], cwd),
+    runGit(['for-each-ref', '--format=%(refname:short)', 'refs/remotes'], cwd),
+    // `-uno`：只看已跟踪文件 —— 面包屑的 tooltip 不值得为几万个未跟踪文件买单。
+    runGit(['status', '--porcelain', '-uno'], cwd),
+  ])
+  const raw = head.stdout.trim()
+  const detached = raw === '' || raw === 'HEAD'
+  return {
+    repo: true,
+    root: top.stdout.trim(),
+    branch: detached ? '' : raw,
+    detached: detached ? short.stdout.trim() : '',
+    local: gitLines(local.stdout),
+    // `origin/HEAD` 是「远程默认分支」的符号引用，不是能切的分支。
+    remote: gitLines(remote.stdout).filter((name) => !name.endsWith('/HEAD')),
+    dirty: gitLines(status.stdout).length,
+    error: null,
+  }
+}
+
+/**
+ * 切分支。
+ *
+ * ⚠️ **白名单**：只允许切到刚刚探测出来的分支名（`local ∪ remote` 里精确匹配）。
+ * 渲染进程送来的字符串因此既不可能变成 git 的选项（`--upload-pack=…` 之类），
+ * 也不可能指向别的仓库 —— 白名单里没有的名字一律拒绝。
+ *
+ * 远程分支不是直接 checkout（那会进 detached HEAD），而是建一个同名的本地跟踪
+ * 分支；同名本地分支已经存在时就直接切过去。
+ * @param branch - 目标分支名（来自界面上那份列表）。
+ * @returns 是否成功、失败原因，以及切换后的最新状态。
+ */
+async function switchGitBranch(branch: string): Promise<GitSwitchResult> {
+  const cwd = launchConfig.cwd
+  const before = await readGit(cwd)
+  if (!before.repo) return { ok: false, error: '这里不是 git 仓库', status: before }
+
+  const isLocal = before.local.includes(branch)
+  const isRemote = before.remote.includes(branch)
+  if (!isLocal && !isRemote) {
+    return {
+      ok: false,
+      error: `分支列表里没有 ${branch}（列表可能过期了，重开一次菜单即可）`,
+      status: before,
+    }
+  }
+
+  let args: string[]
+  if (isLocal) {
+    args = ['checkout', branch]
+  } else {
+    // `origin/feature/x` → `feature/x`
+    const short = branch.slice(branch.indexOf('/') + 1)
+    args = short === '' || before.local.includes(short)
+      ? ['checkout', short]
+      : ['checkout', '-b', short, '--track', branch]
+  }
+
+  const result = await runGit(args, cwd)
+  const after = await readGit(cwd)
+  if (result.code !== 0) {
+    return {
+      ok: false,
+      // git 的 stderr 就是给人看的原因（工作区脏 / 有冲突 / 分支被占用），原样转交。
+      error: result.stderr.trim() !== '' ? result.stderr.trim() : (result.error ?? '切换分支失败'),
+      status: after.repo ? after : before,
+    }
+  }
+  return { ok: true, status: after }
+}
+
 /** 注册全部 IPC handler。channel 名与 `preload.js` 必须一致。 */
 function registerIpc() {
   ipcMain.handle(IPC.state, (event) => {
@@ -1089,6 +1239,8 @@ function registerIpc() {
       node: process.versions.node,
       platform: process.platform,
       arch: process.arch,
+      /** 家目录：面包屑用它把绝对路径缩写成一个 `~` 段。 */
+      home: app.getPath('home'),
       hostNode: activeSlot()?.info?.nodeVersion,
       /** 窗口是否启用了原生磨砂玻璃（渲染进程据此决定侧栏背景策略）。 */
       nativeMaterial: NATIVE_MATERIAL,
@@ -1164,6 +1316,18 @@ function registerIpc() {
   ipcMain.handle(IPC.previewRead, async (event, path) => {
     assertSender(event)
     return await readForPreview(path)
+  })
+
+  ipcMain.handle(IPC.gitStatus, async (event) => {
+    assertSender(event)
+    // 目录由主进程给（当前会话的工作目录），渲染进程不参与 —— 见 `runGit` 的说明。
+    return await readGit(launchConfig.cwd)
+  })
+
+  ipcMain.handle(IPC.gitSwitch, async (event, branch) => {
+    assertSender(event)
+    if (typeof branch !== 'string' || branch.trim() === '') throw new Error('分支名为空')
+    return await switchGitBranch(branch.trim())
   })
 
   ipcMain.handle(IPC.openPath, async (event, path) => {
