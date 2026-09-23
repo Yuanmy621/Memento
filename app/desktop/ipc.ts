@@ -60,6 +60,8 @@ export const IPC = Object.freeze({
   gitStatus: 'Memento:git-status',
   /** 渲染进程 → 主进程：切分支（白名单 = 上一次 `git-status` 列出的分支）。 */
   gitSwitch: 'Memento:git-switch',
+  /** 渲染进程 → 主进程：拉取**当前分支**最新（`git pull --ff-only`）。 */
+  gitPull: 'Memento:git-pull',
 })
 
 /**
@@ -206,5 +208,23 @@ export interface GitSwitchResult {
   /** 失败原因：git 自己的 stderr，原样给界面显示。 */
   readonly error?: string
   /** 切换后的最新状态（失败时也给，界面据此保持准确）。 */
+  readonly status: GitStatus
+}
+
+/**
+ * `Memento:git-pull` 的结果。
+ *
+ * 与 {@link GitSwitchResult} 只差一个 `message`。为什么要多这一个字段：切分支是
+ * **看得见**的（界面上的分支名自己就变了，不用再说一句），而拉取**必须说一句** ——
+ * 「Already up to date.」和「1 file changed」是完全不同的两件事，
+ * 界面得把 git 的原话摆出来。
+ */
+export interface GitPullResult {
+  readonly ok: boolean
+  /** 失败原因：git 自己的 stderr（`Not possible to fast-forward` 之类），原样显示。 */
+  readonly error?: string
+  /** 成功时 git 的结论（stdout 末行）；确实没什么可说时是空串。 */
+  readonly message?: string
+  /** 拉取后的最新状态。 */
   readonly status: GitStatus
 }

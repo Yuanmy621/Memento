@@ -31,7 +31,7 @@
  */
 
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
-import type { GitStatus, GitSwitchResult, PreviewPayload } from './ipc.ts'
+import type { GitPullResult, GitStatus, GitSwitchResult, PreviewPayload } from './ipc.ts'
 
 /** 与 `ipc.ts` 的 `IPC` 表逐字对应。 */
 const CHANNEL = Object.freeze({
@@ -56,6 +56,7 @@ const CHANNEL = Object.freeze({
   previewRead: 'Memento:preview-read',
   gitStatus: 'Memento:git-status',
   gitSwitch: 'Memento:git-switch',
+  gitPull: 'Memento:git-pull',
 })
 
 /** 读/写配置文件的结果。 */
@@ -193,6 +194,14 @@ const api = {
    * @returns 是否成功、失败原因，以及切换后的最新状态。
    */
   gitSwitch: (branch: string): Promise<GitSwitchResult> => ipcRenderer.invoke(CHANNEL.gitSwitch, branch),
+  /**
+   * 拉取**当前分支**的最新提交。
+   *
+   * ⚠️ 同样不接受参数：拉的就是当前分支，也不是任意仓库 —— 分支与目录都由主进程定。
+   * 主进程跑的是 `git pull --ff-only`（不生成合并提交），要 merge/rebase 请去终端。
+   * @returns 是否成功、git 的结论（「Already up to date.」/ diffstat），以及最新状态。
+   */
+  gitPull: (): Promise<GitPullResult> => ipcRenderer.invoke(CHANNEL.gitPull),
 }
 
 contextBridge.exposeInMainWorld('Memento', Object.freeze(api))

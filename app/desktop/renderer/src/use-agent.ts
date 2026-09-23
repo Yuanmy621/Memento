@@ -41,8 +41,10 @@ import type {
  */
 import { sessionKey } from '../../host/protocol.ts'
 /** 预览面板、git 与「切会话」的类型面同样只有一份。 */
-export type { GitStatus, GitSwitchResult } from '../../ipc.ts'
-import type { AttachRequest, AttachResult, GitStatus, GitSwitchResult, PreviewPayload } from '../../ipc.ts'
+export type { GitPullResult, GitStatus, GitSwitchResult } from '../../ipc.ts'
+import type {
+  AttachRequest, AttachResult, GitPullResult, GitStatus, GitSwitchResult, PreviewPayload,
+} from '../../ipc.ts'
 /** 显示用的小工具（首行预览）；纯函数，界面与轨迹共用一套口径。 */
 import { firstLine } from './tool-names.ts'
 
@@ -153,6 +155,8 @@ export interface AgentApi {
   gitStatus(): Promise<GitStatus>
   /** 切分支；分支名必须来自上一次 `gitStatus()` 的列表。 */
   gitSwitch(branch: string): Promise<GitSwitchResult>
+  /** 拉取**当前分支**最新（`git pull --ff-only`）。 */
+  gitPull(): Promise<GitPullResult>
   pickDirectory(): Promise<string | null>
   /**
    * 切到某个会话。
@@ -568,6 +572,23 @@ export interface GitRead {
   /** 这次探测针对的工作目录。 */
   readonly cwd: string
   readonly status: GitStatus
+}
+
+/**
+ * 一次 git 动作（切分支 / 拉取）的结果，**已经压成「界面要显示的一句话」**。
+ *
+ * 为什么要压平：协议层给的是两个不同的结构（`GitSwitchResult` 只有 `error`，
+ * `GitPullResult` 还有 `message`），但界面那一条状态栏只关心「说什么、是不是坏消息」。
+ * 让面包屑去分辨「哪种动作的哪个字段」纯属把协议细节漏进视图层。
+ *
+ * `message` 允许是空串 —— 那表示**没什么可说的**（例如切分支成功：界面上的分支名
+ * 自己就变了），界面据此不显示那一格。
+ */
+export interface GitActionResult {
+  /** 动作是否成功。决定那句话说出来的语气（普通 / 错误色）。 */
+  readonly ok: boolean
+  /** 要显示的话；没什么可说时是空串。 */
+  readonly message: string
 }
 
 /**
@@ -1212,9 +1233,14 @@ export interface AgentController {
   /**
    * 切分支。
    * @param branch - 目标分支（来自面包屑菜单里的列表）。
-   * @returns 成功时空串，失败时是要显示给用户的原因（git 的原话）。
+   * @returns 结果；失败时 `message` 是要显示给用户的原因（git 的原话）。
    */
-  readonly switchBranch: (branch: string) => Promise<string>
+  readonly switchBranch: (branch: string) => Promise<GitActionResult>
+  /**
+   * 拉取**当前分支**的最新提交（`git pull --ff-only`）。
+   * @returns 结果；成功时 `message` 是 git 的结论（「Already up to date.」/ diffstat）。
+   */
+  readonly pullBranch: () => Promise<GitActionResult>
   /** 在当前项目里开一个新会话（别的会话照跑）。 */
   readonly newSession: () => Promise<void>
   /**
@@ -1412,20 +1438,51 @@ export function useAgent(): AgentController {
     }
   }, [api])
 
-  const switchBranch = useCallback(async (branch: string): Promise<string> => {
+  /**
+   * 切分支。
+   * @param branch - 目标分支（来自面包屑菜单里的列表，主进程还会再校验一遍白名单）。
+   * @returns 结果；成功时 `message` 为空 —— 界面上的分支名自己就变了，不用再说一句。
+   */
+  const switchBranch = useCallback(async (branch: string): Promise<GitActionResult> => {
     const current = stateRef.current
     const cwd = current.info?.cwd ?? current.cwd
-    if (api === undefined || cwd === '') return '还没有可用的工作目录'
+    if (api === undefined || cwd === '') return { ok: false, message: '还没有可用的工作目录' }
     dispatch({ type: 'git-loading' })
     try {
       const result = await api.gitSwitch(branch)
       // 无论成功失败都吃下最新状态：切换失败（工作区脏）时分支没变，
       // 但界面得知道自己还停在哪儿。
       dispatch({ type: 'git-status', cwd, status: result.status })
-      return result.ok ? '' : (result.error ?? '切换分支失败')
+      return result.ok
+        ? { ok: true, message: '' }
+        : { ok: false, message: result.error ?? '切换分支失败' }
     } catch (error) {
       dispatch({ type: 'git-failed' })
-      return String((error as Error | undefined)?.message ?? error)
+      return { ok: false, message: String((error as Error | undefined)?.message ?? error) }
+    }
+  }, [api])
+
+  /**
+   * 拉取当前分支最新。
+   *
+   * 与切分支的唯一区别是**成功也要说话**：「Already up to date.」和
+   * 「1 file changed, 1 insertion(+)」是完全不同的两件事，不说用户就不知道
+   * 到底有没有拉到东西。
+   */
+  const pullBranch = useCallback(async (): Promise<GitActionResult> => {
+    const current = stateRef.current
+    const cwd = current.info?.cwd ?? current.cwd
+    if (api === undefined || cwd === '') return { ok: false, message: '还没有可用的工作目录' }
+    dispatch({ type: 'git-loading' })
+    try {
+      const result = await api.gitPull()
+      dispatch({ type: 'git-status', cwd, status: result.status })
+      return result.ok
+        ? { ok: true, message: result.message ?? '' }
+        : { ok: false, message: result.error ?? '拉取失败' }
+    } catch (error) {
+      dispatch({ type: 'git-failed' })
+      return { ok: false, message: String((error as Error | undefined)?.message ?? error) }
     }
   }, [api])
 
@@ -1627,6 +1684,7 @@ export function useAgent(): AgentController {
     setEffort,
     loadGit,
     switchBranch,
+    pullBranch,
     newSession,
     resumeSession,
     openProject,

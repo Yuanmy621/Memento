@@ -41,7 +41,7 @@ export function App(): ReactElement {
     state, send, cancel, setModel, setEffort, newSession, pickDirectory, getAppInfo,
     resumeSession, openProject, loadProjectSessions, openPath, previewRead,
     loadSettings, readFile, writeFile, restartKernel, steer, listFiles,
-    loadGit, switchBranch,
+    loadGit, switchBranch, pullBranch,
   } = useAgent()
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null)
   const [tab, setTab] = useState<Tab>('chat')
@@ -249,6 +249,7 @@ export function App(): ReactElement {
               busy={state.gitBusy}
               onRefresh={() => { void loadGit() }}
               onSwitch={switchBranch}
+              onPull={pullBranch}
             />
           )}
         />

@@ -30,6 +30,7 @@ import {
   type AttachRequest,
   type AttachResult,
   type BridgeEvent,
+  type GitPullResult,
   type GitStatus,
   type GitSwitchResult,
   type LaunchConfig,
@@ -1081,6 +1082,14 @@ const GIT_TIMEOUT_MS = 5_000
 const GIT_MAX_BUFFER = 1 << 20
 
 /**
+ * `git pull` 的超时。
+ *
+ * 它要**联网**，与本地探测不是一个量级 —— 沿用 5s 会把正常的拉取误杀成失败。
+ * 两分钟足够覆盖慢网络；再久就判失败，把控制权还给用户（比无限转圈强）。
+ */
+const GIT_PULL_TIMEOUT_MS = 120_000
+
+/**
  * 跑一条 git 命令。
  *
  * 三条硬约束，都是安全/稳定性要求：
@@ -1091,19 +1100,25 @@ const GIT_MAX_BUFFER = 1 << 20
  *      （例如「Your local changes would be overwritten」），不是异常。
  * @param args - git 的子命令与参数（不含 `git` 本身）。
  * @param cwd - 在哪个目录里执行。
+ * @param options - 可选的时限与**追加**环境变量（默认 `GIT_TIMEOUT_MS`、不加）。
+ *   `pull` 要单独放宽时限并关掉交互提示，见 {@link pullGitBranch}。
  * @returns 退出码、两路输出，以及「进程根本没跑起来」时的原因（超时 / 没装 git）。
  */
 function runGit(
   args: readonly string[],
   cwd: string,
+  options: { readonly timeoutMs?: number; readonly env?: Readonly<Record<string, string>> } = {},
 ): Promise<{ code: number; stdout: string; stderr: string; error: string | null }> {
   return new Promise((resolve) => {
     execFile('git', [...args], {
       cwd,
-      timeout: GIT_TIMEOUT_MS,
+      timeout: options.timeoutMs ?? GIT_TIMEOUT_MS,
       maxBuffer: GIT_MAX_BUFFER,
       windowsHide: true,
       encoding: 'utf8',
+      // ⚠️ 传了 `env` 就是**整个替换**（execFile 的语义），所以必须带上 `process.env`：
+      // 否则 git 会丢掉 PATH / HOME，连 `~/.gitconfig` 和 ssh 都找不到。
+      ...(options.env === undefined ? {} : { env: { ...process.env, ...options.env } }),
     }, (error, stdout, stderr) => {
       // `error.code` 是数字（git 的退出码）或字符串（ENOENT、超时）；统一压成数字。
       const raw = (error as { code?: unknown } | null)?.code
@@ -1120,6 +1135,36 @@ function runGit(
 /** 把命令输出按行切开（去掉空行与首尾空白）。 */
 function gitLines(output: string): string[] {
   return output.split('\n').map((line) => line.trim()).filter((line) => line !== '')
+}
+
+/**
+ * 命令输出里**最后**一句有内容的话。
+ *
+ * `pull` 的结论就在那儿：没事时是 `Already up to date.`，真拉到东西时是 diffstat
+ * 的末行（`1 file changed, 1 insertion(+)`）—— 都比第一行（`Updating 3f2a1b…`）有用。
+ * @param output - stdout。
+ * @returns 那句话；没有任何内容时是空串。
+ */
+function gitLastLine(output: string): string {
+  const lines = gitLines(output)
+  return lines.length === 0 ? '' : (lines[lines.length - 1] ?? '')
+}
+
+/**
+ * git 失败时给人看的那句话。
+ *
+ * 优先 `stderr`（`fatal: Not possible to fast-forward, aborting.` 这类都在那儿），
+ * 退回 `stdout`，再退回进程根本没起来的 `error`。**原样转交**，不编文案 ——
+ * git 自己说的比我们准。
+ * @param result - {@link runGit} 的返回。
+ * @returns 要显示的一句话。
+ */
+function gitFailureText(result: { readonly stdout: string; readonly stderr: string; readonly error: string | null }): string {
+  const stderr = result.stderr.trim()
+  if (stderr !== '') return stderr
+  const stdout = result.stdout.trim()
+  if (stdout !== '') return stdout
+  return result.error ?? 'git 命令失败'
 }
 
 /**
@@ -1150,7 +1195,8 @@ async function readGit(cwd: string): Promise<GitStatus> {
     runGit(['rev-parse', '--abbrev-ref', 'HEAD'], cwd),
     runGit(['rev-parse', '--short', 'HEAD'], cwd),
     runGit(['for-each-ref', '--format=%(refname:short)', 'refs/heads'], cwd),
-    runGit(['for-each-ref', '--format=%(refname:short)', 'refs/remotes'], cwd),
+    // 连 `%(symref)` 一起取：远程的 `origin/HEAD` 是**符号引用**，见下面那两行过滤。
+    runGit(['for-each-ref', '--format=%(refname:short)%09%(symref)', 'refs/remotes'], cwd),
     // `-uno`：只看已跟踪文件 —— 面包屑的 tooltip 不值得为几万个未跟踪文件买单。
     runGit(['status', '--porcelain', '-uno'], cwd),
   ])
@@ -1162,11 +1208,36 @@ async function readGit(cwd: string): Promise<GitStatus> {
     branch: detached ? '' : raw,
     detached: detached ? short.stdout.trim() : '',
     local: gitLines(local.stdout),
-    // `origin/HEAD` 是「远程默认分支」的符号引用，不是能切的分支。
-    remote: gitLines(remote.stdout).filter((name) => !name.endsWith('/HEAD')),
+    remote: remoteBranches(remote.stdout),
     dirty: gitLines(status.stdout).length,
     error: null,
   }
+}
+
+/**
+ * 解析 `for-each-ref refs/remotes` 的输出，滤掉**不是分支**的引用。
+ *
+ * 两种都要滤，而且理由不同：
+ *
+ *   1. **符号引用**（`%(symref)` 非空）—— `origin/HEAD` 就是它，指向「远程默认分支」。
+ *      它最坑的地方是 `%(refname:short)` 会给出 **`origin`**（不是 `origin/HEAD`），
+ *      所以「按名字结尾判 HEAD」的老写法**根本拦不住它**，菜单里会冒出一个叫
+ *      `origin` 的假分支；点下去退化成 `checkout -b origin --track origin`，
+ *      报一句莫名其妙的上游不存在。只在 **clone 出来**的仓库里出现
+ *      （`refs/remotes/origin/HEAD` 存在），手写 `git remote add` 的仓库没有 ——
+ *      这正是它一直没被发现的原因。
+ *   2. **真的叫 `/HEAD` 的分支**：极少数情况下远程 HEAD 是个普通引用，按名字再兜一层。
+ *
+ * 分隔符用制表符（`%09`）而不是空格：引用名里可能有空格，按空白切会切错。
+ * @param output - `for-each-ref --format=%(refname:short)%09%(symref)` 的 stdout。
+ * @returns 可以切换的远程分支名，例如 `origin/main`。
+ */
+function remoteBranches(output: string): string[] {
+  return gitLines(output)
+    .map((line) => line.split('\t'))
+    .filter(([, symref]) => (symref ?? '') === '')
+    .map(([name]) => name ?? '')
+    .filter((name) => name !== '' && !name.endsWith('/HEAD'))
 }
 
 /**
@@ -1213,11 +1284,49 @@ async function switchGitBranch(branch: string): Promise<GitSwitchResult> {
     return {
       ok: false,
       // git 的 stderr 就是给人看的原因（工作区脏 / 有冲突 / 分支被占用），原样转交。
-      error: result.stderr.trim() !== '' ? result.stderr.trim() : (result.error ?? '切换分支失败'),
+      error: gitFailureText(result),
       status: after.repo ? after : before,
     }
   }
   return { ok: true, status: after }
+}
+
+/**
+ * 拉取**当前分支**的最新提交（`git pull`）。
+ *
+ * 三个决定都是刻意的，改之前先想清楚：
+ *
+ *   1. **`--ff-only`，不做 merge。** 界面上的一个按钮不该在背后生成合并提交，
+ *      更不该把仓库留在「合并冲突」的半途 —— 那是 agent 正在干活的目录。
+ *      分叉时 git 会以 `Not possible to fast-forward` 失败，把那句话原样显示，
+ *      让用户自己去终端决定 merge 还是 rebase。
+ *   2. **`GIT_TERMINAL_PROMPT=0`。** 没配凭据时 git 会**问你要密码**并一直等着 ——
+ *      在这个没有终端的子进程里那就是挂死。关掉提示，让它立刻以
+ *      `could not read Username` 失败，把原因显示出来。
+ *   3. **单独的超时**（{@link GIT_PULL_TIMEOUT_MS}）：要联网，不能沿用 5s。
+ *
+ * 不接受分支参数：拉的就是**当前**分支。要拉别的分支，先切过去（两个动作分开，
+ * 各自的失败原因才不会混在一起）。
+ * @returns 是否成功、成功时 git 的结论，以及拉取后的最新状态。
+ */
+async function pullGitBranch(): Promise<GitPullResult> {
+  const cwd = launchConfig.cwd
+  const before = await readGit(cwd)
+  if (!before.repo) return { ok: false, error: '这里不是 git 仓库', status: before }
+  if (before.branch === '') {
+    // detached HEAD 没有「当前分支」可言，`git pull` 也会拒绝。
+    return { ok: false, error: '当前不在任何分支上（detached HEAD），没有可拉取的分支', status: before }
+  }
+
+  const result = await runGit(['pull', '--ff-only'], cwd, {
+    timeoutMs: GIT_PULL_TIMEOUT_MS,
+    env: { GIT_TERMINAL_PROMPT: '0' },
+  })
+  const after = await readGit(cwd)
+  if (result.code !== 0) {
+    return { ok: false, error: gitFailureText(result), status: after.repo ? after : before }
+  }
+  return { ok: true, message: gitLastLine(result.stdout), status: after }
 }
 
 /** 注册全部 IPC handler。channel 名与 `preload.js` 必须一致。 */
@@ -1328,6 +1437,12 @@ function registerIpc() {
     assertSender(event)
     if (typeof branch !== 'string' || branch.trim() === '') throw new Error('分支名为空')
     return await switchGitBranch(branch.trim())
+  })
+
+  /** 拉取当前分支最新。不接受参数：拉的就是当前分支（见 `pullGitBranch`）。 */
+  ipcMain.handle(IPC.gitPull, async (event) => {
+    assertSender(event)
+    return await pullGitBranch()
   })
 
   ipcMain.handle(IPC.openPath, async (event, path) => {

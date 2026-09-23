@@ -538,7 +538,11 @@ html[data-platform="win32"] .topbar {
  * （`.main-column--rail .composer`）都自动跟上 —— 自己算一套就会差半个身位。
  *
  * 24px + 上下 4/6px 外边距：贴着输入卡，但不黏住，也不多吃消息区。
- * 整条 `overflow: hidden` + 段内省略 —— 路径再长也只影响它自己。
+ *
+ * ⚠️ **这里绝对不能写 `overflow: hidden`。** 分支菜单的弹层是 `.menu` 里绝对定位的
+ * 子节点、并且朝**上**弹（侧边 `side="top"`），一裁就被这 24px 的盒子整个切掉 ——
+ * 表现为「点箭头毫无反应」（弹层其实在 DOM 里，只是看不见、点击也落到底下的消息区）。
+ * 裁剪长路径的职责交给 `.crumbs__path`：它在自己盒子里裁，不会连累兄弟节点。
  */
 .crumbs {
   display: flex;
@@ -553,7 +557,6 @@ html[data-platform="win32"] .topbar {
   font-family: var(--ds-font-family-code);
   font-size: 11px;
   line-height: 16px;
-  overflow: hidden;
   white-space: nowrap;
 }
 
@@ -562,6 +565,9 @@ html[data-platform="win32"] .topbar {
   align-items: center;
   gap: 4px;
   min-width: 0;
+  /* 路径再长也只在自己这一格里省略，不挤压输入区 —— 「裁」放在这里而不是 `.crumbs`，
+     见上面那段：放到外层会把向上的分支菜单一起切掉。 */
+  overflow: hidden;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -605,14 +611,49 @@ html[data-platform="win32"] .topbar {
 /* 分支图标用强调色：一眼能认出「这一段是 git，不是路径」 */
 .crumbs__branch-icon { color: var(--ym-accent-text); }
 
-/* 切换失败的原因（工作区脏之类）：贴右端、超长省略，全文在 title 里 */
-.crumbs__error {
+/*
+ * 拉取按钮（`git pull`）：跟分支胶囊**同高**（22px）但只是个图标，所以是圆的。
+ * 它紧挨着胶囊 —— 间距交给 `.crumbs` 的 `gap`，这里不再自己加 margin，
+ * 否则以后调间距要在两处改。
+ */
+.crumbs__pull {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--dsw-alias-label-caption);
+  cursor: pointer;
+}
+
+.crumbs__pull:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* 探测 / 切换 / 拉取进行中（`busy`）：转圈 + 不可点 */
+.crumbs__pull:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+/* git 说的话：失败用错误色（要用户处理，一直留着），成功用中性色（回执，几秒后自己消失） */
+.crumbs__error,
+.crumbs__note {
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--dsw-alias-state-error-primary);
 }
+
+.crumbs__error { color: var(--dsw-alias-state-error-primary); }
+
+.crumbs__note { color: var(--dsw-alias-label-caption); }
 
 /* ══════════════════════════════════════════════════════════════════════════
    5. 侧栏：品牌 / 项目树 / 底栏

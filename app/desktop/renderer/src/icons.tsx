@@ -19,7 +19,7 @@
  */
 
 import {
-  ArrowLeft, ChevronDown, Clock, Coins, Copy, ExternalLink,
+  ArrowDownToLine, ArrowLeft, ChevronDown, Clock, Coins, Copy, ExternalLink,
   FileCode, FileImage, FileQuestionMark, FileText, FolderOpen, Gauge, GitBranch, ListTree,
   LoaderCircle, MessageSquare, PanelRightClose, PanelRightOpen, Plus,
   Repeat, Search, SendHorizontal, ShieldCheck, Sparkles, X,
@@ -60,6 +60,8 @@ export const IconTurns = icon(Repeat)
 export const IconGauge = icon(Gauge)
 /** git 分支：面包屑的分支段用。 */
 export const IconBranch = icon(GitBranch)
+/** 拉取最新（`git pull`）：面包屑分支段右边那个按钮 —— 一个往下落进横线的箭头。 */
+export const IconPull = icon(ArrowDownToLine)
 export const IconClose = icon(X)
 export const IconCopy = icon(Copy)
 export const IconSpinner = icon(LoaderCircle)
