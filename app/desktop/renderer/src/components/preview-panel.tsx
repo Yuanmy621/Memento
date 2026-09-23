@@ -1,20 +1,9 @@
 /**
- * 右侧预览面板：不离开界面就能看 agent 刚生成的东西。
+ * 右侧预览面板：不离开界面就能看 agent 刚生成的东西（报告 / 代码 / 文本 / 截图）。
  *
- * 这个面板是给 **SRC 场景**加的：挖洞时 agent 会不停产出报告（markdown）、
- * PoC 脚本（代码）、请求/响应抓包（文本）、截图（图片）。以前这些东西只能
- * 「用系统程序打开」，一开就是一整个外部程序，来回切窗口反而打断了思路。
- *
- * 渲染按类型分流，尽量用现成的成熟组件而不是自己写解析：
- *
- *   markdown → Streamdown（和对话正文同一套渲染，样式天然一致）
- *   code     → Streamdown + `@streamdown/code`（Shiki 高亮，语言由主进程按扩展名给）
- *   image    → data URL 的 `<img>`（CSP 是 `img-src 'self' data:`，所以图必须走 IPC 传回）
- *   text     → 等宽 `<pre>`（纯文本不需要任何解析）
- *   其它/超大 → 不硬撑，给一个「用系统程序打开」的出口
- *
- * 「读文件」这件事完全交给主进程（`IPC.previewRead`）：扩展名判断、体积上限、
- * 相对路径解析都在那边，渲染进程只按 `kind` 画。所以这里没有 fs、没有路径拼接。
+ * 渲染按类型分流：markdown 与 code 交给 `markdown.tsx` 那一层（code 由 `@streamdown/code`
+ * 做 Shiki 高亮），image 走 data URL 的 `<img>`（CSP 限制只能经 IPC 传回），text 用等宽
+ * `<pre>`。扩展名判断、体积上限与路径解析都在主进程（`IPC.previewRead`），这里只按 `kind` 画。
  *
  * @module Memento/desktop/renderer/components/preview-panel
  */
@@ -51,10 +40,8 @@ function humanSize(bytes: number | undefined): string {
 }
 
 /**
- * 把代码包成一段围栏代码块交给 Streamdown 高亮。
- *
- * 围栏长度要**比正文里最长的一串反引号还长**：PoC 脚本里出现 ``` 很常见，
- * 固定用三个反引号会被提前闭合，后面的代码就变成普通段落了。
+ * 把代码包成一段围栏代码块交给 Markdown 渲染层高亮。
+ * 围栏要长于正文里最长的一串反引号，否则 ``` 会被提前闭合，后面的代码变成普通段落。
  */
 function fenced(text: string, language: string): string {
   let longest = 0
@@ -102,7 +89,7 @@ export const PreviewPanel = memo(function PreviewPanel({
   const [loading, setLoading] = useState(false)
   /**
    * 读取代际：快速连点两个文件时，先发的那次可能后回来。
-   * 每次请求记一个号，回家时对不上号就直接丢掉（和切会话那边同一个套路）。
+   * 每次请求记一个号，回来时对不上号就丢掉。
    */
   const generation = useRef(0)
 
@@ -139,10 +126,7 @@ export const PreviewPanel = memo(function PreviewPanel({
   return (
     <aside className="preview" aria-label="预览面板">
       <header className="preview__head">
-        {/*
-          开着文件时给一个「返回列表」：不给的话只能收起再展开面板才能换文件，
-          而这个面板的用法恰恰是「看完一份报告马上翻下一份」。
-        */}
+        {/* 开着文件时给一个「返回列表」：否则只能收起再展开面板才能换文件。 */}
         {path !== null ? (
           <Button variant="quiet" size="xs" className="preview__btn" title="返回文件列表" onClick={() => { onSelect(null) }}>
             <IconBack size={14} />
@@ -179,7 +163,7 @@ export const PreviewPanel = memo(function PreviewPanel({
       {dir !== '' && <div className="preview__path mono" title={path ?? ''}>{dir}</div>}
 
       <div className="preview__body">
-        {/* ① 没选文件：列「这次会话碰过的文件」，点一下就看 */}
+        {/* 没选文件：列「这次会话碰过的文件」 */}
         {path === null && (
           recent.length === 0
             ? (
@@ -207,12 +191,12 @@ export const PreviewPanel = memo(function PreviewPanel({
             )
         )}
 
-        {/* ② 正在读 */}
+        {/* 正在读 */}
         {path !== null && loading && (
           <div className="preview__loading"><IconSpinner size={14} className="spin" /> 正在读取…</div>
         )}
 
-        {/* ③ 读失败 / 太大：给出口，不硬渲染 */}
+        {/* 读失败或太大：给出口，不硬渲染 */}
         {path !== null && !loading && payload !== null && !payload.ok && (
           <div className="preview__empty">
             <IconFileQuestion size={20} />
@@ -225,13 +209,12 @@ export const PreviewPanel = memo(function PreviewPanel({
           </div>
         )}
 
-        {/* ④ 正常渲染 */}
+        {/* 正常渲染 */}
         {path !== null && !loading && payload !== null && payload.ok && (
           <div className={`preview__content preview__content--${payload.kind}`}>
             {payload.kind === 'markdown' && <Markdown>{payload.text ?? ''}</Markdown>}
             {payload.kind === 'code' && <Markdown>{fenced(payload.text ?? '', payload.language ?? '')}</Markdown>}
-            {/* 纯文本 / 日志：用 Beautiful UI 的 CodeBlock（行号 + 文件名头 + 一键复制），
-                比光秃秃的 <pre> 多出「这是哪个文件、复制走」两件事 */}
+            {/* 纯文本 / 日志：用带行号、文件名头与一键复制的 `CodeBlock` */}
             {payload.kind === 'text' && (
               <CodeBlock
                 variant="Code"
@@ -268,10 +251,8 @@ export const PreviewPanel = memo(function PreviewPanel({
 })
 
 /**
- * 「最近文件」列表里按扩展名猜个图标。
- *
- * 这里**只画图标**，判断错了代价就是图标不好看 —— 真正的类型判断在主进程
- * （`previewTypeOf`），界面不重复实现一套规则，避免两处不一致。
+ * 「最近文件」列表里按扩展名猜个图标：判断错了只是图标不好看。
+ * 真正的类型判断在主进程（`previewTypeOf`），界面不重复实现一套规则。
  */
 function kindOfPath(path: string): PreviewPayload['kind'] {
   const dot = path.lastIndexOf('.')

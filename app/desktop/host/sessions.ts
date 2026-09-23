@@ -1,45 +1,10 @@
 /**
  * 从落盘的会话日志里读出「项目 / 会话」清单，供桌面端左侧栏展示。
  *
- * 数据来源就是会话持久化插件写的那份 JSONL（`<stateDir>/sessions/<项目>/<会话 id>/session.v3.jsonl`），
- * 不额外维护索引文件 —— 索引会和日志不同步，日志才是真相。
- *
- * ## 目录布局
- *
- * ```
- * .Memento/sessions/
- *   --Users-me-proj--/                  ← 项目目录名是 cwd 的转义形式（不可逆，所以真路径从日志头里读）
- *     Memento-20260918115410-jq637s/
- *       session.v3.jsonl                ← 第一行是 session 头，之后每行一个事件
- * ```
- *
- * ⚠️ **会话库是按项目分开的**：内核的 `stateDir` 默认是 `<cwd>/.Memento`，
- * 所以上面这个布局在每个项目里各有一份。只扫当前项目那一份的话，侧栏的
- * 「项目 → 会话」树里永远只有**一个**项目 —— 换到别的项目，上一个项目就消失了。
- * 因此列表会**同时扫「最近打开过的项目」各自的库**（{@link rootsOf}），
- * 项目清单才是真的清单。数据位置没有变，每个项目仍然是自己那份库。
- *
- * ## 每个会话摘要从日志里取什么
- *
- * | 字段 | 来源 |
- * | --- | --- |
- * | `id` / `createdAt` / `cwd` | 第一行 `{"type":"session", id, createdAt, cwd}` |
- * | `title` | 优先最后一条 `session/title` 事件；否则第一条 `source.kind === 'user'` 的 `user/message` |
- * | `turns` | `turn/end` 事件条数 |
- * | `updatedAt` | 文件 mtime 与最后一条事件 `time` 取大 |
- *
- * `session/title` 由可选的 `@deepseek-ai/dsh-session-title` 插件写入；本项目暂时没挂它，
- * 但这里已经优先读它 —— 以后挂上（或用 DSH 自己的 CLI 建过会话）就能自动显示正式标题。
- *
- * ## 有界的读法
- *
- * 列表是**按需**跑的，不常驻。为了不因为某个巨大会话卡住界面：
- *   - 每个文件只在 `MAX_LOG_BYTES` 以内整体读；更大的文件只读头部 `HEAD_BYTES`
- *     （标题一定在开头附近），此时 `turns` 会是「头部内数到的」下界；
- *   - 只解析**每个项目里最新的一个会话**来确定该项目的真实 cwd（项目目录名不可逆）；
- *   - {@link listWorkspaceSessions} 只为**当前项目**展开会话明细（最多 `limit` 条）；
- *     其他项目由 {@link listProjectSessions} 在侧栏里被点开时才读。于是「项目很多」
- *     只让首屏多付「每个项目读一个头」的代价，而不是把所有会话都读一遍。
+ * 日志是唯一真相（`<stateDir>/sessions/<项目>/<会话 id>/session.v3.jsonl`），不维护索引文件；项目目录名是 cwd 的
+ * 转义形式且不可逆，真实路径从最新会话的日志头 `cwd` 读。会话库按项目分开（`stateDir` 默认 `<cwd>/.Memento`），
+ * 所以还要扫「最近打开过的项目」各自的库；超过 `MAX_LOG_BYTES` 的文件只读头部 `HEAD_BYTES`，此时 `turns` 是下界。
+ * 摘要取自日志：`title` 用最后一条 `session/title`（否则第一条用户消息）、`turns` 数 `turn/end`、`updatedAt` 取 mtime 与最后事件时间的大者。
  *
  * @module Memento/desktop/host/sessions
  */
@@ -66,7 +31,7 @@ const DEFAULT_MAX_EXTRA_PROJECTS = 8
 export interface SessionSummary {
   /** 会话 id，同时也是恢复时传给 `--resume` 的值。 */
   readonly id: string
-  /** 展示用标题（可能为空串：还没有用户消息的会话）。 */
+  /** 展示用标题：`session/title` 由可选的 `@deepseek-ai/dsh-session-title` 插件写入，没有则取第一条用户消息；可能为空串。 */
   readonly title: string
   /** 会话创建时间（毫秒）。 */
   readonly createdAt: number
@@ -106,7 +71,7 @@ export interface WorkspaceListing {
   readonly sessions: readonly SessionSummary[]
 }
 
-/** 会话头（JSONL 第一行）里我们关心的字段。 */
+/** 会话头（JSONL 第一行）里用到的字段。 */
 interface SessionHeader {
   readonly id: string
   readonly createdAt: number
@@ -133,10 +98,7 @@ function textOf(content: unknown): string {
 }
 
 /**
- * 读一个会话日志。大文件只读头部，避免因为个别会话过大拖慢列表。
- * @param path - JSONL 路径。
- * @param size - 文件字节数。
- * @returns 文件内容（可能被截断到 HEAD_BYTES）。
+ * 读一个会话日志；大文件只读头部，避免因为个别会话过大拖慢列表，返回内容可能被截断到 `HEAD_BYTES`。
  */
 async function readLog(path: string, size: number): Promise<string> {
   if (size <= MAX_LOG_BYTES) return readFile(path, 'utf8')
@@ -151,11 +113,8 @@ async function readLog(path: string, size: number): Promise<string> {
 }
 
 /**
- * 解析一份会话日志。
- * @param id - 目录名给出的会话 id（作为日志缺头时的兜底）。
- * @param text - 日志文本。
- * @param mtimeMs - 文件 mtime。
- * @returns 摘要；日志头缺失或损坏时返回 `undefined`（坏文件跳过，不影响其他会话）。
+ * 解析一份会话日志；`id` 是目录名给出的会话 id，作为日志缺头时的兜底，
+ * 日志头缺失或损坏时返回 `undefined`（坏文件跳过，不影响其他会话）。
  */
 function summarize(id: string, text: string, mtimeMs: number): SessionSummary | undefined {
   let header: SessionHeader | undefined
@@ -258,9 +217,8 @@ interface ProjectScan {
 }
 
 /**
- * 扫一个项目目录，并确定它的真实 cwd。
- * @param projectDir - `<stateDir>/sessions` 下的一个项目目录。
- * @returns 扫描结果；目录里没有可用会话时返回 `undefined`。
+ * 扫一个项目目录（`<stateDir>/sessions` 下的一个），并确定它的真实 cwd；
+ * 目录里没有可用会话时返回 `undefined`。
  */
 async function scanProject(projectDir: string): Promise<ProjectScan | undefined> {
   const dirs = await sessionDirs(projectDir)
@@ -280,10 +238,8 @@ async function scanProject(projectDir: string): Promise<ProjectScan | undefined>
 }
 
 /**
- * 把一批会话目录读成摘要（只读最前面的 `limit` 个）。
- * @param dirs - 某项目下的会话目录（按 mtime 倒序）。
- * @param limit - 最多读多少个。
- * @param currentSessionId - 当前会话 id；命中的那条标记为 `current`。
+ * 把一批会话目录读成摘要：只读最前面的 `limit` 个（`dirs` 按 mtime 倒序），
+ * `currentSessionId` 命中的那条标记为 `current`。
  */
 async function summarizeDirs(
   dirs: ProjectScan['dirs'],
@@ -304,16 +260,11 @@ async function summarizeDirs(
   return summaries
 }
 /**
- * 定位所有项目：每层**会话库根**下扫一遍，每个项目只读「最新那个会话」的头，拿到真实 cwd。
+ * 定位所有项目：每个会话库根下扫一遍，每个项目只读「最新那个会话」的头，拿到真实 cwd。
  *
- * 项目目录名是 cwd 的转义形式且**不可逆**，所以真实路径只能从日志头里读，
- * 这里刻意不去猜转义规则。
- *
- * 同一个项目可能在多个根里都有日志（例如它既被登记为「最近打开」、又恰好把
- * 日志写在了当前项目的库里），按 cwd 去重、**先到先得** —— 根的顺序是
- * 「当前项目优先」，所以当前库里的那份说了算。
- * @param roots - 要扫描的会话库根（`<stateDir>/sessions`），按优先级排列。
- * @returns 每个项目的 cwd 与它的会话目录（按 mtime 倒序）。
+ * 项目目录名是 cwd 的转义形式且不可逆，真实路径只能从日志头里读，不猜转义规则。
+ * 同一个项目可能在多个根里都有日志，按 cwd 去重、先到先得 —— `roots` 按优先级排列，
+ * 当前项目的库排第一，所以当前库里的那份说了算。
  */
 async function locateProjects(roots: readonly string[]): Promise<ProjectScan[]> {
   const found: ProjectScan[] = []
@@ -347,8 +298,7 @@ function projectSummary(scan: ProjectScan, currentPath: string, sessionCount = s
  *
  * 与内核的约定一致：`stateDir` 默认是 `<cwd>/.Memento`，会话落在它的 `sessions/` 下。
  * 所以「每个项目一份会话库」—— 光扫当前项目的库，侧栏就永远只看得见一个项目。
- * @param projectPath - 项目根目录。
- * @returns 该项目的会话库根（可能并不存在）。
+ * 返回的目录可能并不存在。
  */
 export function sessionsRootOf(projectPath: string): string {
   return join(projectPath, '.Memento', 'sessions')
@@ -359,10 +309,7 @@ export function sessionsRootOf(projectPath: string): string {
  *
  * 顺序即优先级：当前项目的库排第一（同一个项目在两处都有日志时以它为准，
  * 见 {@link locateProjects} 的去重规则）。额外根的数量有上限 ——
- * 登记文件被写坏、或用户打开过几十个项目时，首屏不该跟着变慢。
- * @param root - 当前项目的会话库根。
- * @param extraProjectPaths - 最近打开过的其他项目路径。
- * @returns 去重后的会话库根列表。
+ * 登记文件被写坏、或用户打开过几十个项目时，首屏不该跟着变慢；返回值已按路径去重。
  */
 function rootsOf(root: string, extraProjectPaths?: readonly string[]): string[] {
   const roots = [root]
@@ -379,7 +326,7 @@ function rootsOf(root: string, extraProjectPaths?: readonly string[]): string[] 
 
 /**
  * 当前会话可能还没落盘（新建后还没跑过回合），那样树里就标不出「当前」。
- * 补一条合成记录：它只在界面上占一个位置，等第一次写入后自然被真记录取代。
+ * 补一条合成记录：它只在界面上占一个位置，等第一次写入后由真记录接管。
  */
 function withCurrentSession(sessions: SessionSummary[], currentSessionId: string): SessionSummary[] {
   if (sessions.some((session) => session.id === currentSessionId)) return sessions
@@ -396,19 +343,10 @@ function withCurrentSession(sessions: SessionSummary[], currentSessionId: string
  * 只读当前项目的会话：项目清单随首屏一起到，其他项目的明细等被点开时再读
  * （{@link listProjectSessions}），所以项目再多也不会拖慢首屏。
  *
- * ⚠️ 项目清单**不止来自当前项目的会话库**：内核的 `stateDir` 默认是
- * `<cwd>/.Memento`，每个项目一份库，只扫一个根的话侧栏永远只有一个项目。
- * 所以还要扫「最近打开过的项目」各自的库（{@link rootsOf}）——
- * 数据一个字节都不动，只是多读几个根。
- *
- * @param options - 查询参数。
- * @param options.root - 当前项目的会话库根（`<stateDir>/sessions`）。
- * @param options.cwd - 当前 agent 的工作目录。
- * @param options.currentSessionId - 当前会话 id（用来高亮 / 补合成记录）。
- * @param options.extraProjectPaths - 最近打开过的其他项目路径（各自的库也会被扫）。
- * @param options.sessionsPerProject - 当前项目最多列几个会话。
- * @param options.maxProjects - 最多返回几个项目（当前项目一定在内）。
- * @returns 项目清单与当前项目的会话。目录还不存在时是「只有当前项目、没有会话」。
+ * 项目清单不止来自当前项目的会话库：`stateDir` 默认 `<cwd>/.Memento`，每个项目一份库，
+ * 只扫一个根的话侧栏永远只有一个项目，所以还要扫「最近打开过的项目」各自的库（{@link rootsOf}）。
+ * `currentSessionId` 用来高亮并补「还没落盘」的合成记录，返回的项目里当前项目一定在内；
+ * 目录还不存在时结果是「只有当前项目、没有会话」。
  */
 export async function listWorkspaceSessions(options: {
   readonly root: string
@@ -464,15 +402,10 @@ export async function listWorkspaceSessions(options: {
 /**
  * 读**某一个项目**的会话明细（侧栏里折叠的项目被点开时调用）。
  *
- * @param options - 查询参数。
- * @param options.root - 当前项目的会话库根（`<stateDir>/sessions`）。
- * @param options.path - 目标项目根目录（`ProjectSummary.path`）。
- * @param options.currentSessionId - 当前会话 id；命中的那条标记为 `current`。
- * @param options.currentCwd - agent 当前的工作目录；与 `path` 相同才补「还没落盘」的当前会话。
- * @param options.extraProjectPaths - 最近打开过的其他项目路径（各自的库也会被扫）——
- *   项目清单可能来自别的库，这里必须扫同样的根，否则点开会是「读不到」。
- * @param options.sessionsPerProject - 最多列几个会话。
- * @returns 项目摘要 + 会话明细；找不到该项目（目录被删等）时返回 `undefined`。
+ * `path` 是目标的项目根目录（`ProjectSummary.path`）；项目清单可能来自别的库，
+ * 这里要扫与 {@link listWorkspaceSessions} 相同的根，否则点开会是「读不到」。
+ * `currentSessionId` 命中的那条标记为 `current`，且只有 `currentCwd` 与 `path` 相同
+ * 才补「还没落盘」的当前会话；找不到该项目（目录被删等）时返回 `undefined`。
  */
 export async function listProjectSessions(options: {
   readonly root: string

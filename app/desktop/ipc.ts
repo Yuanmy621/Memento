@@ -1,15 +1,10 @@
 /**
- * Electron 主进程 ⇄ 渲染进程之间的 IPC 频道名与状态形状。
+ * Electron 主进程与渲染进程之间的 IPC 频道名与状态形状。
  *
- * 这个文件只被 **主进程**（`main.ts`）引用。渲染进程拿不到它 ——
- * 渲染进程与主进程之间的唯一通道是 `preload.cjs`（由 `preload.ts` 构建而来）
- * 通过 `contextBridge` 暴露的 `window.Memento`，那是刻意设计的单向收口：
- *
- *   渲染进程（网页）── window.Memento ──▶ preload ──IPC──▶ 主进程 ──▶ agent host
- *
- * ⚠️ 频道名同时出现在三处：本文件、`preload.ts`（构建成**沙箱 preload**，
- * 不能 require 本地文件，只能自带字面量）、以及渲染进程调用的方法名。
- * 改名字要一起改；漏改的表现是渲染进程 invoke 报 "No handler registered"。
+ * 本文件只被主进程（`main.ts`）引用；渲染进程唯一的通道是 `preload.cjs`（由 `preload.ts`
+ * 构建而来）经 `contextBridge` 暴露的 `window.Memento`。
+ * 频道名同时存在于本文件、`preload.ts`（沙箱 preload 不能 require 本地文件，只能自带字面量）
+ * 与渲染进程调用的方法名，改名要三处同步；漏改时 invoke 报 "No handler registered"。
  *
  * @module Memento/desktop/ipc
  */
@@ -54,25 +49,22 @@ export const IPC = Object.freeze({
   settingsWrite: 'Memento:settings-write',
   /** 渲染进程 → 主进程：Electron / Node / 应用版本信息。 */
   appInfo: 'Memento:app-info',
-  /** 渲染进程 → 主进程：读一个文件用于**右侧预览面板**（有类型判断与体积上限）。 */
+  /** 渲染进程 → 主进程：读一个文件用于右侧预览面板（有类型判断与体积上限）。 */
   previewRead: 'Memento:preview-read',
-  /** 渲染进程 → 主进程：读**当前工作目录**的 git 情况（面包屑的分支段）。 */
+  /** 渲染进程 → 主进程：读当前工作目录的 git 情况（面包屑的分支段）。 */
   gitStatus: 'Memento:git-status',
   /** 渲染进程 → 主进程：切分支（白名单 = 上一次 `git-status` 列出的分支）。 */
   gitSwitch: 'Memento:git-switch',
-  /** 渲染进程 → 主进程：拉取**当前分支**最新（`git pull --ff-only`）。 */
+  /** 渲染进程 → 主进程：拉取当前分支最新（`git pull --ff-only`）。 */
   gitPull: 'Memento:git-pull',
 })
 
 /**
- * 主进程**自己**产生（不是从 host 转发）的事件，与 `HostEvent` 走同一条通道。
+ * 主进程自己产生（不是从 host 转发）的事件，与 `HostEvent` 走同一条通道：重启与
+ * host 崩溃这两个事件主进程自己就能发，不需要 host 子进程参与。
  *
- * 单独一个类型而不是塞进 `HostEvent`：`HostEvent` 描述的是 host 子进程的协议，
- * 这两个事件主进程自己就能发（重启时、host 崩了时），不需要 host 参与。
- *
- * ⚠️ 渲染进程那边有一份**更大的**同名词条类型（`renderer/src/use-agent.ts` 的
- * `ShellEvent`）：它还要收下自己内部的动作（`switch-timeout`）。两边故意不同 ——
- * 这里是「主进程会发什么」的契约，那里是「界面要处理什么」的清单。
+ * 渲染进程那边有一份更大的同名词条类型（`renderer/src/use-agent.ts` 的 `ShellEvent`），
+ * 它还要收下界面内部的动作（`switch-timeout`）：这里是主进程发什么的契约，那里是界面处理什么的清单。
  */
 export type ShellEvent =
   /** 即将用新配置重启内核：界面保留当前内容并显示「正在切换」。 */
@@ -83,9 +75,8 @@ export type ShellEvent =
 /**
  * 走 `hostEvent` 通道的全部事件（host 的 + 主进程自己的）。
  *
- * 每个帧都带 `hostId` = **它属于哪个会话视图**（`sessionKey()`，见 `host/protocol.ts`）。
- * 为什么必须带：主进程现在可以同时持有多个 host（后台会话继续跑），
- * 渲染进程必须能把这些事件分别归到各自的会话上，否则后台会话的正文会串进前台。
+ * 每帧带 `hostId` = 它属于哪个会话视图（`sessionKey()`，见 `host/protocol.ts`）：
+ * 主进程可以同时持有多个 host，缺了它后台会话的正文会串进前台。
  */
 export type BridgeEvent = (HostEvent | ShellEvent) & { readonly hostId?: string }
 
@@ -103,9 +94,8 @@ export interface ShellState {
 /**
  * 「切到某个会话」的请求（`Memento:attach`）。
  *
- * 为什么需要它，而不是一个「重启」：用户在一个会话跑着任务时切走，
- * 那个任务**不该被停掉**。所以主进程按会话持有 host，切走只是换前台；
- * 切回来时能挂回还活着的那个（后台进度一点不丢），挂不上才重启 + 回放历史。
+ * 用户带着正在跑的任务切走时那一轮不该被停掉，所以主进程按会话持有 host：切走只换前台，
+ * 切回来优先挂回还活着的那个（后台进度不丢），挂不上才重启并回放历史。
  */
 export interface AttachRequest {
   /** 目标项目根目录；省略表示沿用当前工作目录。 */
@@ -113,17 +103,13 @@ export interface AttachRequest {
   /** 要恢复的会话 id；省略表示在这个项目里开一个新会话。 */
   readonly resume?: string
   /**
-   * 渲染进程是否已经持有这个会话的视图。
-   *   - `true`：主进程还留着它的 host 就直接挂回去，**不重启**；
-   *   - `false`：强制重启（设置面板的「重启内核」、界面重载后重新接管）。
+   * 渲染进程是否已经持有这个会话的视图：`true` 且主进程还留着它的 host 时直接挂回、不重启，
+   * `false` 强制重启（设置面板的「重启内核」、界面重载后重新接管）。
    */
   readonly reuse: boolean
   /**
-   * 「我正在离开的这个会话有回合在跑」。
-   *
-   * 渲染进程的 `busy` 是乐观状态（点发送就先置位），而主进程要等 `prompt`
-   * 请求到达才知道。少了这个提示，用户「刚发出就切走」时那一轮可能被当成空闲收掉，
-   * 于是白跑 —— 这正是本功能要避免的事。
+   * 「正在离开的这个会话有回合在跑」：渲染进程的 `busy` 是乐观状态（点发送就先置位），
+   * 主进程要等 `prompt` 请求到达才知道；少了它，「刚发出就切走」的那一轮会被当成空闲收掉。
    */
   readonly activeBusy?: boolean
 }
@@ -132,7 +118,7 @@ export interface AttachRequest {
 export interface AttachResult {
   /** `true` = 直接挂回了活着的 host（视图本来就是最新的，不需要历史回放）。 */
   readonly attached: boolean
-  /** 目标会话视图键（与渲染进程用 `sessionKey()` 算出来的必须一致）。 */
+  /** 目标会话视图键（与渲染进程用 `sessionKey()` 算出的值一致）。 */
   readonly key: string
 }
 
@@ -179,9 +165,8 @@ export interface PreviewPayload {
 /**
  * 当前工作目录的 git 情况（面包屑的分支段要的全部信息）。
  *
- * 一次探测把所有要的东西都拿回来（见 `main.ts` 的 `readGit`）：分支名、可选分支、
- * 脏文件数。**刻意不返回 diff / 文件列表** —— 界面只用得着「在哪个分支」，
- * 拉更多东西只会让每次切会话变慢。
+ * 一次探测拿回分支名、可选分支与脏文件数，不含 diff / 文件列表：界面只用得着
+ * 「在哪个分支」，多拉只会让每次切会话变慢（见 `main.ts` 的 `readGit`）。
  */
 export interface GitStatus {
   /** 是不是 git 仓库（`rev-parse --is-inside-work-tree`）。 */
@@ -196,9 +181,9 @@ export interface GitStatus {
   readonly local: readonly string[]
   /** 远程分支（`refs/remotes`，已滤掉 `origin/HEAD` 这类符号引用）。 */
   readonly remote: readonly string[]
-  /** 工作区里**已跟踪文件**的改动数（`status --porcelain -uno` 的行数）。 */
+  /** 工作区里已跟踪文件的改动数（`status --porcelain -uno` 的行数）。 */
   readonly dirty: number
-  /** 探测失败的原因（没装 git 之类）；**不是仓库不算失败**。 */
+  /** 探测失败的原因（没装 git 之类）；不是仓库不算失败。 */
   readonly error: string | null
 }
 
@@ -212,12 +197,8 @@ export interface GitSwitchResult {
 }
 
 /**
- * `Memento:git-pull` 的结果。
- *
- * 与 {@link GitSwitchResult} 只差一个 `message`。为什么要多这一个字段：切分支是
- * **看得见**的（界面上的分支名自己就变了，不用再说一句），而拉取**必须说一句** ——
- * 「Already up to date.」和「1 file changed」是完全不同的两件事，
- * 界面得把 git 的原话摆出来。
+ * `Memento:git-pull` 的结果，与 {@link GitSwitchResult} 只差一个 `message`：切分支的结果从分支名
+ * 自己就能看出，拉取的结论则要由界面把 git 的原话摆出来 —— 「Already up to date.」与「1 file changed」是两件事。
  */
 export interface GitPullResult {
   readonly ok: boolean

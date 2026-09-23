@@ -22,3 +22,9 @@ out/
 # 例外：这是 `/ip-as-logo` 命令（`.agents/commands/ip-as-logo.md`）明确引用的
 # 可复现工具链 —— 它不进构建，但少了它那条命令就跑不起来，所以留在仓库里。
 !/.tmp/ip-as-logo/
+
+# 本地安装的第三方技能：软链到仓库外的稳定路径（如 ~/Developer/video-use）。
+# 提交出去会变成一个指向**本机绝对路径**的坏软链，所以只留本地；
+# 换机器重装就是重建这个软链（`ln -sfn <路径> .agents/skills/<名字>`）。
+# 与之相对，仓库自带的技能（report / yuanmy-* 等）是 vendored 进来的，照常入库。
+/.agents/skills/video-use

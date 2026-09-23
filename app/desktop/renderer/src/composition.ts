@@ -1,46 +1,19 @@
 /**
- * 输入法（IME）组字守卫。
+ * 输入法（IME）组字守卫：组字中的回车是「确认候选词」，不是「提交」。
  *
- * ## 要解决的问题
- *
- * 中文 / 日文 / 韩文输入法在「组字中」时，回车是**确认候选词**，不是「提交」。
- * 但浏览器的 keydown 照样会派发，于是下面这种最常见的写法会在用户打词时
- * 把半成品当成消息发出去：
- *
- * ```tsx
- * if (event.key === 'Enter' && !event.shiftKey) submit()   // ❌ 组字中也会触发
- * ```
- *
- * ## 三个信号，缺一不可
- *
- * 1. **`nativeEvent.isComposing`** —— 最可靠的信号：事件自己带着「我发生在
- *    compositionstart 与 compositionend 之间」。注意 React 的合成事件**没有**
- *    这个属性（`SyntheticEvent` 上不存在 `isComposing`），必须从 `nativeEvent` 取。
- * 2. **`keyCode === 229`** —— Chromium 在 macOS 上有个已知边界情况：确认组字的
- *    那次回车，`compositionend` **先于** `keydown` 派发，等我们的处理函数运行时
- *    `isComposing` 已经是 `false`，只剩 `keyCode` 还是 229（「这次按键被输入法
- *    吃掉了」的历史哨兵值）。只查 `isComposing` 在 macOS 上会漏。
- * 3. **`compositionend` 之后紧邻的那一次按键** —— 兜住信号 2 之外的同任务顺序差异。
- *
- * ⚠️ 这里**不**用一个「组字中」的持久标志位做判断。真实教训是：某些输入法 /
- * 场景下 `compositionend` 可能不触发，标志位就永久卡在 `true`，表现是**回车彻底
- * 发不出去**。所以第 3 条用一个只活一个宏任务的临时标记（定时器一定会清掉），
- * 永远不会残留。
- *
- * ## 测试
- *
- * 判定逻辑抽成了纯函数 {@link isImeKeyEvent}，三个信号可以单独推演：
- * 组字中的回车要拦、普通回车**不能**拦（拦死了就发不出消息）。
+ * 判定用三个信号：`nativeEvent.isComposing`、`keyCode === 229`（macOS Chromium 上
+ * `compositionend` 先于 `keydown`，只剩这个哨兵值），以及 `compositionend` 后紧邻的一次按键。
+ * 组字标记只活一个宏任务 —— 某些输入法不触发 `compositionend`，持久标志位会卡死回车。
  *
  * @module Memento/desktop/renderer/composition
  */
 
 import { useCallback, useMemo, useRef } from 'react'
 
-/** 「这次按键已被输入法处理」的历史哨兵值，Chromium 仍会在组字确认时带上。 */
+/** 「这次按键已被输入法处理」的哨兵值，Chromium 在组字确认时仍会带上。 */
 export const IME_PROCESS_KEYCODE = 229
 
-/** 判定所需的最小事件形状（方便单测，不必构造真实 KeyboardEvent）。 */
+/** 判定所需的最小事件形状，便于单测而不构造真实 `KeyboardEvent`。 */
 export interface ImeKeyShape {
   readonly isComposing?: boolean
   readonly keyCode?: number
@@ -48,29 +21,20 @@ export interface ImeKeyShape {
 
 /**
  * 这次按键是否应当被输入法守卫拦下（不当作「发送 / 中断」处理）。
- *
- * 纯函数，无副作用，便于单测。
- * @param native - 原生键盘事件（`event.nativeEvent`）。
- * @param justEndedComposition - 刚刚（同一个宏任务内）结束过组字。
- * @returns `true` 表示调用方应当完全忽略这次按键。
+ * `native` 是原生键盘事件；`justEndedComposition` 指刚刚在同一宏任务内结束过组字，返回 `true` 时忽略按键。
  */
 export function isImeKeyEvent(native: ImeKeyShape, justEndedComposition: boolean): boolean {
-  // ① 事件自带的信息最权威。
+  // 事件自带的信息最权威：它发生在 compositionstart 与 compositionend 之间。
   if (native.isComposing === true) return true
-  // ② macOS Chromium：compositionend 先于 keydown，只留下 229。
+  // macOS Chromium：compositionend 先于 keydown，只留下 229 这个哨兵值。
   if (native.keyCode === IME_PROCESS_KEYCODE) return true
-  // ③ 兜底：组字刚结束的那一下。
+  // 兜底：组字刚结束的那一下。
   return justEndedComposition
 }
 
 /** {@link useImeGuard} 的返回值。 */
 export interface ImeGuard {
-  /**
-   * 这次按键该不该被忽略。在 `onKeyDown` 里**第一句**就该问它。
-   *
-   * 参数是**原生**键盘事件：React 的合成事件上取 `event.nativeEvent`，
-   * ProseMirror/Tiptap 的 `handleKeyDown` 拿到的本来就是原生的。
-   */
+  /** 这次按键该不该被忽略；`onKeyDown` 第一句就问它（参数是原生事件，React 取 `event.nativeEvent`）。 */
   readonly isImeKeyNative: (event: ImeKeyShape) => boolean
   /** 要展开到输入元素上的组字事件监听。 */
   readonly compositionProps: {
@@ -80,28 +44,12 @@ export interface ImeGuard {
 }
 
 /**
- * 给输入元素加一层输入法守卫。
- *
- * 用法（textarea —— 把组字监听挂在元素上）：
- * ```tsx
- * const ime = useImeGuard()
- * <textarea
- *   {...ime.compositionProps}
- *   onKeyDown={(event) => {
- *     if (ime.isImeKeyNative(event.nativeEvent)) return   // ← 第一句
- *     if (event.key === 'Enter' && !event.shiftKey) submit()
- *   }}
- * />
- * ```
- *
- * 富文本输入框（Tiptap）的键盘回调在 ProseMirror 里，拿不到 React 事件，
- * 但组字事件**会冒泡**：把 `compositionProps` 挂到编辑器的外层容器（`.composer__box`）
- * 就行，判定照旧用 `isImeKeyNative(event)`。
- *
- * @returns 判定函数与组字事件监听。
+ * 给输入元素加一层输入法守卫，返回判定函数与组字事件监听。
+ * textarea 把 `compositionProps` 展开到元素上；富文本输入框的键盘回调在 ProseMirror 里拿不到
+ * React 事件，但组字事件会冒泡，挂到外层容器（`.composer__box`）即可，判定照旧用 `isImeKeyNative`。
  */
 export function useImeGuard(): ImeGuard {
-  /** 组字刚刚结束的临时标记；只活一个宏任务，绝不会残留。 */
+  /** 组字刚刚结束的临时标记：只活一个宏任务，不会残留。 */
   const justEndedRef = useRef(false)
   /** 定时器句柄，避免上一次的清理把这一次的标记提前抹掉。 */
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -116,7 +64,7 @@ export function useImeGuard(): ImeGuard {
       justEndedRef.current = false
     },
     onCompositionEnd: () => {
-      // 见模块注释第 3 条：不做持久标志位，只让它在当前任务内有效。
+      // 不做持久标志位：只让标记在当前任务内有效，避免输入法不触发 compositionend 时卡死。
       justEndedRef.current = true
       if (timerRef.current !== null) clearTimeout(timerRef.current)
       timerRef.current = setTimeout(() => {

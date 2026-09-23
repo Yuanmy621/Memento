@@ -1,40 +1,8 @@
 /**
- * MCP 服务器的**配置文件**层：让「挂哪些服务器」可以不改代码、不改环境变量地改。
+ * MCP 服务器的配置文件层：让「挂哪些服务器」可以不改代码、不改环境变量地改。
  *
- * ## 三种来源，一份配置
- *
- * | 来源 | 位置 | 说明 |
- * | --- | --- | --- |
- * | 内置 | `app/cli/kernel.ts` 的 `mcpSpecs()` | 仓库自带的（补天） |
- * | 项目目录 | `<cwd>/.Memento/mcp/<名字>.{ts,js}` | 丢个文件进去就是一个 server |
- * | **配置文件** | `<cwd>/.Memento/mcp.json` | 本模块管的：显式开关（`enabled: true` 才挂）+ 可用内联定义覆盖 |
- *
- * 优先级：配置文件 > 项目目录 > 内置。`$Memento_MCP`（冒号分隔的名字）仍然有效，
- * 它是「临时开一个」的快捷方式；配置里显式 `enabled: true` 才是持久开关。
- *
- * ## 配置文件长什么样
- *
- * ```json
- * {
- *   "servers": [
- *     { "name": "butian", "enabled": true },
- *     { "name": "my-thing", "enabled": false },
- *     {
- *       "name": "remote",
- *       "enabled": true,
- *       "transport": "streamable-http",
- *       "url": "http://127.0.0.1:3000/mcp",
- *       "headers": { "Authorization": "Bearer …" }
- *     }
- *   ]
- * }
- * ```
- *
- * 只写 `{ "name": "butian", "enabled": true }` 就够 —— 其余字段从内置/项目目录的
- * 定义里继承，所以开关一个服务器不用抄一遍启动参数。
- *
- * ⚠️ 写坏了（JSON 语法错）不能把内核搞崩：{@link readMcpConfig} 只记录错误并返回空表，
- * 由调用方决定要不要提示。设置界面会把这个错误显示出来。
+ * 来源优先级为配置文件（`<cwd>/.Memento/mcp.json`）> 项目目录 > 内置，`$Memento_MCP`
+ * 是临时开关。JSON 写坏不会让内核启动失败：`readMcpConfig()` 只记录错误并返回空表。
  *
  * @module Memento/cli/mcp-config
  */
@@ -46,7 +14,7 @@ import { join } from 'node:path'
 export interface McpConfigEntry {
   /** 服务器名字（也是工具名里的命名空间）。 */
   readonly name: string
-  /** 是否挂载。必须显式写 `true`；缺省/漏写一律视为不挂载。 */
+  /** 是否挂载；只有显式写 `true` 才挂载，缺省或漏写一律视为不挂载。 */
   readonly enabled: boolean
   /** 传输方式；缺省从别的来源继承。 */
   readonly transport?: 'stdio' | 'streamable-http'
@@ -98,11 +66,7 @@ function stringDict(value: unknown): Record<string, string> | undefined {
 }
 
 /**
- * 读 MCP 配置。
- *
- * 坏文件**不抛异常**：内核启动不该因为一个手写坏的 JSON 就失败。
- * @param cwd - agent 的工作目录。
- * @returns 配置（含路径、是否存在、解析错误）。
+ * 读 MCP 配置，坏文件不抛异常：内核启动不因一个手写坏的 JSON 而失败。
  */
 export function readMcpConfig(cwd: string): McpConfig {
   const path = mcpConfigPath(cwd)

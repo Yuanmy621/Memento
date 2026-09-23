@@ -1,34 +1,9 @@
 /**
- * 输入框里的 **chip**：一个不可编辑、整体删除的内联原子节点。
+ * 输入框里的 chip：一个不可编辑、整体删除的内联原子节点。
  *
- * ## 它长什么样、为什么是 atom
- *
- * 用户在输入框里用 `/` `@` `#` 选中的东西，不再是「插入一段文本」，而是插入一个
- * **chip**：
- *
- * ```
- * [用 /report 写稿]  →  ┌─────────┐
- *                       │ /report │  ← 带底色、整体选中、退格一次删掉
- *                       └─────────┘
- * ```
- *
- * `atom: true` + 不声明 `content` 是关键：ProseMirror 会因此把它整个当作一个字符
- * （`contenteditable="false"`，见 prosemirror-view 的 `NodeViewDesc.create`），
- * 光标进不去、退格删掉整个节点、方向键一次跨过去。
- *
- * ## 显示的文字 ≠ 落库的文字
- *
- * chip 上显示的是 `label`（短、能一眼认出是哪条命令/哪个文件），写进会话记录的
- * 是 `text`（完整语义，例如工具 chip 是 `用 mcp__butian__butian_rank 工具：`）。
- * 两者都在插入时由菜单决定，见 {@link ../mention-menu}。序列化规则见
- * {@link ./doc-text}。
- *
- * ## 为什么不用官方 `@tiptap/extension-mention`
- *
- * 官方的 mention 节点把「显示的文字」和「落库的文字」绑在一起（`renderLabel` /
- * `renderText`），而我们需要四种类型（命令/工具/技能/文件）各有各的样式、各有一份
- * 不同的落库文本；三个触发符还共用同一个节点（官方做法是三个 mention 实例，节点名
- * 会撞车）。所以这里自己定义节点，样式靠 class 分：`chip--command` 等。
+ * `atom: true` 且不声明 `content`，于是它被当作一个字符：光标进不去、退格删掉整个节点、
+ * 方向键一次跨过去。chip 上显示 `label`，写进会话记录的是 `text`；两者在插入时由菜单
+ * 决定（见 `mention-menu.tsx`），序列化见 `doc-text.ts`。
  *
  * @module Memento/desktop/renderer/src/components/editor/chip
  */
@@ -54,9 +29,6 @@ export interface ChipAttrs {
 
 /**
  * 造一份可以喂给 `insertContent` 的 chip 内容。
- *
- * @param attrs - chip 属性。
- * @returns Tiptap 的 JSONContent。
  */
 export function chipJSON(attrs: ChipAttrs): JSONContent {
   return { type: Chip.name, attrs: { kind: attrs.kind, label: attrs.label, text: attrs.text } }
@@ -64,9 +36,7 @@ export function chipJSON(attrs: ChipAttrs): JSONContent {
 
 /**
  * chip 节点本体。
- *
- * 属性都带 `parseHTML`：粘贴一段含 chip 的 HTML 回来时（同一个窗口里复制粘贴、
- * 或者以后做「引用历史消息」）能原样还原，不会退化成光秃秃的文字。
+ * 属性都带 `parseHTML`：粘贴含 chip 的 HTML 回来时能原样还原，不退化成纯文字。
  */
 export const Chip = Node.create({
   name: 'chip',
@@ -99,9 +69,9 @@ export const Chip = Node.create({
 
   renderHTML({ node }) {
     const kind = String(node.attrs.kind ?? 'file')
-    // ⚠️ 不要 `mergeAttributes(HTMLAttributes)`：Tiptap 会把节点属性原样摊成 DOM 属性，
-    // 于是页面上出现 `kind="command" label="/report"` 这种非标准属性（看着像坏了）。
-    // chip 只需要下面这几个：`data-*` 供解析/样式/排查，class 决定长相。
+    // 不用 `mergeAttributes(HTMLAttributes)`：它会把节点属性摊成 DOM 属性，
+    // 页面上就会出现 `kind="command" label="/report"` 这种非标准属性。
+    // chip 只需要下面这几个：`data-*` 供解析与排查，class 决定长相。
     return [
       'span',
       {

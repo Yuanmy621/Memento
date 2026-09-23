@@ -1,5 +1,8 @@
 /**
- * 交互式 REPL 与一次性执行。
+ * 交互式 REPL 与一次性执行：读一行输入、驱动一个回合、把结果渲染到终端。
+ *
+ * 内置命令（`/help`、`/model`、`/session` 等）在这里直接处理，其余 `/名字` 交给
+ * `.agents/commands` 里的用户命令。
  *
  * @module Memento/repl
  */
@@ -14,10 +17,7 @@ import { listTools } from './kernel.ts'
 import type { Options } from './options.ts'
 import { attachRenderer, bold, cyan, gray, red, yellow, type Renderer } from './ui.ts'
 
-/**
- * `/help` 文本。
- * @param commands - `.agents/commands` 里发现的用户命令（列表为空时只显示内置命令）。
- */
+/** `/help` 文本；`commands` 为空时只列内置命令。 */
 function commandHelp(commands: readonly CommandDef[]): string {
   const lines = [
     `${bold('内置命令')}`,
@@ -39,11 +39,11 @@ function commandHelp(commands: readonly CommandDef[]): string {
   return lines.join('\n')
 }
 
-/** 把用户输入变成一个 DSH 用户消息。 */
+/** 把用户输入变成一个用户消息。 */
 function userMessage(text: string) {
   return createUserMessage({
     content: [{ type: 'text', text }],
-    // `source` 是 DSH 的必填来源标记：`kind: 'user'` 表示真人输入。
+    // `source` 是必填的来源标记，`kind: 'user'` 表示真人输入。
     source: { kind: 'user' },
   })
 }
@@ -75,7 +75,6 @@ async function runTurn(kernel: Kernel, renderer: Renderer, input: string): Promi
 
 /**
  * 一次性执行：`Memento -p "..."`。
- * @returns 进程退出码。
  */
 export async function runOneShot(kernel: Kernel, options: Options, prompt: string): Promise<number> {
   const renderer = attachRenderer(kernel.ctx, kernel.agent, {
@@ -92,7 +91,6 @@ export async function runOneShot(kernel: Kernel, options: Options, prompt: strin
 
 /**
  * 交互式 REPL。
- * @returns 进程退出码。
  */
 export async function runRepl(kernel: Kernel, options: Options): Promise<number> {
   const { ctx, agent } = kernel
@@ -108,8 +106,8 @@ export async function runRepl(kernel: Kernel, options: Options): Promise<number>
   /** `/model` 的落点：由 `agent/request` waterfall 在每次请求前读取。 */
   const route: { model: string } = { model: options.model }
 
-  // DSH 的 `agent/request` 是一次 waterfall：每个监听者都能改写即将发出的请求配置。
-  // 这里用它实现「运行中切换模型」——不必重建 agent 或会话。
+  // `agent/request` 是一次 waterfall：每个监听者都能改写即将发出的请求配置，
+  // 用它实现「运行中切换模型」，不必重建 agent 或会话。
   const offRoute = ctx.on('agent/request', async ({ agent: subject }, next) => {
     const config: LlmCallConfig = await next()
     if (subject !== agent || config.model === route.model) return config
@@ -126,9 +124,8 @@ export async function runRepl(kernel: Kernel, options: Options): Promise<number>
     rl.close()
   })
 
-  // 自己维护一个行队列，而不是 `rl.question()`：
-  // 管道输入时整段数据会在同一 tick 内产生多个 'line'，而 question() 只会接住一个，
-  // 其余的行会被丢掉。队列 + 'close' 哨兵对 TTY 与管道都成立。
+  // 用行队列而不是 `rl.question()`：管道输入时整段数据会在同一 tick 内产生多个
+  // 'line'，question() 只接住一个、其余被丢掉；队列 + 'close' 哨兵对两种输入都成立。
   const pending: string[] = []
   let wake: (() => void) | undefined
   let closed = false

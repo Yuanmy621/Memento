@@ -1,35 +1,10 @@
 /**
  * 历史回放：把一个**已落盘**的会话日志读成界面能直接渲染的记录。
  *
- * ## 为什么在 host 侧做
- *
- * 官方客户端的已完成回合记录同样是 **host 提供的**（客户端只负责渲染投影）。
- * 这里沿用同一分工：渲染进程不碰磁盘，host 读日志、产出 `Item[]`，
- * 渲染进程整段替换 `items` 即可。
- *
- * ## 数据来源：会话日志就是权威
- *
- * 恢复会话时 agent 的上下文由 DSH 自己从日志重建，界面这边必须看到**同一份**内容，
- * 所以回放也只认日志，不另存一份 UI 状态：
- *
- * | 日志事件 | 变成界面上的 |
- * | --- | --- |
- * | `user/message`（`source.kind === 'user'`） | 用户气泡 |
- * | `assistant/message` 的 `reasoning` 块 | 推理行 |
- * | `assistant/message` 的 `text` 块 | 正文（Markdown） |
- * | `tool/call` | 工具行 / 文件卡片 |
- * | `tool/result` | 回填到对应 `callId` 的工具结果 |
- * | `turn/end` | 回合结论（完成 / 中断 / 失败） |
- * | `assistant/message` 的 `usage` | 累加成会话 token 统计 |
- *
- * ⚠️ 一个容易踩的点：日志里还有 `source.kind === 'skill-catalog'` 的
- * `user/message`（技能目录注入）。那是**给模型看的**，不是用户说的话，
- * 回放时必须过滤掉，否则界面上会冒出一大段「用户消息」。
- *
- * ## 有界读取
- *
- * 只回放最近 `maxTurns` 个回合（默认 50）。更早的内容不显示，但 **agent 自己仍然
- * 记得**（它的上下文来自完整日志）—— 这个差异通过 `truncatedTurns` 如实告知界面。
+ * 以日志为唯一来源、不另存 UI 状态：恢复会话时内核也从同一份日志重建上下文，渲染进程不碰磁盘，host 读日志产出
+ * `Item[]`，渲染进程整段替换 `items`。日志事件按语义对应到界面条目（用户消息、推理与正文块、工具调用与结果、回合结论），
+ * 其中 `source.kind === 'skill-catalog'` 的 `user/message` 是注入的技能目录，回放要过滤掉。
+ * 只回放最近 `maxTurns` 个回合（默认 50），差额由 `truncatedTurns` 告知界面，更早的内容 agent 仍记得。
  *
  * @module Memento/desktop/host/history
  */
@@ -186,12 +161,7 @@ async function readLog(path: string): Promise<string> {
   }
 }
 
-/**
- * 在持久化根目录下找到某个会话的日志路径。
- * @param root - `<stateDir>/sessions`。
- * @param sessionId - 会话 id。
- * @returns 日志绝对路径；找不到返回 `undefined`。
- */
+/** 在持久化根目录下找到某个会话的日志路径；找不到时返回 `undefined`。 */
 export async function findSessionLog(root: string, sessionId: string): Promise<string | undefined> {
   let projects: string[]
   try {
@@ -214,12 +184,8 @@ export async function findSessionLog(root: string, sessionId: string): Promise<s
 }
 
 /**
- * 回放一个会话的历史。
- * @param options - 参数。
- * @param options.root - `<stateDir>/sessions`。
- * @param options.sessionId - 会话 id。
- * @param options.maxTurns - 最多回放多少个回合（从最新往前数）。
- * @returns 历史记录；找不到日志或日志为空时返回 `undefined`。
+ * 回放一个会话的历史：最多 `maxTurns` 个回合（从最新往前数，默认见 `DEFAULT_MAX_TURNS`）；
+ * 找不到日志或日志为空时返回 `undefined`。
  */
 export async function readSessionHistory(options: {
   readonly root: string
@@ -289,7 +255,7 @@ export async function readSessionHistory(options: {
     const data = (event.data ?? {}) as Record<string, unknown>
 
     if (type === 'user/message') {
-      // ⚠️ 过滤非用户来源：skill-catalog 之类的注入也是 user/message
+      // 过滤非用户来源：skill-catalog 之类的注入也是 user/message
       const source = data['source'] as { kind?: unknown } | undefined
       if (source?.kind !== 'user') continue
       const text = textOf(data['content'])
@@ -308,9 +274,8 @@ export async function readSessionHistory(options: {
       const prose = assistantText(message.content, 'text')
       const item = ensureAssistant(draft)
       /**
-       * 推理与正文**按位置**落进 blocks（顺序 = 日志里的块顺序，通常是
-       * 「推理 → 正文 → 工具」）。老实现只把正文塞进 blocks、把推理拼进
-       * `item.reasoning`，回放出来的会话里所有思考都会堆在消息最上方。
+       * 推理与正文按位置落进 blocks，顺序即日志里的块顺序（通常是「推理 → 正文 → 工具」），
+       * 否则回放出来的会话里所有思考都会堆在消息最上方。
        */
       const appended: Block[] = []
       if (reasoning !== '') appended.push({ type: 'reasoning', text: reasoning })
@@ -414,7 +379,7 @@ export async function readSessionHistory(options: {
     }
   }
 
-  // 只回放最近 maxTurns 个回合
+  // 截断按回合数从最新往前数，不是按条目数。
   const limit = options.maxTurns ?? DEFAULT_MAX_TURNS
   const completed = turns.filter((draft) => draft.items.length > 0)
   const kept = completed.slice(-limit)

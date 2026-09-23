@@ -1,18 +1,9 @@
 /**
- * agent 状态机：把 `window.Memento` 的事件流归约成界面状态。
+ * agent 状态机：把 `window.Memento` 的事件流归约成界面状态，是唯一把 host 事件翻译成 UI 数据的地方。
  *
- * 这里是**唯一**把 host 事件翻译成 UI 数据的地方，组件只读 `state.items`。
- * 归约器是纯函数：事件进、状态出，不碰 DOM、不碰网络。
- *
- * 一条会话由若干条目（items）组成：
- *   { kind: 'user',      text }
- *   { kind: 'note',      level, text }                  系统提示
- *   { kind: 'assistant', turnId, reasoning, blocks[], meta }
- * 其中 assistant 的 `blocks` 是**有序**的：正文块与工具卡片交替，
- * 这样「先说话 → 调工具 → 再说话」能被如实还原。
- *
- * 事件类型直接取自 host 的协议定义（`host/protocol.ts`）—— 只做类型导入，
- * 编译后不留运行时依赖，于是「协议真相」仍然只有一份。
+ * 归约器是纯函数（事件进、状态出，不碰 DOM 与网络），组件只读 `state.items`。assistant 条目的
+ * `blocks` 有序：正文块与工具卡片交替，据此还原「先说话 → 调工具 → 再说话」。事件类型只做类型
+ * 导入，协议真相仍然只有 `host/protocol.ts` 一份。
  *
  * @module Memento/desktop/renderer/use-agent
  */
@@ -35,10 +26,7 @@ import type {
   ToolBlock,
   TurnMeta,
 } from '../../host/protocol.ts'
-/**
- * 会话视图键：**必须与主进程用同一个算法**（事件按它路由）。
- * 值导入而不是类型导入 —— 这是一个纯函数，协议模块本身不依赖任何东西。
- */
+/** 会话视图键（`sessionKey`）：与主进程共用同一个算法，事件按它路由；值是纯函数，所以值导入。 */
 import { sessionKey } from '../../host/protocol.ts'
 /** 预览面板、git 与「切会话」的类型面同样只有一份。 */
 export type { GitPullResult, GitStatus, GitSwitchResult } from '../../ipc.ts'
@@ -60,25 +48,20 @@ export type {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * 界面能收到的「非 host 事件」。
- *
- * 比主进程那边的 `ShellEvent`（`app/desktop/ipc.ts`）**多一条**：`switch-timeout`
- * 是界面自己的兜底动作（切换超时），不是主进程发来的。两边故意分开：
- * 那边的契约是「主进程会发什么」，这里是「界面要处理什么」。
+ * 界面能收到的「非 host 事件」。比主进程那边的 `ShellEvent`（`app/desktop/ipc.ts`）多一条
+ * `switch-timeout`：那是界面自己的兜底动作，不是主进程发来的。
  */
 export type ShellEvent =
   | { readonly type: 'restarting'; readonly cwd: string }
-  /** 切换超时兜底：`history` 帧迟迟不来时放开 `switching`（见 provider 里的定时器）。 */
+  /** 切换超时兜底：`history` 帧迟迟不来时放开 `switching`（见 hook 里的定时器）。 */
   | { readonly type: 'switch-timeout' }
   | { readonly type: 'host-error'; readonly message: string }
 
 /** 界面能收到的一切事件。 */
 export type AgentEvent = (HostEvent | ShellEvent) & {
   /**
-   * 这一帧属于哪个会话视图（`sessionKey()`，由主进程打上）。
-   *
-   * 界面自己的动作没有它，落到当前会话。**必须**按它分发：主进程现在可以
-   * 同时持有多个 host（后台会话继续跑），没有它后台会话的正文就会串进前台。
+   * 这一帧属于哪个会话视图（`sessionKey()`，由主进程打上）；界面自己的动作没有它，落到当前会话。
+   * 主进程可以同时持有多个 host，不按它分发，后台会话的正文就会串进前台。
    */
   readonly hostId?: string
 }
@@ -91,10 +74,8 @@ export interface ShellState {
   /** 当前会话视图的键（界面重载后据此重新接管那个会话）。 */
   readonly activeKey?: string
   /**
-   * 主进程缓存的项目 / 会话清单。
-   *
-   * 首帧 `workspace` 事件多半在界面订阅**之前**就推过了（界面要解析 10MB bundle），
-   * 所以状态快照里带一份，保证侧栏一定能填上。见 `main.js` 的 `workspaceSnapshot`。
+   * 主进程缓存的项目 / 会话清单：首帧 `workspace` 事件多半在界面订阅之前就推过了（界面要解析
+   * 10MB 的 bundle），快照里带一份，侧栏才一定能填上（见 `main.ts` 的 `workspaceSnapshot`）。
    */
   readonly workspace?: {
     readonly projects: readonly ProjectSummary[]
@@ -103,10 +84,8 @@ export interface ShellState {
 }
 
 /**
- * 设置界面要的一整份数据（host 的 `settings` 帧）。
- *
- * 三样东西一起给：技能、命令、MCP —— 它们都住在「配置目录」里，
- * 用户调一个的时候往往也想看另一个。
+ * 设置界面要的一整份数据（host 的 `settings` 帧）：技能、命令、MCP 都住在「配置目录」里，
+ * 用户调一个的时候往往也想看另一个，所以一起给。
  */
 export interface SettingsData {
   readonly skills: readonly SkillEntry[]
@@ -153,25 +132,21 @@ export interface AgentApi {
   setEffort(effort: string): Promise<void>
   /** 读当前工作目录的 git 情况（面包屑的分支段）。 */
   gitStatus(): Promise<GitStatus>
-  /** 切分支；分支名必须来自上一次 `gitStatus()` 的列表。 */
+  /** 切分支；分支名取自上一次 `gitStatus()` 的列表。 */
   gitSwitch(branch: string): Promise<GitSwitchResult>
-  /** 拉取**当前分支**最新（`git pull --ff-only`）。 */
+  /** 拉取当前分支最新（`git pull --ff-only`）。 */
   gitPull(): Promise<GitPullResult>
   pickDirectory(): Promise<string | null>
   /**
-   * 切到某个会话。
-   *
-   * 主进程还留着它的 host（多半是后台回合还在跑）就直接挂回，**不重启**；
-   * 否则起一个新 host（必要时 `--resume` 回放历史）。
+   * 切到某个会话：主进程还留着它的 host（多半是后台回合还在跑）就直接挂回、不重启，否则起一个
+   * 新 host（必要时 `--resume` 回放历史）。
    */
   attach(request: AttachRequest): Promise<AttachResult>
   /** 让 host 重新扫描落盘会话（结果以 `workspace` 事件回来）。 */
   refreshSessions(): Promise<void>
   /**
-   * 让当前会话重放一次历史（结果以 `history` 事件回来）。
-   *
-   * 界面重载后视图是空的，但内核还活着：重放就能把内容补回来，**不必重启**
-   * （后台还在跑的回合因此不受影响）。
+   * 让当前会话重放一次历史（结果以 `history` 事件回来）；界面重载后视图是空的而内核还活着，
+   * 重放就能把内容补回来，后台还在跑的回合不受影响。
    */
   replayHistory(): Promise<void>
   /** 用系统默认程序打开一个文件；返回错误信息（成功时空串）。 */
@@ -199,13 +174,8 @@ declare global {
 }
 
 /**
- * 会话级 token 累计。
- *
- * ⚠️ DSH 的计数是**互斥**的（见 `host/protocol.ts` 的 `LlmUsage`）：
- * `inputTokens` 只算未命中缓存的输入，命中部分单独记在 `cacheReadTokens`，
- * 写缓存的记在 `cacheWriteTokens`。所以：
- *   - 计费输入 = 三者之和（{@link billedInputTokens}）
- *   - 命中率 = cacheReadTokens / 计费输入（{@link cacheHitRate}）
+ * 会话级 token 累计。内核的计数是互斥的（见 `host/protocol.ts` 的 `LlmUsage`）：`inputTokens`
+ * 只算未命中缓存的输入，命中部分在 `cacheReadTokens`、写缓存在 `cacheWriteTokens`。
  */
 export interface UsageTotals {
   /** 未命中缓存的输入 token。 */
@@ -240,11 +210,7 @@ export function billedInputTokens(usage: UsageTotals): number {
   return usage.inputTokens + usage.cacheReadTokens + usage.cacheWriteTokens
 }
 
-/**
- * 缓存命中率。
- * @param usage - 累计值。
- * @returns `0..1`；还没有任何输入 token 时返回 `null`（界面显示 `—`，不要伪造 0%）。
- */
+/** 缓存命中率 `0..1`；还没有任何输入 token 时返回 `null`（界面显示 `—`，不伪造 0%）。 */
 export function cacheHitRate(usage: UsageTotals): number | null {
   const billed = billedInputTokens(usage)
   if (billed <= 0) return null
@@ -265,13 +231,8 @@ function accumulate(usage: UsageTotals, next: LlmUsage): UsageTotals {
 }
 
 /**
- * 从工具调用里认出「这是个文件操作」，供界面渲染文件卡片。
- *
- * 只认最常见的三个文件工具与它们惯用的参数名 —— 认不出来就返回 undefined，
- * 界面退回普通工具行，不会硬编一张错卡片。
- * @param name - 工具名。
- * @param args - 工具参数摘要（`summarizeCall` 生成的一行文本）。
- * @returns 文件路径与操作类型；不是文件操作则 undefined。
+ * 从工具调用里认出「这是个文件操作」，供界面渲染文件卡片；认不出来返回 undefined，界面退回
+ * 普通工具行。参数摘要是 `summarizeCall` 生成的一行文本，取第一个路径片段当路径。
  */
 export function fileActionOf(
   name: string,
@@ -292,10 +253,7 @@ export interface TraceStep {
   readonly kind: 'user' | 'reasoning' | 'text' | 'tool' | 'note' | 'steer'
   /** 一行标题（工具名 / 用户 / 推理 等）。 */
   readonly label: string
-  /**
-   * 展开后显示的**完整**文本：工具步骤是完整输出（bash 那几十行），
-   * 其余步骤是正文/推理/提示原文。
-   */
+  /** 展开后显示的完整文本：工具步骤是完整输出，其余步骤是正文 / 推理 / 提示原文。 */
   readonly detail: string
   /** 行内一行预览（工具=输出首行，其余=正文首行）—— 折叠时看的就是它。 */
   readonly preview: string
@@ -306,16 +264,8 @@ export interface TraceStep {
 }
 
 /**
- * 把会话条目摊平成「轨迹」——按发生顺序列出 agent 做过的每一步。
- *
- * 这是调试视角：不追求好看，追求**顺序与结果一目了然**。
- * 纯函数：给定同样的条目，永远得到同样的步骤列表。
- *
- * 性能上有一个刻意的讲究：工具步骤的 `detail` 直接**引用** `block.output`（不复制），
- * 只有 `preview`/`token` 是小字符串。流式正文每来一个 delta 都会重算这条列表，
- * 若在这里把几十 KB 的输出拼一遍，就等于每个 delta 复制几 MB。
- * @param items - 会话条目。
- * @returns 轨迹步骤。
+ * 把会话条目摊平成「轨迹」——按发生顺序列出 agent 做过的每一步，纯函数。工具步骤的 `detail` 直接
+ * 引用 `block.output` 而不复制：流式正文每来一个 delta 都会重算这条列表，拼一遍就是几十 KB 的复制。
  */
 export function traceSteps(items: readonly Item[]): TraceStep[] {
   const steps: TraceStep[] = []
@@ -342,11 +292,7 @@ export function traceSteps(items: readonly Item[]): TraceStep[] {
       plain(item.id, 'steer', '目标调整', item.text)
       continue
     }
-    /**
-     * 推理不再单独抽一条放在最前面：它已经是 `blocks` 里的一块，
-     * 跟着下面的循环按真实顺序出现（想一段 → 做一步 → 再想一段）。
-     * 老代码用 `item.reasoning` 在这里插一条，于是轨迹里思考也全堆在开头。
-     */
+    // 推理已经作为 `blocks` 里的一块，跟着下面的循环按真实顺序出现（想一段 → 做一步 → 再想一段）。
     item.blocks.forEach((block, index) => {
       if (block.type === 'reasoning') {
         plain(`${item.id}-r${String(index)}`, 'reasoning', '推理', block.text)
@@ -399,10 +345,7 @@ export interface RailMark {
 const RAIL_SUMMARY_MAX = 140
 
 /**
- * 把会话条目压成滑杆刻度用的一行摘要。
- *
- * 只取「最像人话」的那一段：用户消息取原文，助手取第一段正文（没有正文时退回推理），
- * 两者都没有就说「工具调用」。换行、连续空格一律压成单空格，免得提示框里高低不齐。
+ * 把会话文本压成滑杆刻度用的一行摘要：换行与连续空格压成单空格，超过 `RAIL_SUMMARY_MAX` 截断。
  */
 function summarize(text: string): string {
   const flat = text.replace(/\s+/g, ' ').trim()
@@ -410,12 +353,8 @@ function summarize(text: string): string {
 }
 
 /**
- * 由会话条目算出滑杆刻度 —— 纯函数，给定同样的条目永远得到同样的刻度。
- *
- * 一条条目一个刻度（助手消息整条算一个），顺序与消息流一致；`top` 那种几何信息
- * **不在这里算**：位置得问真实 DOM（见 `message-rail.tsx`），这里只管「有哪些刻度」。
- * @param items - 会话条目。
- * @returns 刻度列表（与 `items` 一一对应）。
+ * 由会话条目算出滑杆刻度 —— 一条条目一个刻度（助手消息整条算一个），顺序与消息流一致。几何信息
+ * 不在这里算：位置得问真实 DOM（见 `message-rail.tsx`），这里只管「有哪些刻度」。
  */
 export function railMarks(items: readonly Item[]): RailMark[] {
   return items.map((item): RailMark => {
@@ -453,14 +392,8 @@ export interface RecentFile {
 }
 
 /**
- * 从会话条目里倒着捞「碰过的文件」。
- *
- * 为什么倒着捞：SRC 场景下最关心的永远是**刚刚**生成的那份报告/脚本，
- * 所以列表按最近使用排序，同一个文件只留最新一次（路径去重）。
- * 认文件靠 `fileActionOf()`，认不出就不进列表。
- * @param items - 会话条目。
- * @param limit - 最多留几个（默认 40）。
- * @returns 最近文件（最近的在前）。
+ * 从会话条目里倒着捞「碰过的文件」，按最近使用排序、同一路径只留最新一次（最关心的是刚生成的那
+ * 份报告 / 脚本）。认文件靠 `fileActionOf()`，认不出不进列表。
  */
 export function recentFiles(items: readonly Item[], limit = 40): RecentFile[] {
   const seen = new Set<string>()
@@ -482,11 +415,8 @@ export function recentFiles(items: readonly Item[], limit = 40): RecentFile[] {
 }
 
 /**
- * 一个会话视图的状态。
- *
- * 界面按会话分开存：后台会话还在跑，它的流式增量必须落进**它自己的**那一份，
- * 不能串进前台会话（见下面的 `locate`）。切会话就是换一个视图 ——
- * 所以「切走再切回来」看到的还是原来那份，包括后台期间新长出来的内容。
+ * 一个会话视图的状态。界面按会话分开存：后台会话还在跑，它的流式增量要落进它自己那一份，不能
+ * 串进前台（见 `locate`）；切会话就是换一个视图，切走再切回来看到的还是原来那份。
  */
 export interface SessionView {
   /** 视图键（`sessionKey(cwd, sessionId)`）。 */
@@ -499,11 +429,8 @@ export interface SessionView {
   readonly items: readonly Item[]
   readonly busy: boolean
   /**
-   * 正在换会话 / 换项目 / 重启内核（内核已经在重启了，但界面**仍然显示旧内容**）。
-   *
-   * 为什么要有它，而不是直接把 `phase` 打回 `booting`：切换时旧内容不该消失 ——
-   * 内容只在 `history` 帧到达时整段替换（见那个 case）。这个标记只用来
-   * 显示「正在切换」并在切换期间挡掉提交（新内核还没就绪，发过去会失败）。
+   * 正在换会话 / 换项目 / 重启内核，此时界面仍显示旧内容。不直接把 `phase` 打回 `booting`：
+   * 旧内容只在 `history` 帧到达时整段替换；这个标记同时用来挡掉切换期间的提交。
    */
   readonly switching: boolean
   /** 本会话的 token 累计。 */
@@ -517,32 +444,26 @@ export interface SessionView {
 }
 
 /**
- * 界面状态 = **当前会话的视图** + 全局部分（项目清单 / `#` 候选 / 设置）。
- *
- * 组件只读这一份（`useAgent` 把当前视图摊平上来），于是「多会话」这件事
- * 对组件是透明的：`state.items` 永远就是当前会话的内容。
+ * 界面状态 = 当前会话的视图 + 全局部分（项目清单 / `#` 候选 / 设置）。组件只读这一份，于是
+ * 「多会话」对组件是透明的：`state.items` 永远就是当前会话的内容。
  */
 export interface AgentState extends SessionView {
   /** 当前视图的键；还没有任何会话时是空串。 */
   readonly activeKey: string
   /**
-   * 已经建立过视图的会话键。
-   *
-   * 切会话时用它决定「挂回」还是「重启」：只有见过的会话才谈得上挂回
-   * 主进程里还留着的 host（见 `resumeSession` 的 `reuse`）。
+   * 已经建立过视图的会话键：切会话时用它决定「挂回」还是「重启」——只有见过的会话才谈得上
+   * 挂回主进程里还留着的 host（见 `resumeSession` 的 `reuse`）。
    */
   readonly knownViews: readonly string[]
   /** 有回合在跑的会话 id（后台也算）—— 侧栏给这些行打运行标记。 */
   readonly runningIds: readonly string[]
   /** 所有出现过的项目（当前项目排在最前）。 */
   readonly projects: readonly ProjectSummary[]
-  /** **当前项目**的会话，按最近活动倒序。 */
+  /** 当前项目的会话，按最近活动倒序。 */
   readonly sessions: readonly SessionSummary[]
   /**
-   * **非当前项目**已加载的会话明细：项目路径 → 会话列表。
-   *
-   * 只装「被点开过」的项目 —— 侧栏里折叠的项目点开时才向 host 要数据
-   * （`project-sessions` 事件），项目再多也不拖慢首屏。
+   * 非当前项目已加载的会话明细（项目路径 → 会话列表）：只装「被点开过」的项目，折叠的项目
+   * 展开时才向 host 要数据（`project-sessions` 事件），项目再多也不拖慢首屏。
    */
   readonly projectSessions: Readonly<Record<string, readonly SessionSummary[]>>
   /** 正在读取会话的项目路径（界面据此显示「读取中…」）；没有则是 null。 */
@@ -562,11 +483,8 @@ export interface AgentState extends SessionView {
 }
 
 /**
- * 一次 git 探测的结果 **以及它探测的是哪个目录**。
- *
- * 为什么要带上 `cwd`：git 状态是**目录**的属性，而界面随时可能切到另一个会话
- * （另一个项目）。渲染进程据此只在「探测的目录 === 当前会话的目录」时才显示分支，
- * 免得把上一个仓库的分支挂在刚切过来的会话上。
+ * 一次 git 探测的结果以及它探测的是哪个目录。git 状态是目录的属性，而界面随时可能切到另一个
+ * 会话（另一个项目），带上 `cwd` 才能在「探测的目录 === 当前会话的目录」时才显示分支。
  */
 export interface GitRead {
   /** 这次探测针对的工作目录。 */
@@ -575,14 +493,8 @@ export interface GitRead {
 }
 
 /**
- * 一次 git 动作（切分支 / 拉取）的结果，**已经压成「界面要显示的一句话」**。
- *
- * 为什么要压平：协议层给的是两个不同的结构（`GitSwitchResult` 只有 `error`，
- * `GitPullResult` 还有 `message`），但界面那一条状态栏只关心「说什么、是不是坏消息」。
- * 让面包屑去分辨「哪种动作的哪个字段」纯属把协议细节漏进视图层。
- *
- * `message` 允许是空串 —— 那表示**没什么可说的**（例如切分支成功：界面上的分支名
- * 自己就变了），界面据此不显示那一格。
+ * 一次 git 动作（切分支 / 拉取）的结果，已经压成「界面要显示的一句话」：`GitSwitchResult` 只有
+ * `error`、`GitPullResult` 还有 `message`，界面只关心「说什么、是不是坏消息」；空串表示没什么可说。
  */
 export interface GitActionResult {
   /** 动作是否成功。决定那句话说出来的语气（普通 / 错误色）。 */
@@ -592,11 +504,8 @@ export interface GitActionResult {
 }
 
 /**
- * 归约器的内部状态：视图表 + 全局部分。
- *
- * 为什么不直接拿 {@link AgentState} 当归约状态：那个是**投影**（把当前视图摊平
- * 给组件读），而这里要留下完整的那张表 —— 后台会话的视图不能因为「不是当前会话」
- * 就被丢掉，否则切回去就只剩历史回放、丢掉了这期间滚动出来的内容。
+ * 归约器的内部状态：视图表 + 全局部分。这里要留下完整的那张表，而不是直接投影成
+ * `AgentState` —— 后台会话的视图不能因为不是当前会话就被丢掉，否则切回去只剩历史回放。
  */
 interface Store {
   readonly activeKey: string
@@ -673,15 +582,8 @@ export const initialState: Store = {
 }
 
 /**
- * 一帧该落到哪个会话。
- *
- * `hostId` 由主进程打在每一帧上（见 `ipc.ts` 的 `BridgeEvent`）；界面自己的动作
- * 没有它，落到当前会话。视图不存在就先建一个空视图 —— 冷启动时主进程自己起的
- * 第一个 host 就是这样「凭空」把第一帧送进来的。
- * @param state - 当前内部状态。
- * @param hostId - 帧上的会话键；缺省表示当前会话。
- * @param cwd - 新建视图时用的项目目录（只有 `restarting` / `ready` 带得回来）。
- * @returns 目标键与它当前的视图。
+ * 一帧该落到哪个会话：`hostId` 由主进程打在每一帧上（见 `ipc.ts` 的 `BridgeEvent`），界面自己的
+ * 动作没有它、落到当前会话；视图不存在就先建一个空视图（冷启动的第一帧就是这样进来的）。
  */
 function locate(state: Store, hostId: string | undefined, cwd?: string): { key: string; view: SessionView } {
   const key = hostId ?? state.activeKey
@@ -706,18 +608,8 @@ function withView(state: Store, key: string, update: (view: SessionView) => Sess
 }
 
 /**
- * 按界面自己的当前会话重写列表里的 `current` 标记。
- *
- * 为什么要重写而不用 host 给的那份：
- *   1. 多个 host 同时活着时，每一帧 `workspace` 都带着**它自己**的
- *      `currentSessionId`，先到的那一帧会把「当前会话」标错；
- *   2. 切到一个**还活着**的会话（挂回，不重启）压根不会来新的 `workspace` 帧，
- *      光靠帧上的标记会让侧栏一直高亮着上一个会话。
- *
- * 所以标记一律在**投影时**现算（见 {@link project}），存储里只留 host 给的原始列表。
- * @param sessions - host 给的会话列表。
- * @param currentId - 界面当前会话的 id；null 表示还不知道（原样返回）。
- * @returns 修正过 `current` 的列表（没变化时返回原数组，避免无谓的重渲染）。
+ * 按界面自己的当前会话重写列表里的 `current` 标记：多个 host 各自把「它自己」标成 current，帧上
+ * 的值不可信，而挂回一个还活着的会话又不会来新的 `workspace` 帧，标记一律在投影时现算。
  */
 function markCurrent(
   sessions: readonly SessionSummary[],
@@ -751,10 +643,8 @@ function markCurrentProject(
 }
 
 /**
- * 把内部状态投影成组件读的那一份（当前会话的视图摊平 + 全局部分）。
- *
- * 导出是给冒烟脚本用的：`reducer` 只产出内部状态，`current` 标记这类
- * 「看起来该是状态、其实是视图」的东西都在这里现算，得能单独验。
+ * 把内部状态投影成组件读的那一份（当前会话的视图摊平 + 全局部分）。导出是给冒烟脚本用的：
+ * `current` 标记这类「看起来该是状态、其实是视图」的东西都在这里现算，得能单独验。
  */
 export function project(store: Store): AgentState {
   const view = store.views[store.activeKey] ?? emptyView(store.activeKey, '')
@@ -795,15 +685,13 @@ function newId(): string {
 
 /** 取当前正在流式渲染的助手条目；turnId 为 null 表示「还没拿到 id，先认领」。 */
 function activeAssistant(items: readonly Item[], turnId: string | null): number {
-  // ⚠️ 从后往前找**最后一条助手条目**，而不是只看最后一项：
-  // 回合进行中用户可以「中途调整目标」，那会在助手条目后面追加一条 steer 条目 ——
-  // 只看末项的话，后续的流式增量会找不到正在写的那条助手消息，
-  // 于是把同一次回复拆成两个气泡。
+  // 从后往前找最后一条助手条目，而不是只看最后一项：回合进行中用户可以「中途调整目标」，那会在
+  // 助手条目后面追加一条 steer 条目，只看末项会让后续增量找不到正在写的那条消息、把回复拆成两个气泡。
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const item = items[index]
     if (item === undefined || item.kind !== 'assistant') continue
     if (item.turnId === null || item.turnId === turnId) return index
-    // 最近的一条助手条目属于别的回合：不再往前找（那是历史）
+    // 最近的一条助手条目属于别的回合：到此为止，不往前找（那是历史）。
     return -1
   }
   return -1
@@ -815,11 +703,8 @@ function asAssistant(item: Item | undefined): AssistantItem | null {
 }
 
 /**
- * 取当前助手条目；没有就**补一个**。
- *
- * 正常情况下它一定存在（`user-send` 会先建好占位）。但界面重载、`getState()`
- * 与事件竞态等情况下可能先收到流式帧 —— 那时宁可多一条消息，也不能丢内容。
- * @returns 新的 items 与助手条目的下标。
+ * 取当前助手条目，没有就补一个：正常情况下它一定存在（`user-send` 先建好占位），但界面重载或
+ * `getState()` 与事件竞态时可能先收到流式帧，这时宁可多一条消息，也不能丢内容。
  */
 function ensureAssistant(items: readonly Item[], turnId: string): [Item[], number] {
   const index = activeAssistant(items, turnId)
@@ -838,10 +723,8 @@ function appendText(blocks: readonly Block[], delta: string): Block[] {
 }
 
 /**
- * 追加一段推理增量到「最后一个推理块」，没有就**新起一块**。
- *
- * 这一行就是「思考 → 行动 → 再思考」的落点：中间只要夹了正文或工具调用，
- * 末尾就不是推理块，下一段推理自然成为新的一块、排在它真实发生的位置上。
+ * 追加一段推理增量到「最后一个推理块」，没有就新起一块 —— 中间夹了正文或工具调用之后，末尾就不是
+ * 推理块，下一段推理自然成为新的一块，排在它真实发生的位置上。
  */
 function appendReasoning(blocks: readonly Block[], delta: string): Block[] {
   const tail = blocks[blocks.length - 1]
@@ -861,27 +744,15 @@ function replaceItem(items: readonly Item[], index: number, next: Item): Item[] 
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * 归约器：事件与界面动作 → 新状态。
- * @param state - 当前状态。
- * @param action - 事件或本地动作。
- */
-/**
- * 归约器：事件与界面动作 → 新状态。
- *
- * 与上一版最大的区别：**一切都是「按会话」的**。每个 host 帧带着 `hostId`，
- * 归约到对应会话的视图上（见 `locate`）；当前会话只是「正在看的那个视图」。
- * 于是后台会话还在跑的时候，它的增量照样落进它自己那份，切回去就是完整的。
- * @param state - 当前状态（内部是「视图表 + 全局」）。
- * @param action - 事件或本地动作。
+ * 归约器：事件与界面动作 → 新状态。每个 host 帧带着 `hostId`，归约到对应会话的视图上（见
+ * `locate`），当前会话只是「正在看的那个视图」，于是后台会话的增量落进它自己那份。
  */
 export function reducer(state: Store, action: Action): Store {
   switch (action.type) {
     // ── 会话视图的定位 ────────────────────────────────────────────────
     /**
-     * 换前台会话：只挪视角，**不动任何数据**（每个视图本来就各自留着）。
-     *
-     * `switching` 先置上：目标可能是没见过 / 已被回收的会话，要等新内核回放历史；
-     * 若主进程回的是「挂回活着的 host」，紧接着的 `attached` 会立刻把它放开。
+     * 换前台会话：只挪视角，不动任何数据。`switching` 先置上（目标可能是没见过 / 已被回收的
+     * 会话，要等新内核回放历史）；若主进程回的是「挂回活着的 host」，`attached` 会立刻放开它。
      */
     case 'activate': {
       const view = state.views[action.key] ?? emptyView(action.key, action.cwd)
@@ -902,10 +773,8 @@ export function reducer(state: Store, action: Action): Store {
       const from = action.hostId ?? state.activeKey
       const { view } = locate(state, from, info.cwd)
       /**
-       * 新建会话：host 在 `ready` 里才给出真正的会话 id，于是**占位键**
-       * （`cwd\n`）在这里换成带 id 的键 —— 主进程同时也在做同一件事。
-       * 不换的话「切走再切回来」会按真实 id 找不到这个视图、另起一个 host，
-       * 两个内核就会写同一份会话日志。
+       * 新建会话：真正的会话 id 在 `ready` 里才给出，占位键（`cwd\n`）在这里换成带 id 的键，主进程
+       * 同时也在改名。不换的话切走再切回来会另起一个 host，两个内核写同一份会话日志。
        */
       const key = sessionKey(info.cwd, info.sessionId)
       const views: Record<string, SessionView> = {
@@ -931,12 +800,8 @@ export function reducer(state: Store, action: Action): Store {
     }
 
     /**
-     * 换会话 / 换项目 / 重启内核。
-     *
-     * **什么都不清**，只打 `switching` 标记：内容等 `history` 帧整段替换。
-     * 早先这里无条件清空，于是点一下侧栏会连着抖四下（消息区白掉并闪出
-     * 「正在启动内核…」、token 统计归零、模型下拉变空、已展开项目的会话列表
-     * 显示「读取中…」）—— 那些数据在切换前后其实都还有效。
+     * 换会话 / 换项目 / 重启内核：什么都不清，只打 `switching` 标记，内容等 `history` 帧整段替换。
+     * 清空的话点一下侧栏会连着抖四下（消息区白掉、token 统计归零、模型下拉变空、会话列表变「读取中…」）。
      */
     case 'restarting': {
       const { key } = locate(state, action.hostId, action.cwd)
@@ -956,10 +821,8 @@ export function reducer(state: Store, action: Action): Store {
         : withView(state, state.activeKey, (view) => ({ ...view, switching: false }))
 
     /**
-     * 项目与会话清单。
-     *
-     * 原样存下来：里面的 `current` 标记**以投影时现算的为准**（见 `markCurrent`）——
-     * 多个 host 都会推这一帧、各自把「它自己」标成 current，所以帧上的值不可信。
+     * 项目与会话清单原样存下来，里面的 `current` 标记以投影时现算的为准（见 `markCurrent`）：
+     * 多个 host 都会推这一帧、各自把「它自己」标成 current，帧上的值不可信。
      */
     case 'workspace':
       return { ...state, projects: action.projects, sessions: action.sessions }
@@ -986,10 +849,8 @@ export function reducer(state: Store, action: Action): Store {
       return { ...state, files: action.items, filesQuery: action.query }
 
     /**
-     * 中途调整目标：本地先把这条记进会话，再让 host 转交给内核的 `steer`。
-     *
-     * 为什么不像 `user-send` 那样建一条助手占位：纠偏**不开启新回合** ——
-     * 正在跑的那条助手消息还在写，凭空插一个占位会把它的流式增量引到新气泡上。
+     * 中途调整目标：本地先把这条记进会话，再让 host 转交给内核的 `steer`。不像 `user-send` 那样
+     * 建助手占位：纠偏不开启新回合，凭空插一个占位会把正在写的那条消息的增量引到新气泡上。
      */
     case 'steer-send':
       return withView(state, state.activeKey, (view) => ({
@@ -998,11 +859,8 @@ export function reducer(state: Store, action: Action): Store {
       }))
 
     /**
-     * 历史回放（host 在每次就绪后**一定会**发一帧，新建会话发的是空历史）。
-     *
-     * 这一帧也是「切换结束」的信号：`switching` 在这里解除，而不是在 `ready` 那里 ——
-     * `ready` 先到、历史后到，若在 `ready` 就放开，用户此时按下回车可能把消息发进
-     * 一个「内容马上要被历史覆盖」的界面，那条消息会被覆盖掉。
+     * 历史回放（host 每次就绪后一定会发一帧，新建会话发的是空历史）。这一帧也是「切换结束」的
+     * 信号：`ready` 先到、历史后到，若在 `ready` 就放开 `switching`，用户此时发的消息会被覆盖。
      */
     case 'history':
       return withView(state, action.hostId ?? state.activeKey, (view) => ({
@@ -1097,10 +955,8 @@ export function reducer(state: Store, action: Action): Store {
         const current = asAssistant(items[index])
         if (current === null) return view
         /**
-         * 两处都写，但用途不同：
-         *   - `blocks` 里按位置存（界面渲染用，见 `appendReasoning`）；
-         *   - `reasoning` 是整回合的拼接（刻度尺提示框、轨迹兜底用）。
-         * 只留后者就会退回「所有思考堆在消息最上方」的老样子。
+         * `blocks` 里按位置存（界面渲染用，见 `appendReasoning`），`reasoning` 是整回合的拼接
+         * （刻度尺提示框、轨迹兜底用）：只留后者就会退回「所有思考堆在消息最上方」的样子。
          */
         const next: AssistantItem = {
           ...current,
@@ -1137,7 +993,7 @@ export function reducer(state: Store, action: Action): Store {
         const blocks: Block[] = current.blocks.map((block) => {
           if (block.type !== 'tool' || block.callId !== action.callId) return block
           matched = true
-          // 摘要给折叠行、`output` 给展开明细：两个都收，点开就有完整内容
+          // 摘要给折叠行、`output` 给展开明细：两个都收，点开就有完整内容。
           return { ...block, result: action.summary, output: action.output, isError: action.isError === true }
         })
         // 结果先于调用到达（或缺了调用帧）：补一张卡片，信息别丢。
@@ -1208,7 +1064,7 @@ export function reducer(state: Store, action: Action): Store {
       return { ...state, gitBusy: false, git: { cwd: action.cwd, status: action.status } }
 
     case 'git-failed':
-      // 拿不到就**什么都不显示**：面包屑只画路径，分支段不出现。
+      // 拿不到就什么都不显示：面包屑只画路径，分支段不出现。
       return { ...state, gitBusy: false, git: null }
 
     default:
@@ -1230,24 +1086,13 @@ export interface AgentController {
   readonly setEffort: (effort: string) => Promise<void> | undefined
   /** 重新探测一次当前会话工作目录的 git 情况（面包屑打开菜单时也调它）。 */
   readonly loadGit: () => Promise<void>
-  /**
-   * 切分支。
-   * @param branch - 目标分支（来自面包屑菜单里的列表）。
-   * @returns 结果；失败时 `message` 是要显示给用户的原因（git 的原话）。
-   */
+  /** 切分支；失败时 `message` 是 git 的原话。 */
   readonly switchBranch: (branch: string) => Promise<GitActionResult>
-  /**
-   * 拉取**当前分支**的最新提交（`git pull --ff-only`）。
-   * @returns 结果；成功时 `message` 是 git 的结论（「Already up to date.」/ diffstat）。
-   */
+  /** 拉取当前分支的最新提交；成功时 `message` 是 git 的结论（「Already up to date.」/ diffstat）。 */
   readonly pullBranch: () => Promise<GitActionResult>
   /** 在当前项目里开一个新会话（别的会话照跑）。 */
   readonly newSession: () => Promise<void>
-  /**
-   * 恢复一个已落盘的会话。
-   * @param sessionId - 会话 id。
-   * @param cwd - 该会话所属的项目；省略表示当前项目。
-   */
+  /** 恢复一个已落盘的会话；`cwd` 省略表示当前项目。 */
   readonly resumeSession: (sessionId: string, cwd?: string) => Promise<void>
   /** 切到另一个项目：在新工作目录里开一个新会话。 */
   readonly openProject: (path: string) => Promise<void>
@@ -1255,24 +1100,13 @@ export interface AgentController {
   readonly loadProjectSessions: (path: string) => Promise<void>
   /** 用系统默认程序打开一个文件（文件卡片的「打开」按钮）。 */
   readonly openPath: (path: string) => Promise<void>
-  /**
-   * 右侧预览面板读文件：按扩展名判断渲染类型，把内容（图片是 data URL）带回来。
-   *
-   * 和 `openPath` 的区别：那个是「交给系统程序」，这个是「读回来自己画」。
-   */
+  /** 右侧预览面板读文件：按扩展名判断渲染类型，把内容（图片是 data URL）带回来。 */
   readonly previewRead: (path: string) => Promise<PreviewPayload>
-  /**
-   * 用当前配置重启**当前会话**的内核。
-   *
-   * 用途：改完 MCP 配置（`<cwd>/.Memento/mcp.json`）后让它生效 ——
-   * MCP 服务器是启动时挂的，不重启不会变。
-   */
+  /** 用当前配置重启当前会话的内核：MCP 服务器是启动时挂的，改完 `mcp.json` 要用它生效。 */
   readonly restartKernel: () => Promise<void>
   /**
-   * 中途调整目标：把这段话插给正在跑的回合。
-   *
-   * 用内核的 `steer` 而不是再发一个 `prompt`：后者是排队（等这轮跑完才轮到它），
-   * 而「调整目标」要的是**立刻改方向** —— 内核会在下一个 step 边界消费它。
+   * 中途调整目标：把这段话插给正在跑的回合。用内核的 `steer` 而不是再发一个 `prompt` —— 后者是
+   * 排队（等这轮跑完才轮到它），而调整目标要立刻改方向，内核在下一个 step 边界消费它。
    */
   readonly steer: (text: string) => Promise<void>
   /** 要一批 `#` 候选文件（结果以 `files` 事件回来）。 */
@@ -1288,14 +1122,8 @@ export interface AgentController {
 }
 
 /**
- * 把主进程的事件接进 React。
- *
- * 订阅 + 拉快照**两条腿**：先订阅再 `getState()`，这样无论内核在界面订阅之前
- * 还是之后就绪，都不会漏掉 `ready`。
- *
- * 状态本身是**按会话分开**的（`Store.views`），对组件只暴露当前会话那一份
- * （`project`）—— 于是「后台会话继续跑」这件事对组件完全透明。
- * @returns 状态与可调用的动作。
+ * 把主进程的事件接进 React：先订阅再 `getState()`，两条腿走，这样无论内核在界面订阅之前还是
+ * 之后就绪，都不会漏掉 `ready`。状态按会话分开存在 `Store.views`，对组件只暴露当前会话那一份。
  */
 export function useAgent(): AgentController {
   const [store, dispatch] = useReducer(reducer, initialState)
@@ -1310,19 +1138,15 @@ export function useAgent(): AgentController {
   storeRef.current = store
 
   /**
-   * 最新状态的 ref。
-   *
-   * 那些「切会话」的动作要用它读**现在**的场景（当前在哪个会话、它忙不忙、
-   * 目标键有没有视图），而不是被 `useCallback` 的依赖钉在过去那一帧 ——
-   * 钉住的后果是把「后台还在跑的会话」当成空闲的，直接切掉。
+   * 最新状态的 ref：切会话的动作要用它读现在的场景（当前在哪个会话、忙不忙、目标键有没有视图），
+   * 而不是被 `useCallback` 的依赖钉在过去那一帧 —— 钉住的后果是把后台还在跑的会话当空闲切掉。
    */
   const stateRef = useRef<AgentState>(state)
   stateRef.current = state
 
   /**
-   * 切换会话的兜底：`switching` 正常由 `history` 帧解除，
-   * 但万一那一帧永远不来（host 崩了 / 读日志卡住），不能把界面锁死在「正在切换」上。
-   * 3 秒后自己放开 —— 顶多是显示着旧内容，比锁死好。
+   * 切换会话的兜底：`switching` 正常由 `history` 帧解除，万一那一帧永远不来（host 崩了 /
+   * 读日志卡住），3 秒后自己放开 —— 顶多显示着旧内容，比把界面锁死在「正在切换」上要好。
    */
   useEffect(() => {
     if (!state.switching) return undefined
@@ -1340,14 +1164,8 @@ export function useAgent(): AgentController {
     // host 事件与主进程自产事件共用一条通道，形状由协议保证（每一帧都带 hostId）。
     const off = api.onEvent((event) => { dispatchRef.current(event) })
 
-    /*
-     * 清单主动拉一次：即使首帧推送被丢掉，也能自己补上（host 会重新扫盘）。
-     *
-     * ⚠️ 这是**启动自愈**用的，不是界面功能 —— 底栏那个「刷新」按钮已经删掉了
-     * （用户要求：左下角不展示工具 / 刷新），但这条链路要留着，否则首帧一旦丢掉
-     * 侧栏就永远是空的。所以 `preload` / `main` / host 三层的 `refreshSessions`
-     * 仍然在，删掉的只有 hook 对外导出的那个 `refreshSessions`。
-     */
+    // 清单主动拉一次：首帧推送被丢掉时靠它补上（host 会重新扫盘）。这是启动自愈，不对外导出 ——
+    // 没有它，首帧一旦丢掉侧栏就永远是空的。
     void api.refreshSessions().catch(() => { /* 拿不到就等下一次推送 */ })
 
     api.getState().then(
@@ -1356,24 +1174,16 @@ export function useAgent(): AgentController {
           dispatchRef.current({ type: 'workspace', ...current.workspace })
         }
         if (current.phase === 'ready' && current.info !== undefined) {
-          /*
-           * 界面比内核晚到（重载、或者 bundle 解析得比内核启动还慢）：
-           * 视图是空的，但主进程那边 host 还活着。
-           *
-           * 这里**不重启**（会把还跑着的回合杀掉）：挂回活着的 host，再让它重放
-           * 一次历史把内容补上。挂不上（host 已经收了）就走正常的启动路径 ——
-           * 主进程会带 `--resume` 起一个新的，然后自己发历史帧。
-           */
+          // 界面比内核晚到（重载，或 bundle 解析得比内核启动还慢）：视图是空的，但 host 还活着。
+          // 这里不重启（会杀掉还在跑的回合），挂回它并重放一次历史；挂不上就走正常的启动路径。
           const key = current.activeKey ?? sessionKey(current.info.cwd, current.info.sessionId)
           dispatchRef.current({ type: 'ready', info: current.info, hostId: key })
           void api.attach({ cwd: current.info.cwd, resume: current.info.sessionId, reuse: true }).then(
             (result) => {
               if (!result.attached) return
               dispatchRef.current({ type: 'attached', key: result.key })
-              /*
-               * 只在视图还是空的时补历史：如果界面其实**比内核先到**（实时帧已经在收了），
-               * 再来一次回放会用盘上的旧内容盖掉刚收到的流式正文。
-               */
+              // 只在视图还是空的时候补历史：界面若比内核先到（实时帧已经在收），回放会用盘上的
+              // 旧内容盖掉刚收到的流式正文。
               if ((storeRef.current.views[result.key]?.items.length ?? 0) === 0) {
                 void api.replayHistory()
               }
@@ -1419,10 +1229,8 @@ export function useAgent(): AgentController {
   const setEffort = useCallback((effort: string) => api?.setEffort(effort), [api])
 
   /**
-   * 探测一次**当前会话工作目录**的 git 情况。
-   *
-   * 目录取「内核报的 cwd」优先、退回视图上记的 cwd：前者是权威值（`--cwd` 解析后的
-   * 绝对路径），后者在新会话还没就绪时是唯一的线索。
+   * 探测一次当前会话工作目录的 git 情况。目录取「内核报的 cwd」优先、退回视图上记的 cwd：前者是
+   * 权威值（`--cwd` 解析后的绝对路径），后者在新会话还没就绪时是唯一的线索。
    */
   const loadGit = useCallback(async (): Promise<void> => {
     const current = stateRef.current
@@ -1439,9 +1247,8 @@ export function useAgent(): AgentController {
   }, [api])
 
   /**
-   * 切分支。
-   * @param branch - 目标分支（来自面包屑菜单里的列表，主进程还会再校验一遍白名单）。
-   * @returns 结果；成功时 `message` 为空 —— 界面上的分支名自己就变了，不用再说一句。
+   * 切分支。目标分支来自面包屑菜单里的列表，主进程还会再校验一遍白名单；成功时 `message` 为空，
+   * 因为界面上的分支名自己就变了、不用再说一句。
    */
   const switchBranch = useCallback(async (branch: string): Promise<GitActionResult> => {
     const current = stateRef.current
@@ -1463,11 +1270,8 @@ export function useAgent(): AgentController {
   }, [api])
 
   /**
-   * 拉取当前分支最新。
-   *
-   * 与切分支的唯一区别是**成功也要说话**：「Already up to date.」和
-   * 「1 file changed, 1 insertion(+)」是完全不同的两件事，不说用户就不知道
-   * 到底有没有拉到东西。
+   * 拉取当前分支最新。与切分支的区别是成功也要说话：「Already up to date.」和「1 file changed,
+   * 1 insertion(+)」是完全不同的两件事，不说用户就不知道到底有没有拉到东西。
    */
   const pullBranch = useCallback(async (): Promise<GitActionResult> => {
     const current = stateRef.current
@@ -1487,27 +1291,16 @@ export function useAgent(): AgentController {
   }, [api])
 
   /**
-   * git 什么时候重新探测：
-   *   - **换会话 / 换项目**（`activeKey` 变）—— 另一个项目可能是另一个仓库；
-   *   - **一个回合结束**（`busy` 由 true 变 false）—— agent 自己可能用 bash
-   *     `git checkout` 过，这时候界面还在显示旧分支就是错的。
+   * git 什么时候重新探测：换会话 / 换项目（`activeKey` 变，另一个项目可能是另一个仓库），以及
+   * 一个回合结束（`busy` 由 true 变 false —— agent 自己可能用 bash `git checkout` 过）。
    */
   useEffect(() => {
     void loadGit()
   }, [loadGit, state.activeKey, state.busy])
 
   /**
-   * 换前台会话的公共入口。
-   *
-   * 顺序要紧：**先 `activate`（换视角）再 `attach`**，这样主进程回的第一帧
-   * （`restarting` / `ready`）一定落在已经存在的视图上。
-   *
-   * `reuse` 取「界面见没见过这个会话」：见过才谈得上挂回主进程里还留着的 host；
-   * 没见过（第一次打开）让主进程直接起新的 —— 反正没有内容可保。
-   * @param key - 目标会话视图键。
-   * @param cwd - 目标项目根目录。
-   * @param resume - 要恢复的会话 id；新会话省略。
-   * @returns 目标键（主进程算出来的，正常情况下与传入的一致）。
+   * 换前台会话的公共入口。顺序要紧：先 `activate`（换视角）再 `attach`，这样主进程回的第一帧
+   * （`restarting` / `ready`）一定落在已经存在的视图上。`reuse` 取「界面见没见过这个会话」。
    */
   const switchTo = useCallback(async (
     key: string,
@@ -1522,7 +1315,7 @@ export function useAgent(): AgentController {
       cwd,
       ...(resume === undefined ? {} : { resume }),
       reuse,
-      // 「我刚离开的会话还在跑」：主进程可能还没收到 prompt，先替它记上（见 ipc.ts）。
+      // 「刚离开的会话还在跑」：主进程可能还没收到 prompt，先替它记上（见 ipc.ts）。
       activeBusy: current.busy,
     })
     if (result.attached) dispatch({ type: 'attached', key: result.key })
@@ -1530,10 +1323,8 @@ export function useAgent(): AgentController {
   }, [api])
 
   /**
-   * 恢复会话：`--resume` 要求开启持久化，桌面端默认是开的。
-   *
-   * 跨项目恢复必须带上 `cwd`：会话 id 只在它自己的项目里有效，否则会得到
-   * 「会话不存在」。
+   * 恢复会话：`--resume` 要求开启持久化，桌面端默认是开的。跨项目恢复要带上 `cwd`：会话 id 只在
+   * 它自己的项目里有效，否则会得到「会话不存在」。
    */
   const resumeSession = useCallback(async (sessionId: string, cwd?: string): Promise<void> => {
     const current = stateRef.current
@@ -1571,8 +1362,7 @@ export function useAgent(): AgentController {
   }, [switchTo])
 
   /**
-   * 展开一个折叠的项目：让 host 去读它的会话。
-   * 读盘发生在 host 侧，界面这一侧只负责发请求与标记「读取中」。
+   * 展开一个折叠的项目：让 host 去读它的会话（读盘在 host 侧，界面只发请求并标记「读取中」）。
    */
   const loadProjectSessions = useCallback(async (path: string): Promise<void> => {
     dispatch({ type: 'project-sessions-loading', path })
@@ -1601,17 +1391,15 @@ export function useAgent(): AgentController {
 
   const openPath = useCallback(async (path: string): Promise<void> => {
     const result = await api?.openPath(path)
-    // 主进程返回错误字符串（例如文件不存在），成功时空字符串
+    // 主进程返回错误字符串（例如文件不存在），成功时空字符串。
     if (typeof result === 'string' && result !== '') {
       dispatch({ type: 'user-error', message: `打开失败：${result}` })
     }
   }, [api])
 
   /**
-   * 重启**当前会话**的内核（同一个 cwd + 同一个会话 id，只是换一个进程）。
-   *
-   * `reuse: false` 是刻意的：这里是「按新配置重启」，不是「切过去看看」——
-   * 即使主进程里还留着这个会话的 host，也必须换掉。
+   * 重启当前会话的内核（同一个 cwd + 同一个会话 id，只换一个进程）。`reuse: false`：这是「按新
+   * 配置重启」，而不是「切过去看看」，即使主进程里还留着这个会话的 host 也换掉。
    */
   const restartKernel = useCallback(async (): Promise<void> => {
     const current = stateRef.current
@@ -1625,10 +1413,8 @@ export function useAgent(): AgentController {
   }, [api])
 
   /**
-   * 拉一次设置数据。
-   *
-   * 刻意**不**缓存到 state 以外的地方：每次打开设置面板都重新拉，
-   * 这样「改完文件切回来」看到的一定是盘上的现状。
+   * 拉一次设置数据，不缓存到 state 以外的地方：每次打开设置面板都重新拉，这样「改完文件切回来」
+   * 看到的一定是盘上的现状。
    */
   const loadSettings = useCallback(async (): Promise<void> => {
     if (api === undefined) return
@@ -1657,7 +1443,7 @@ export function useAgent(): AgentController {
     try {
       await api.listFiles(query)
     } catch {
-      // 文件索引拿不到就是菜单空着，不值得打断输入
+      // 文件索引拿不到就是菜单空着，不值得打断输入。
     }
   }, [api])
 

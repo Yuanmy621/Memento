@@ -2,21 +2,9 @@
 /**
  * 把本目录下的适配器安装到 opencli 的适配器目录（`~/.opencli/clis/`）。
  *
- * ## 为什么需要「安装」这一步
- *
- * opencli 只从一个地方发现适配器：`~/.opencli/clis/<site>/<命令>.js`，而且它的
- * 扫描器要求**真实目录**（`entry.isDirectory()`）—— 所以不能像 `.claude/skills`
- * 那样用软链把整个仓库目录挂过去（软链会被跳过），`.ts` 也不加载（只认 `.js`）。
- *
- * 于是分工是：**仓库是唯一事实来源**（`app/opencli/clis/`），这个脚本负责同步过去。
- * 改了适配器就跑一次：
- *
- * ```bash
- * npm run opencli:install
- * ```
- *
- * 覆盖式同步：仓库里删掉的文件，这里也会从 `~/.opencli/clis/<site>/` 里删掉
- * （只动本仓库管理的 site 目录，不碰 opencli 自带或你手写的其他适配器）。
+ * opencli 只从 `~/.opencli/clis/<site>/<命令>.js` 发现适配器，且要求真实目录（`entry.isDirectory()`）、只加载
+ * `.js`，所以软链与 `.ts` 都用不上。仓库（`app/opencli/clis/`）是唯一事实来源，这个脚本覆盖式同步过去，
+ * 改了适配器就跑 `npm run opencli:install`；仓库里删掉的文件也会从目标目录删掉（只动本仓库管理的 site 目录）。
  *
  * @module Memento/opencli/install
  */
@@ -31,10 +19,7 @@ const SOURCE = join(dirname(fileURLToPath(import.meta.url)), 'clis')
 /** opencli 的适配器目录（它唯一会扫描的地方）。 */
 const TARGET = join(homedir(), '.opencli', 'clis')
 
-/**
- * 列出源目录里的 site（站点）名。
- * @returns {Promise<string[]>} 站点目录名。
- */
+/** 列出源目录里的站点目录名。 */
 async function sites() {
   const entries = await readdir(SOURCE, { withFileTypes: true })
   return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name)

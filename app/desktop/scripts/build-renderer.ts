@@ -1,25 +1,11 @@
 #!/usr/bin/env node
 /**
- * 客户端构建脚本：**渲染进程**（JSX/React/Streamdown → 单个 IIFE bundle + 单个 CSS）
- * 与 **preload**（`preload.ts` → 自包含的 CommonJS）。
+ * 客户端构建脚本：渲染进程（JSX/React/`streamdown` → 单个 IIFE bundle + 单个 CSS）与 preload（`preload.ts` → CommonJS）。
  *
- * 为什么渲染进程需要构建（而主进程与 host 不需要）：
- *   Streamdown 是一个 React 组件，依赖 React 运行时与 Tailwind 生成的样式。
- *   浏览器不能直接跑 JSX，`file://` 下也不能做 ES module 解析与裸包名解析，
- *   所以这里用 esbuild 把它们**全部打进一个文件**，界面用经典 `<script>` 加载。
- *
- * 产物（不要手改，改源码后重新构建）：
- *   renderer/dist/renderer.js     —— IIFE，包含 React + Streamdown + 我们的组件
- *   renderer/dist/renderer.css    —— Tailwind 产出 + 我们的主题变量
- *   preload.cjs                   —— preload.ts 打成的 CommonJS（沙箱 preload 只认 CJS）
- *
- * preload 也要构建的原因见 `preload.ts` 的模块注释：主进程能直接跑 `.ts`
- * （Electron 自带的 Node 默认开类型擦除），但**沙箱化 preload 不行** ——
- * 它走 Electron 自己的 CJS 加载器，指到 `.ts` 会静默失败（`window.Memento` 不存在）。
- *
- * 用法:
- *   node app/desktop/scripts/build-renderer.ts            # 构建
- *   node app/desktop/scripts/build-renderer.ts --watch    # 监听重建
+ * 渲染进程需要构建是因为浏览器不能直接跑 JSX，`file://` 下也没有 ES module 与裸包名解析，esbuild 把它们全部打进
+ * 一个文件、界面用经典 `<script>` 加载；产物 `renderer/dist/renderer.js`、`renderer/dist/renderer.css` 与
+ * `preload.cjs` 都是构建产物，不要手改。preload 也用构建产物：主进程能直接跑 `.ts`（Electron 的 Node 默认开
+ * 类型擦除），沙箱化 preload 不行（见 `preload.ts` 的模块注释）。用法：直接跑构建，加 `--watch` 监听重建。
  *
  * @module Memento/desktop/scripts/build-renderer
  */
@@ -48,14 +34,8 @@ const watch = process.argv.includes('--watch')
 mkdirSync(outDir, { recursive: true })
 
 /**
- * 需要被 Tailwind 扫描的额外源码目录。
- *
- * 为什么要在构建脚本里算，而不是在 CSS 里写死相对路径：
- *   Streamdown 的类名在它自己的 `dist/*.js` 里，必须显式 `@source` 告诉 Tailwind。
- *   而 pnpm 的 `node_modules/<pkg>` 是**指向 `.pnpm/<pkg>@<ver>/…` 的符号链接**，
- *   Tailwind 的扫描器默认不跟随符号链接，写相对路径会静默扫不到（样式看着像丢了）。
- *   这里用 `realpathSync` 把真实路径解出来，npx / pnpm / npm 三种布局都成立。
- * @returns {string[]} 绝对路径列表（不存在的直接跳过）。
+ * 需要被 Tailwind 扫描的额外源码目录：`streamdown` 的类名在它自己的 `dist/*.js` 里，要显式 `@source` 告诉 Tailwind；
+ * pnpm 的 `node_modules/<pkg>` 是指向 `.pnpm/<pkg>@<ver>/…` 的符号链接，扫描器不跟随，所以用 `realpathSync` 解真实路径。
  */
 function scanSources(): string[] {
   const packages = ['streamdown', '@streamdown/code', '@streamdown/cjk']
@@ -71,10 +51,8 @@ function scanSources(): string[] {
 }
 
 /**
- * 把 Tailwind v4 + 我们的主题一起编译成一份 CSS。
- *
- * Tailwind v4 是 CSS-first 配置：`@import "tailwindcss"` 引入引擎，
- * `@source` 指定额外扫描目录，主题用 `@theme` 声明 —— 见 `renderer/styles/app.css`。
+ * 把 Tailwind v4 与主题变量一起编译成一份 CSS。Tailwind v4 是 CSS-first 配置：
+ * `@import "tailwindcss"` 引入引擎，`@source` 指定额外扫描目录，主题用 `@theme` 声明（见 `renderer/styles/app.css`）。
  */
 async function buildCss() {
   const source = readFileSync(entryCss, 'utf8')
@@ -85,14 +63,8 @@ async function buildCss() {
 }
 
 /**
- * 把 `preload.ts` 打成自包含的 **CommonJS**。
- *
- * 三条都是硬要求：
- *   - `format: 'cjs'` —— 沙箱化 preload 不支持 ESM；
- *   - `bundle: true`  —— 它不能 `require` 相对路径，依赖必须打进来；
- *   - `external: ['electron']` —— `electron` 由 Electron 在运行时提供，别打进来。
- *
- * @returns 产物体积（字节）。
+ * 把 `preload.ts` 打成自包含的 CommonJS：`format: 'cjs'`（沙箱 preload 不支持 ESM）、`bundle: true`
+ * （它不能 `require` 相对路径）、`external: ['electron']`（`electron` 由 Electron 在运行时提供）。返回产物体积（字节）。
  */
 async function buildPreload(): Promise<number> {
   const result = await esbuild.build({
@@ -114,8 +86,8 @@ async function buildPreload(): Promise<number> {
 const ignoreCssPlugin: Plugin = {
   name: 'ignore-css-imports',
   setup(build): void {
-    // Streamdown 的动画样式、shiki 的主题样式都是由 JS 里 `import 'x.css'` 引入的；
-    // 浏览器端已经在加载我们编译好的 renderer.css，这里把它们标记为空避免重复打包。
+    // `streamdown` 的动画样式、shiki 的主题样式都是由 JS 里 `import 'x.css'` 引入的；
+    // 浏览器端已经在加载编译好的 `renderer.css`，这里把它们标记为空避免重复打包。
     build.onResolve({ filter: /\.css$/ }, args => ({ path: args.path, namespace: 'ignored-css' }))
     build.onLoad({ filter: /.*/, namespace: 'ignored-css' }, () => ({ contents: '', loader: 'js' }))
   },
@@ -136,9 +108,8 @@ const jsOptions: BuildOptions = {
   define: { 'process.env.NODE_ENV': watch ? '"development"' : '"production"' },
   plugins: [ignoreCssPlugin],
   /*
-   * 图片一律内联成 data URL：应用图标只有一个（`assets/logo.png`），
-   * 而 index.html 的 CSP 是 `img-src 'self' data:` —— 内联进去既不用额外的复制步骤，
-   * 也不用担心打包后相对路径算错。
+   * 图片一律内联成 data URL（应用图标只有 `assets/logo.png`）：`index.html` 的 CSP 是 `img-src 'self' data:`，
+   * 内联进去既不用额外的复制步骤，也不用担心打包后相对路径算错。
    */
   loader: { '.png': 'dataurl', '.svg': 'dataurl' },
   logLevel: 'info',

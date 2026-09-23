@@ -1,11 +1,8 @@
 /**
  * 终端渲染：把内核事件流翻译成人看的输出。
  *
- * 数据来源有两处：
- *   - `agent/assistant-stream`：**过程内**的流式增量（打字机效果）；
- *   - `session/event`：**已落盘**的会话事件（工具调用、turn 结束、错误）。
- *
- * 前者是易失的、后者才是权威记录，所以正文靠前者渲染、结论靠后者判断。
+ * 正文取自 `agent/assistant-stream` 的流式增量（打字机效果），结论取自 `session/event`
+ * 的已落盘事件：前者易失，后者才是权威记录。
  *
  * @module Memento/ui
  */
@@ -68,10 +65,8 @@ export interface Renderer {
 }
 
 /**
- * 把工具参数压成一行摘要，方便在终端里扫读。
- *
- * 导出给桌面端的 host 复用（`app/desktop/host/bridge.ts`），
- * 让「工具调用怎么显示」这件事在 CLI 与 GUI 之间保持一致。
+ * 把工具参数压成一行摘要，方便在终端里扫读；导出给桌面端 host
+ * （`app/desktop/host/bridge.ts`）复用，让工具调用的显示在 CLI 与 GUI 之间保持一致。
  */
 export function summarizeCall(rawArguments: string): string {
   let args: Record<string, unknown> = {}
@@ -98,12 +93,8 @@ export function summarizeCall(rawArguments: string): string {
 }
 
 /**
- * 工具结果的**完整**文本（保留换行，不压空格）。
- *
- * 与 {@link summarizeResult} 的区别：那个是给终端扫读的**一行**摘要，这个是给人
- * **展开细看**的原文。桌面端的 host 两个都要（折叠显示摘要、点开显示原文）。
- * @param blocks - 工具结果消息的内容块。
- * @returns 纯文本（可能多行；空结果返回空串）。
+ * 工具结果的完整文本，保留换行、不压空格；与 `summarizeResult()` 的一行摘要互为补充，
+ * 桌面端 host 两个都要（折叠显示摘要、点开显示原文）。
  */
 export function toolResultText(blocks: readonly ContentBlock[]): string {
   return blocks
@@ -137,11 +128,7 @@ function truncate(text: string, max: number): string {
 }
 
 /**
- * 监听 agent 的事件并实时渲染。
- * @param ctx - 根上下文（事件总线）。
- * @param agent - 本次运行的 agent；其他 agent 的事件会被忽略。
- * @param options - 渲染开关。
- * @returns 渲染器句柄。
+ * 监听 agent 的事件并实时渲染；其他 agent 的事件会被忽略。
  */
 export function attachRenderer(ctx: Context, agent: Agent, options: RenderOptions): Renderer {
   let stats: TurnStats = { text: '', toolCalls: 0, outcome: 'unknown' }

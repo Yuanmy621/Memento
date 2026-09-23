@@ -1,19 +1,9 @@
 /**
- * 工具 → 「实际功能的中文名」。
+ * 工具 → 界面上的中文功能名与一句话说明。
  *
- * 界面里**不展示工具本身的变量名**（`mcp__butian__butian_rank` 这种是给模型看的），
- * 而是给每个工具一个中文功能名与一句话说明。模型侧一切照旧：真正发给模型的仍然是原名。
- * 这里只影响**输入框 `@` 弹出的 MCP 候选菜单**（以及插进输入框的 chip 上显示的字 ——
- * 落库文本仍是 `用 <原名> 工具：`，见 `chip-text.ts`）。
- *
- * ## 认不出来怎么办
- *
- * 认不出来（用户自己挂了别的 MCP server、或内核换了工具名）时**不编**：
- *   - 名字仍显示原名（宁可露出变量名，也不能瞎起一个错的中文名）；
- *   - 说明优先用服务端给的中文描述（很多 MCP server 会写中文 description，比如补天）；
- *     描述是英文就留空，免得菜单里中英混杂。
- *
- * 纯逻辑：没有 JSX、没有 DOM，Node 里能直接 import 跑真值表。
+ * 模型侧收到的仍然是原名，这里只影响 `@` 候选菜单与插进输入框的 chip 上显示的字，
+ * 落库文本仍是 `用 <原名> 工具：`（见 `chip-text.ts`）。认不出来时不编中文名：
+ * 名字退回原名，说明优先用服务端给的中文描述，描述是英文就留空，免得菜单里中英混杂。
  *
  * @module Memento/desktop/renderer/src/tool-names
  */
@@ -31,9 +21,8 @@ export interface ToolDisplay {
 }
 
 /**
- * 内置工具表：**按功能分组写死**，顺序就是菜单里的顺序（读 → 写 → 改 → 跑 → 找 → 抓 →
- * 看图 → 技能 → 后台任务）。这份顺序是刻意排的：SRC 场景下最常用的读/写/跑排在上面，
- * 比按字典序排「bash、edit、fetch_url…」好找得多。
+ * 内置工具表：按功能分组写死，`order` 就是菜单里的顺序。
+ * 顺序按使用频度排（读 / 写 / 跑在前），比按字典序排好找。
  */
 const BUILTIN: Readonly<Record<string, { readonly label: string; readonly note: string; readonly order: number }>> = {
   read: { label: '读取文件', note: '读 UTF-8 文本，返回带行号的内容', order: 10 },
@@ -54,8 +43,8 @@ const BUILTIN: Readonly<Record<string, { readonly label: string; readonly note: 
 }
 
 /**
- * MCP server 的中文名与展示顺序：认得出来就用中文（并排在前面），
- * 认不出来就显示 `MCP · <server id>` 并排到最后 —— **不替用户挂的 server 起中文名**。
+ * MCP server 的中文名与展示顺序：认得出来就用中文并排在前面，
+ * 认不出来显示 `MCP · <server id>` 并排到最后。
  */
 const MCP_SERVER: Readonly<Record<string, { readonly label: string; readonly order: number }>> = {
   butian: { label: '补天', order: 10 },
@@ -63,10 +52,8 @@ const MCP_SERVER: Readonly<Record<string, { readonly label: string; readonly ord
 }
 
 /**
- * MCP 工具的中文名（按 server 分组写死）。
- *
- * 只列「这个仓库自己带的」那一个 server（补天，见 `app/mcp/butian/server.ts`）：
- * 它的 `title` 就是中文名，这里抄一份，顺便定菜单里的顺序（选目标 → 看别人 → 看自己）。
+ * MCP 工具的中文名（按 server 分组写死），顺序即菜单顺序。
+ * 只列本仓库自带的那个 server（补天，见 `app/mcp/butian/server.ts`），名字抄它的 `title`。
  */
 const MCP_TOOLS: Readonly<Record<string, Readonly<Record<string, { readonly label: string; readonly order: number }>>>> = {
   butian: {
@@ -80,15 +67,13 @@ const MCP_TOOLS: Readonly<Record<string, Readonly<Record<string, { readonly labe
   },
 }
 
-/** 文本里有没有中日韩字（用来判断「服务端给的描述是不是中文」）。 */
+/** 文本里有没有中日韩字，用来判断服务端给的描述是不是中文。 */
 function hasCjk(text: string): boolean {
   return /[\u3400-\u9fff]/.test(text)
 }
 
 /**
- * 拆开 MCP 工具名 `mcp__<server>__<tool>`。
- * @param name - 工具全名。
- * @returns server 与 tool；不是 MCP 工具时返回 `null`。
+ * 拆开 MCP 工具名 `mcp__<server>__<tool>`，返回 server 与 tool；不是 MCP 工具时返回 `null`。
  */
 export function mcpParts(name: string): { readonly server: string; readonly tool: string } | null {
   if (!name.startsWith('mcp__')) return null
@@ -99,10 +84,9 @@ export function mcpParts(name: string): { readonly server: string; readonly tool
 }
 
 /**
- * 取描述的第一句（中文才要，英文留空 —— 菜单里不中英混排）。
+ * 取描述的第一句，中文才要（英文留空，菜单里不中英混排）。
  *
- * MCP server 的描述是写给**模型**看的 markdown（比如补天的「（**需要登录 Cookie**）」），
- * 直接摆进菜单会把 `**` 一起显出来，所以先洗掉强调记号。
+ * 服务端描述是写给模型看的 markdown，先洗掉 `**` 这类强调记号再摆进菜单。
  */
 function chineseNote(description: string | undefined): string {
   if (description === undefined) return ''
@@ -110,16 +94,14 @@ function chineseNote(description: string | undefined): string {
     .replace(/\*\*|__|`/g, '')
     .trim()
   if (line === '' || !hasCjk(line)) return ''
-  // 服务端的描述常常很长：截到第一个句号 / 分号，最多 46 字
+  // 描述常常很长：截到第一个句号 / 分号，最多 46 字
   const cut = line.split(/[。；;]/)[0] ?? line
   return cut.length > 46 ? `${cut.slice(0, 46)}…` : cut
 }
 
 /**
- * 一个工具在界面上该怎么显示。
- * @param name - 工具全名（`read` / `mcp__butian__butian_rank`）。
- * @param description - 内核给的描述（可选；只在认不出这个工具时用作兜底说明）。
- * @returns 中文功能名 + 说明 + 分组 + 图标类别。
+ * 一个工具在界面上该怎么显示：中文功能名 + 说明 + 分组 + 图标类别。
+ * `description` 是内核给的描述，可选，只在认不出这个工具时用作兜底说明。
  */
 export function toolDisplay(name: string, description?: string): ToolDisplay {
   const mcp = mcpParts(name)
@@ -137,18 +119,15 @@ export function toolDisplay(name: string, description?: string): ToolDisplay {
   if (known !== undefined) {
     return { label: known.label, note: known.note, group: '内置工具', mcp: false }
   }
-  // 认不出来：名字保持原名（不编），说明尽量用中文描述
+  // 认不出来：名字保持原名，说明尽量用中文描述
   return { label: name, note: chineseNote(description), group: '其它工具', mcp: false }
 }
 
 /**
- * 取一段文本的**首行**（界面上到处都是「一行预览」：工具行尾的灰字、轨迹行的摘要）。
+ * 取一段文本的首行（工具行尾的灰字、轨迹行的摘要都是它），`max` 是首行上限、超了加省略号。
  *
- * 刻意不用 `split('\n')`：工具输出动辄几十 KB，切一遍就是一次整串复制，
- * 而消息流每来一个 delta 都要重算一次预览 —— 用 `indexOf` + 一次 `slice` 是 O(首行)。
- * @param text - 原文（可能多行）。
- * @param max - 首行最长多少字（超了加省略号）。
- * @returns 首行（已去首尾空白）。
+ * 不用 `split('\n')`：工具输出动辄几十 KB，而消息流每来一个 delta 都要重算预览，
+ * `indexOf` + 一次 `slice` 只复制首行。返回前去掉首尾空白。
  */
 export function firstLine(text: string, max = 200): string {
   const end = text.indexOf('\n')
@@ -157,12 +136,7 @@ export function firstLine(text: string, max = 200): string {
 }
 
 /**
- * 工具参数在明细里该叫什么。
- *
- * 「参数：ls -la」这种写法在 bash 上很别扭（那是**命令**不是参数），
- * 所以按工具类别给一个准确的抬头；认不出来的一律叫「参数」，不硬编。
- * @param name - 工具全名。
- * @returns 明细里参数行的抬头（不含冒号）。
+ * 工具参数在明细里该叫什么：`bash` 那一行是命令不是参数，所以按工具类别给抬头，返回值不带冒号。
  */
 export function argsLabel(name: string): string {
   if (name === 'bash' || name.startsWith('job_')) return '命令'
@@ -171,13 +145,10 @@ export function argsLabel(name: string): string {
 }
 
 /**
- * 一个工具在同类里的展示顺序（`@` 候选菜单按它排）。
+ * 一个工具在同类里的展示顺序（`@` 候选菜单按它排），越小越前。
  *
- * 表里排过序的用表里的 order；没排过的（用户自己挂的 server）统一给 500，
- * 由调用方再用名字做稳定排序 —— 不这么排的话，「项目大厅」这种该排第一的入口
- * 会按英文字母序沉到列表最后。
- * @param name - 工具全名。
- * @returns 排序权重（越小越前）。
+ * 没排过的（用户自己挂的 server）统一给 500，由调用方再用名字做稳定排序 ——
+ * 否则「项目大厅」这类该排第一的入口会按英文字母序沉到列表最后。
  */
 export function toolOrder(name: string): number {
   const mcp = mcpParts(name)

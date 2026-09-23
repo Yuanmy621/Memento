@@ -1,63 +1,25 @@
 /**
- * 漏洞盒子（vulbox.com）**私有接口**客户端。
+ * 漏洞盒子（vulbox.com）私有接口客户端：门户、主站与企业 SRC 大厅共用 `https://vapi.vulbox.com` 一个网关。
+ * 接口路径与请求头取自门户前端 bundle，属私有接口，没有公开文档。
  *
- * ## 这些接口是从哪来的
- *
- * 漏洞盒子没有公开 API 文档，也没有官方 MCP。这里的路径、请求头与判定规则全部来自它自己
- * 前端 bundle 里的真实定义 —— `paypal.vulbox.com`（企业 SRC 门户，Nuxt SSR）与
- * `www.vulbox.com` 的 `_nuxt/*.js`，并**逐条实测过**（见 `README.md` 的实测表）。
- *
- * ```js
- * // paypal.vulbox.com/public/3752b65.js 里的原始形态
- * BASE_URL_API: "https://vapi.vulbox.com"                       // 所有门户共用一个 API 网关
- * e.onRequest(t => {
- *   t.headers["Content-Type"] = "application/json;charset=UTF-8"
- *   t.headers["X-client-Type"] = "web"
- *   t.headers.uuid = localStorage.uuid || <随机 16~32 位>
- *   const o = $cookies.get("vulbox_token"); if (o) t.headers.Authorization = "Bearer " + o
- *   t.headers["X-Host-Original"] = window.location.host          // ← 用哪个门户的身份
- * })
- * // 响应：{ code, msg, data }；code === 200 才是成功
- * ```
- *
- * 由此得到四条**必须遵守**的约定，缺一个就会拿到 404 / 暂无权限：
- *
- * | 约定 | 说明 |
- * | --- | --- |
- * | 网关只有一个：`vapi.vulbox.com` | 门户、主站、企业 SRC 大厅都走它 |
- * | `X-Host-Original` 决定「你是谁的门户」 | 传 `paypal.vulbox.com` 才能读到 PayPal 这个 SRC 的接口；传 `www.vulbox.com` 会回 `企业SRC信息不存在` |
- * | 凭据是 `Authorization: Bearer <vulbox_token>` | token 在 Cookie 里（`vulbox_token`），不是 Cookie 本身 |
- * | 判定 `code === 200` | 业务失败也是 HTTP 200，必须看 envelope |
- *
- * ## 登录态与「暂无权限」
- *
- * `code` 的几种含义（实测）：
- *   - `401` + `Receive a wrong Token` / `Can't found Token` —— 没带 / 带错了 token；
- *   - `301001 暂无权限` —— token 有效，但**没有加入这个 SRC 项目**。
- *     企业 SRC 的资产范围（`assets.content`）与公告详情（`/web/src/project/notice/<id>`）
- *     都要先「加入项目」才给看，未加入时 `assets.accessible = 4` 且 `content` 为空串；
- *   - `404 企业SRC信息不存在` —— `X-Host-Original` 不是一个 SRC 门户（比如主站）。
- *
- * ## 为什么用「token 有效但没加入」这种话
- *
- * 光看 `logged: false` 会让人以为登录过期了（实测里 `user.vulbox.com` 主站明明是登录状态，
- * 门户侧仍回 `logged: false`）。所以 {@link VulboxError} 把 `forbidden` 单独分一类，
- * 提示是「去门户点加入项目」，而不是「重新复制 Cookie」。
+ * 请求头 `X-Host-Original` 决定用哪个门户的身份；凭据取自 Cookie 里的 `vulbox_token`，
+ * 以 `Authorization: Bearer <token>` 发出。响应是 `{ code, msg, data }`，业务失败同样返回 HTTP 200，
+ * 只有 `code === 200` 才算成功；`301001 暂无权限` 表示 token 有效但未加入该项目。
  *
  * @module Memento/mcp/vulbox/client
  */
 
-/** API 网关。所有接口路径都相对它 —— 门户与主站共用一个。 */
+/** API 网关，门户与主站共用；所有接口路径都相对它。 */
 const BASE = 'https://vapi.vulbox.com'
 
 /** 单次请求超时（毫秒）。 */
 const TIMEOUT_MS = 20_000
 
-/** 统一 UA：带上一个正常浏览器的，避免被当成脚本拦掉。 */
+/** 用正常浏览器的 UA，避免被当成脚本拦掉。 */
 const USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 '
   + '(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36 Memento-Agent/0.1 vulbox-mcp'
 
-/** 默认门户：`X-Host-Original` 不给时用它（企业 SRC 门户的域名）。 */
+/** 默认门户，即 `X-Host-Original` 缺省时的取值；`VULBOX_PORTAL` 可覆盖。 */
 export const DEFAULT_PORTAL = process.env['VULBOX_PORTAL'] ?? 'paypal.vulbox.com'
 
 /** 主站域名（企业 SRC 大厅、帮助中心、总榜都在它名下）。 */
@@ -91,7 +53,7 @@ export class VulboxError extends Error {
 export interface Credential {
   /** `vulbox_token` Cookie 的值（JWT）。 */
   readonly token: string
-  /** `uuid` Cookie 的值；没有就由客户端生成一个（实测不校验，但接口要这个头）。 */
+/** `uuid` Cookie 的值；缺失时由客户端随机生成，接口不校验它但要这个头。 */
   readonly uuid: string
 }
 
@@ -102,10 +64,7 @@ interface Envelope {
   readonly data?: unknown
 }
 
-/**
- * 从一个 uuid 生成器借来的随机串（对齐前端实现：数字 + 小写 + 大写各至少一个）。
- * 前端是 `localStorage.uuid || 随机生成后写回`，所以这个值本身不参与鉴权。
- */
+/** 生成 16~32 位随机串，前三位分别是数字、小写、大写（对齐前端实现）；该值不参与鉴权。 */
 function randomUuid(): string {
   const digits = '0123456789'
   const lower = 'abcdefghijklmnopqrstuvwxyz'
@@ -121,12 +80,7 @@ function randomUuid(): string {
   return chars.join('')
 }
 
-/**
- * 从 Cookie 串里取一个键的值。
- * @param cookie - 浏览器里整串 Cookie（也容忍 `Cookie:` 前缀与换行）。
- * @param name - 键名。
- * @returns 值；没有就是空串。
- */
+/** 从整串 Cookie 里取一个键的值；容忍 `Cookie:` 前缀与换行，取不到返回空串。 */
 export function cookieValue(cookie: string, name: string): string {
   for (const part of cookie.split(';')) {
     const trimmed = part.trim()
@@ -136,12 +90,8 @@ export function cookieValue(cookie: string, name: string): string {
 }
 
 /**
- * 把用户粘贴的 Cookie 整串解析成凭据。
- *
- * 只认 `vulbox_token`（鉴权用）与 `uuid`（请求头用）两个键 —— 其余 Cookie
- * （`VB_INDEX_LAYOUT`、`WeChat_uuid`、`authorization=1`）实测都不参与接口鉴权。
- * @param cookie - 原始 Cookie 串。
- * @returns 凭据；没有 `vulbox_token` 时返回 `undefined`。
+ * 把整串 Cookie 解析成凭据：只用 `vulbox_token`（鉴权）与 `uuid`（请求头），其余键
+ * （`VB_INDEX_LAYOUT`、`WeChat_uuid`、`authorization=1`）不参与鉴权；缺 `vulbox_token` 返回 `undefined`。
  */
 export function credentialOf(cookie: string): Credential | undefined {
   const token = cookieValue(cookie, 'vulbox_token')
@@ -150,12 +100,12 @@ export function credentialOf(cookie: string): Credential | undefined {
   return { token, uuid: uuid === '' ? randomUuid() : uuid }
 }
 
-/** 判断一个响应是不是「业务成功」。 */
+/** 是否业务成功只看 envelope 的 `code`，HTTP 状态码不代表业务结果。 */
 function isOk(envelope: Envelope): boolean {
   return envelope.code === 200
 }
 
-/** 取业务错误文案。 */
+/** 取 envelope 里的业务错误文案。 */
 function messageOf(envelope: Envelope): string {
   const msg = envelope.msg
   return typeof msg === 'string' && msg !== '' ? msg : '（接口没给错误信息）'
@@ -166,13 +116,13 @@ function looksLikeAuthError(text: string): boolean {
   return /wrong Token|Can't found Token|Unauthenticated|登录|登录过期|请先登录/i.test(text)
 }
 
-/** 组装请求头。 */
+/** 组装请求头；`X-Host-Original` 与 `Referer` 都由门户域名推出。 */
 function headersFor(portal: string, credential: Credential | undefined): Record<string, string> {
   const headers: Record<string, string> = {
     Accept: 'application/json, text/plain, */*',
     'Content-Type': 'application/json;charset=UTF-8',
     'X-client-Type': 'web',
-    // 决定「用哪个门户的身份」：SRC 门户传自己的域名，主站传 www
+// `X-Host-Original` 决定用哪个门户的身份：门户传自己的域名，主站传 www；传错会回「企业SRC信息不存在」
     'X-Host-Original': portal,
     Referer: `https://${portal}/`,
     'User-Agent': USER_AGENT,
@@ -185,17 +135,8 @@ function headersFor(portal: string, credential: Credential | undefined): Record<
 }
 
 /**
- * 发一次 GET 并解包 envelope。
- *
- * 只实现 GET：这个 MCP 是**只读**的，漏洞盒子的写接口（加入项目 / 提交漏洞 / 反馈）
- * 一律不注册、也不在这里开口子。
- *
- * @param portal - `X-Host-Original`：`paypal.vulbox.com` 之类的门户域名，或 `www.vulbox.com`。
- * @param path - 接口路径（以 `/` 开头）。
- * @param params - 查询参数；`undefined` 的键会被丢掉。
- * @param credential - 凭据；不传就是匿名请求。
- * @returns `envelope.data`。
- * @throws {VulboxError} 网络 / HTTP / 业务 / 权限 / 凭据问题，都带 `kind`。
+ * 发一次 GET 并解包 envelope，返回其中的 `data`；只实现 GET，写接口不在这里开口子。
+ * `portal` 作为 `X-Host-Original` 发出，`params` 里值为 `undefined` 的键会被丢掉，失败抛带 `kind` 的 {@link VulboxError}。
  */
 export async function apiGet(
   portal: string,
@@ -240,40 +181,30 @@ export async function apiGet(
   if (isOk(envelope)) return envelope.data
   const message = messageOf(envelope)
   if (looksLikeAuthError(message)) throw new VulboxError('auth', `${path}：${message}`)
-  // 301001 是「登录了但没加入这个项目」——单独一类，提示要能落到「去门户点加入」
+// 301001 是「登录了但没加入这个项目」，单独归类，提示要能落到「去门户点加入」
   if (/暂无权限|无权限/.test(message)) throw new VulboxError('forbidden', `${path}：${message}`)
   throw new VulboxError('api', `${path}：${message}`)
 }
 
 /**
- * 从项目信息里取门户域名。
- *
- * 企业 SRC 大厅返回的每条项目都带 `src_url`（形如 `paypal.vulbox.com`），
- * 门户接口要靠它当 `X-Host-Original`。
- * @param srcUrl - 项目里的 `src_url`。
- * @returns 门户域名；给空就退回 {@link DEFAULT_PORTAL}。
+ * 从项目信息里取门户域名：企业 SRC 大厅每条项目都带 `src_url`（形如 `paypal.vulbox.com`），
+ * 门户接口靠它当 `X-Host-Original`；去掉 `https://` 前缀与路径，为空时退回 {@link DEFAULT_PORTAL}。
  */
 export function portalOf(srcUrl: string | undefined): string {
   const trimmed = (srcUrl ?? '').trim()
   return trimmed === '' ? DEFAULT_PORTAL : trimmed.replace(/^https?:\/\//, '').replace(/\/.*$/, '')
 }
 
-/** API 网关地址（工具输出里附「原文链接」用）。 */
+/** API 网关地址。 */
 export function gateway(): string {
   return BASE
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
 // 「我是谁」：只能从主站 SSR 页面的 window.__NUXT__ 里读
-// ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * 从 SSR 页面里读出来的账号信息。
- *
- * 为什么要绕这一圈（实测）：网关那两个「账号」接口（`/web/account/basic-info`、
- * `/web/home/user-info`）对 Bearer / Cookie / 两者组合**一律回 `logged: false`**，
- * 而同一份 Cookie 在主站 SSR 上明确是登录态（uid / 用户名 / 实名都在页面里）。
- * 所以「我是谁」这件事只有 SSR 这条路是通的 —— 它是**服务端渲染时就查好了**的。
+ * 从主站 SSR 页面读出的账号信息：网关的账号接口（`/web/account/basic-info`、
+ * `/web/home/user-info`）对任何凭据都回 `logged: false`，判登录态只能靠 SSR。
  */
 export interface PortalUser {
   /** SSR 判定是否登录。 */
@@ -345,10 +276,8 @@ function valueOfToken(token: string, params: ReadonlyMap<string, unknown>): unkn
 }
 
 /**
- * 解析 `window.__NUXT__=(function(a,b,…){ <prelude>; return {…} }(v1,v2,…));`。
- *
- * 只做**受限求值**：形参 → 实参映射 + 前缀里的 `x.prop=value` 赋值。
- * 刻意不 `eval` 页面脚本 —— 那等于让被侦察的站点在我们的进程里执行任意代码。
+ * 解析 `window.__NUXT__=(function(a,b,…){ <prelude>; return {…} }(v1,v2,…));`：
+ * 只做受限求值（形参 → 实参映射加上前缀里的 `x.prop=value` 赋值），不 `eval` 页面脚本。
  */
 function parseNuxt(script: string): { params: Map<string, unknown>; state: string } | undefined {
   const head = script.indexOf('(function(')
@@ -420,11 +349,8 @@ function entriesOf(body: string, params: ReadonlyMap<string, unknown>): Map<stri
 }
 
 /**
- * 读主站 SSR 页面里的账号信息。
- *
- * @param cookie - 浏览器里 vulbox.com 的整串 Cookie（SSR 认 Cookie，不认 Bearer）。
- * @returns 账号信息。
- * @throws {VulboxError} `auth` 页面上不是登录态；`api` 页面结构变了解析不出来；`http` 网络失败。
+ * 读主站 SSR 页面里的账号信息；SSR 认 Cookie 而不认 Bearer，
+ * 失败按原因抛 `auth`（未登录）/ `api`（页面结构变化）/ `http`（网络）三类。
  */
 export async function fetchPortalUser(cookie: string): Promise<PortalUser> {
   if (cookie.trim() === '') throw new VulboxError('no-credential', '需要 Cookie 才能读账号信息')
@@ -447,9 +373,8 @@ export async function fetchPortalUser(cookie: string): Promise<PortalUser> {
   }
 
   /**
-   * ⚠️ 必须切到 `</script>` 为止：页面后面还有别的内联脚本（统计代码里也有 `}(…)`），
-   * 不切的话 `lastIndexOf('}(')` 会跑到那段里去，参数表整个错位
-   * （实测：用户名/uid 全空，只有不走参数的 `level.name` 是对的）。
+   * 切片要一直取到 `</script>`：页面后面还有别的内联脚本（统计代码里也有 `}(…)`），
+   * 否则 `lastIndexOf('}(')` 会落到那段上，参数表整体错位、用户名与 uid 全空。
    */
   const start = html.indexOf('window.__NUXT__=')
   const end = html.indexOf('</script>', start)

@@ -1,35 +1,9 @@
 /**
  * 用户命令（`/命令`）：把「一句话 + 一段指令」做成可复用的入口。
  *
- * ## 为什么要和 skill 分开
- *
- * 两种东西的**生命周期**不一样，混在一起就会互相拖累：
- *
- * | | 全局长期 skill | 命令（本模块） |
- * | --- | --- | --- |
- * | 放哪 | `.agents/skills/<名字>/SKILL.md` | `.agents/commands/<名字>.md` |
- * | 谁触发 | **模型**按需加载（进会话目录） | **用户**敲 `/名字` |
- * | 上下文成本 | 目录常驻（描述一直在） | 零：只有触发那一回合才注入正文 |
- * | 典型用途 | 能力包（怎么挖洞、怎么改这个仓库） | 一次性流程（写报告、发版、整理素材） |
- *
- * 一个 skill 也可以做成「命令专用」：在它的 frontmatter 里写
- * `disable-model-invocation: true`（内核的 {@link SkillInvocationPolicy} 原生支持），
- * 它就不再进模型目录，只由命令加载 —— `report` 就是这么挂的。
- *
- * ## 命令文件长什么样
- *
- * ```markdown
- * ---
- * description: 一句话说明（设置界面与 /help 里显示）
- * args: '[厂商] [标题]'          # 可选，纯提示
- * include:                       # 可选：把这些文件内联进这一回合
- *   - ../skills/report/SKILL.md
- * ---
- * （正文：这一回合给 agent 的指令）
- * ```
- *
- * `include` 的路径相对**命令文件所在目录**解析，`include` 进来的文件会剥掉
- * frontmatter（SKILL.md 的 frontmatter 对模型没用，还占 token）。
+ * 命令由用户敲 `/名字` 触发，放在 `.agents/commands/<名字>.md`；与 skill 的区别是
+ * 只在触发的那一回合注入正文，不常驻会话目录。`include` 里的路径相对命令文件所在
+ * 目录解析，内联时会剥掉 frontmatter。
  *
  * @module Memento/cli/commands
  */
@@ -65,11 +39,7 @@ interface CommandRoot {
 }
 
 /**
- * 要扫描的命令目录（按优先级）。
- *
- * 与技能目录同一套思路：项目里的排在前面，同名命令以先找到的为准。
- * @param cwd - agent 的工作目录。
- * @returns 目录与来源标记。
+ * 要扫描的命令目录，项目里的排在前面；同名命令以先找到的为准。
  */
 export function commandRoots(cwd: string): CommandRoot[] {
   const roots: CommandRoot[] = [
@@ -87,12 +57,8 @@ export function commandRoots(cwd: string): CommandRoot[] {
 }
 
 /**
- * 切出 frontmatter 与正文。
- *
- * 只认最简形态（`key: value`、`key:` 后跟 `- item` 列表），因为命令文件的
- * frontmatter 就这几个字段 —— 引一个 YAML 依赖不值得。
- * @param text - 文件全文。
- * @returns 字段表与正文。
+ * 切出 frontmatter 与正文；只认 `key: value` 与 `key:` 后跟 `- item` 的列表形态，
+ * 为此引一个 YAML 依赖不值得。
  */
 function splitFrontmatter(text: string): {
   fields: Map<string, string>
@@ -152,12 +118,7 @@ function includesOf(fields: Map<string, string>, listFields: Map<string, string[
   return inline.split(',').map(part => part.trim()).filter(part => part !== '')
 }
 
-/**
- * 读一个命令文件。
- * @param path - 文件绝对路径。
- * @param scope - 来源标记。
- * @returns 命令定义；文件坏了返回 `undefined`（不因为一个坏文件让整张表消失）。
- */
+/** 读一个命令文件；单个文件坏掉时返回 `undefined`，避免整张表消失。 */
 async function readCommand(path: string, scope: CommandDef['scope']): Promise<CommandDef | undefined> {
   let text
   try {
@@ -180,11 +141,7 @@ async function readCommand(path: string, scope: CommandDef['scope']): Promise<Co
   }
 }
 
-/**
- * 列出所有可用命令（同名时项目优先）。
- * @param cwd - agent 的工作目录。
- * @returns 按名字排序的命令表。
- */
+/** 列出所有可用命令（同名时项目优先）。 */
 export async function listCommands(cwd: string): Promise<CommandDef[]> {
   const found = new Map<string, CommandDef>()
   for (const root of commandRoots(cwd)) {
@@ -230,14 +187,8 @@ export interface ExpandedCommand {
 }
 
 /**
- * 把 `/名字 参数…` 展开成一段可以直接当用户消息发出的文本。
- *
- * 结构固定为三段：命令正文 → 内联文件 → 本次输入。顺序有意为之：
- * 指令在前（模型先看到规则），素材在中，用户这次的具体要求放最后（离生成最近）。
- *
- * @param def - 命令定义。
- * @param argsText - `/名字` 后面的原文（可为空）。
- * @returns 展开文本与缺失文件。
+ * 把 `/名字 参数…` 展开成一段可直接当用户消息发出的文本，段落顺序为命令正文 →
+ * 内联文件 → 本次输入（指令在前、素材居中、具体要求最后）。
  */
 export async function expandCommand(def: CommandDef, argsText: string): Promise<ExpandedCommand> {
   const parts = [def.body.trim()]
@@ -256,12 +207,8 @@ export async function expandCommand(def: CommandDef, argsText: string): Promise<
 }
 
 /**
- * 判断一段输入是不是命令，并切出名字与参数。
- *
- * 只认**整行以 `/` 开头**的输入；`${}` 之类的内容不会被误判。
- * @param input - 用户原始输入。
- * @param commands - 可用命令表。
- * @returns 命中的命令与参数；没命中返回 `undefined`。
+ * 判断一段输入是不是命令并切出名字与参数；只认整行以 `/` 开头的输入，
+ * `${}` 之类的内容不会被误判。
  */
 export function matchCommand(
   input: string,

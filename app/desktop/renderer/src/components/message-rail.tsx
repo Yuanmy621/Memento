@@ -1,28 +1,9 @@
 /**
- * 右侧刻度尺：把整段会话摊成一把**等距短横线**的竖尺，用来跳转。
+ * 右侧刻度尺：一条条目一道等距刻度，用于在长会话里定位与跳转。
  *
- * 它解决的问题是**长会话里没法快速回看**：翻聊天记录只能滚轮子，想知道
- * 「我刚才让它写的那份报告在哪」要滚半天。这里一条条目 = 一道刻度：
- *
- *   ────        普通刻度（一短横，按角色微调颜色）
- *   ────────    当前刻度（**白色长横条**，最长最亮）
- *
- * 三条交互（都为了「一眼定位、一下跳过去」）：
- *   1. **滚轮**在尺子上滚 → 一格一格选（选择即跳转），这就是「可滚动选择的刻度尺」；
- *   2. **点**某一道刻度 → 平滑滚到那一条；
- *   3. 在尺子上**拖** → 连续选；鼠标滚消息时尺子自动跟着走（当前那一条滑到中间）。
- *
- * 实现上有两个关键取舍：
- *   - 刻度的**间距等距**（不按内容长度成比例）：等距才像一把尺子，「第几条」一眼可数；
- *     内容高度只用来算「现在读到第几条」（见 `measure()`）。
- *   - 尺子用 `translateY` **整体滑动**，外面套一层 `overflow: hidden` 的窗口 ——
- *     于是条目再多也只是「尺子更长」，刻度密度始终不变。
- *
- * 性能上的两条硬要求（都踩过）：
- *   1. 滚动只更新本组件自己的 state，**不要**往上冒到 `App`（否则每个滚动像素
- *      都重渲染整个消息流）；
- *   2. 重新测量的触发条件必须苛刻（内容总高变了 / 条目数变了 / 窗口尺寸变了），
- *      不然流式输出时每一帧都量一遍几百个元素。
+ * 滚轮 / 点击 / 拖动都能选，选中即滚到对应条目；滚动消息时尺子跟着滑动。
+ * 刻度间距固定，内容高度只用来推算当前读到第几条（见 `measure()`）。
+ * 滚动状态只留在本组件，不冒泡到 `App`，避免每个滚动像素重渲染整个消息流。
  *
  * @module Memento/desktop/renderer/components/message-rail
  */
@@ -35,12 +16,7 @@ import {
 import type { RailMark } from '../use-agent.ts'
 import { STEP, WHEEL_STEP, anchorOf, indexAt, jumpTop, rulerShift, type Span } from './message-rail-model.ts'
 
-/**
- * 提示框渐隐时长（毫秒）。
- *
- * 必须与 CSS 里 `.rail__tip` 的过渡时长一致：这里只负责「动画放完再卸载节点」，
- * 真正的淡出是 CSS 干的 —— React 一卸载就没有过渡可言了。
- */
+/** 提示框渐隐时长（毫秒），与 CSS 里 `.rail__tip` 的过渡时长一致：动画放完才卸载节点。 */
 const TIP_FADE = 160
 
 export interface MessageRailProps {
@@ -49,10 +25,7 @@ export interface MessageRailProps {
   /** 刻度列表（`railMarks()` 的产物，与消息条目一一对应）。 */
   readonly marks: readonly RailMark[]
   /**
-   * 重新测量的触发值。
-   *
-   * 传 `state.items` 就行：流式输出时它每帧都换新引用，但那不要紧 ——
-   * 真正的测量被 `scrollHeight` 变化挡住了（见 `measure()`）。
+   * 重新测量的触发值：传 `state.items` 即可，真正的测量被 `scrollHeight` 变化挡住。
    */
   readonly revision: unknown
 }
@@ -60,20 +33,15 @@ export interface MessageRailProps {
 export const MessageRail = memo(function MessageRail({ scrollRef, marks, revision }: MessageRailProps): ReactElement | null {
   const scaleRef = useRef<HTMLDivElement>(null)
   /**
-   * 各条目的位置（量出来的），只用来算「现在读到第几条」。
-   *
-   * 「跳到第几条」不用它 —— 那次跳转每次都现问 DOM（条目会长高，缓存会过期）。
+   * 各条目的位置（量出来的），只用来算「现在读到第几条」；跳转每次都现问 DOM。
    */
   const spansRef = useRef<readonly Span[]>([])
   const [selected, setSelected] = useState(0)
   /** 窗口（`.rail__scale`）高度，用来算尺子的位移。 */
   const [viewHeight, setViewHeight] = useState(0)
   /**
-   * 悬停提示框：`hover` 是内容（渐隐期间也留着），`tipVisible` 才是「该不该亮着」。
-   *
-   * 分两份状态是为了**渐隐**：移开鼠标先把 `tipVisible` 置 false 让 CSS 淡出，
-   * 等动画放完（`TIP_FADE`）再清内容、卸载节点 —— 直接卸载就没有过渡了。
-   * `y` 是提示框中心的像素位置（相对窗口顶边）。
+   * 悬停提示框：`hover` 是内容，`tipVisible` 是该不该亮着；`y` 是中心的像素位置
+   * （相对窗口顶边）。分成两份是为了渐隐：先置 false 让 CSS 淡出，动画放完再卸载。
    */
   const [hover, setHover] = useState<{ id: string; y: number } | null>(null)
   const [tipVisible, setTipVisible] = useState(false)
@@ -85,10 +53,8 @@ export const MessageRail = memo(function MessageRail({ scrollRef, marks, revisio
   /** 当前选中的下标（给事件回调用，避免闭包读到旧值）。 */
   const selectedRef = useRef(0)
   /**
-   * 程序性跳转的落点（-1 = 没锁）。
-   *
-   * 跳转是平滑动画，中途会经过别的条目 —— 那些中间帧不该改写「选中项」，
-   * 否则用户点了第 10 条，尺子却一路抖动最后停在别处。动画期间锁住，之后解锁。
+   * 程序性跳转的落点（-1 = 没锁）：平滑动画的中间帧不该改写选中项，否则点了第 10 条
+   * 尺子会一路抖动停在别处。动画期间锁住，结束后解锁。
    */
   const lockRef = useRef(-1)
 
@@ -98,10 +64,8 @@ export const MessageRail = memo(function MessageRail({ scrollRef, marks, revisio
   }, [])
 
   /**
-   * 亮出提示框。
-   *
-   * 先撤掉未完成的渐隐定时器：从一道刻度划到相邻那道时，两条刻度的 leave/enter
-   * 会先后触发，不撤的话就成了「刚淡出一点又被点亮」，看着像闪。
+   * 亮出提示框：先撤掉未完成的渐隐定时器 —— 划到相邻刻度时两条刻度的 leave/enter
+   * 先后触发，不撤就成了「刚淡出一点又被点亮」。
    */
   const showTip = useCallback((id: string, y: number): void => {
     window.clearTimeout(tipTimerRef.current)
@@ -144,11 +108,8 @@ export const MessageRail = memo(function MessageRail({ scrollRef, marks, revisio
   }, [commit, marks.length, scrollRef])
 
   /*
-   * 条目变了 / 窗口尺寸变了 → 重量一次。
-   *
-   * ⚠️ 首次测量**必须同步做**，不能丢给 `requestAnimationFrame`：窗口被遮挡
-   * （切到别的应用、最小化）时 rAF 会被暂停，量不到的后果是「尺子停在 0 位置、
-   * 点什么都没反应」—— 而不是「稍微晚一点」。变尺寸那一路才用 rAF 合并。
+   * 条目变多 / 窗口尺寸变化时重量一次；首次测量同步做，不交给 `requestAnimationFrame`
+   * ——窗口被遮挡时 rAF 会暂停，量不到的后果是尺子停在 0 位置、点什么都没反应。
    */
   useEffect(() => {
     measure()
@@ -169,23 +130,16 @@ export const MessageRail = memo(function MessageRail({ scrollRef, marks, revisio
   }, [measure, revision, scrollRef])
 
   /*
-   * 滚动：更新选中项，并顺手看看内容总高有没有变。
-   *
-   * 两条路刻意分开：
-   *   - **换选中项**是纯计算（查缓存的位置表，一旦选中项没变就直接返回），
-   *     所以同步做 —— 不欠 rAF 的债。窗口被遮挡时 rAF 会被暂停，
-   *     那时「尺子不动」会让人以为坏了；同步算的话它照样跟手。
-   *   - **重新测量**要读几百个 `getBoundingClientRect`，那可是重活，交给 rAF 合并。
-   *     它只在内容总高变化时才发生（流式输出时会被滚动事件带着触发），
-   *     所以这里补一句就够了 —— 不需要 MutationObserver 那种重家伙。
+   * 滚动：换选中项走同步计算（查缓存的位置表，窗口被遮挡时 rAF 会暂停，同步才跟手）；
+   * 重新测量要读几百个 `getBoundingClientRect`，交给 rAF 合并，只在内容总高变化时发生。
    */
   useEffect(() => {
     const container = scrollRef.current
     if (container === null) return
     let frame = 0
     const onScroll = (): void => {
-      // 内容长高了 → 排队重量（重活）；但**不 return**：先用手上这份位置表把选中项更新了，
-      // 否则 rAF 一被暂停（窗口被遮挡时）尺子就整个卡住不动，看着像坏了。
+      // 内容长高了就排队重量（重活），但不 return：先用手上这份位置表更新选中项，
+      // 否则 rAF 一被暂停（窗口被遮挡时）尺子会整个卡住不动。
       if (container.scrollHeight !== lastTotalRef.current && frame === 0) {
         frame = requestAnimationFrame(() => { frame = 0; measure() })
       }
@@ -201,17 +155,9 @@ export const MessageRail = memo(function MessageRail({ scrollRef, marks, revisio
   }, [commit, measure, scrollRef])
 
   /**
-   * 滚到第 `index` 条。
-   *
-   * 位置**每次都现问 DOM**（不查缓存）：条目随时可能变高（图片加载、markdown 渲染完），
-   * 缓存里的位置一旦过期就会「跳偏一点」。一次 `getBoundingClientRect` 换一次准确跳转，值。
-   *
-   * 落点不是简单的「条目顶到视口顶」：当前刻度取的是**屏幕里最后那条**，
-   * 所以短的条目要让它的底边贴住判定线 —— 否则点第 10 条、高亮会落到第 13 条
-   * （细节与推导见 `message-rail-model.ts` 的 `jumpTop`）。
-   *
-   * `smooth` 只给「点击」用：滚轮/拖动是连续动作，每一格都做动画会排队、发黏。
-   * 跳转期间上锁，动画结束（或超时）解锁。
+   * 滚到第 `index` 条：位置每次现问 DOM（条目会变高，缓存的旧位置会跳偏）；落点不是
+   * 「条目顶到视口顶」——当前刻度取屏幕里最后那条，短条目要让底边贴住判定线，否则
+   * 点第 10 条会高亮到第 13 条（见 `jumpTop`）。`smooth` 只给点击用，连续动作会发黏。
    */
   const goTo = useCallback((index: number, smooth: boolean): void => {
     const container = scrollRef.current
@@ -235,10 +181,8 @@ export const MessageRail = memo(function MessageRail({ scrollRef, marks, revisio
   }, [commit, scrollRef])
 
   /**
-   * 滚轮在尺子上滚 = 一格一格选。
-   *
-   * 必须用原生的**非被动**监听：React 的 `onWheel` 挂在根节点上且是被动的，
-   * 里面 `preventDefault()` 不生效（结果滚轮会把消息和尺子一起滚）。
+   * 滚轮在尺子上滚 = 一格一格选。用原生非被动监听：React 的 `onWheel` 挂在根节点上
+   * 且是被动的，里面 `preventDefault()` 不生效，滚轮会把消息和尺子一起滚。
    */
   useEffect(() => {
     const scale = scaleRef.current
@@ -289,7 +233,7 @@ export const MessageRail = memo(function MessageRail({ scrollRef, marks, revisio
 
   const markById = new Map(marks.map((mark) => [mark.id, mark]))
   const hovered = hover === null ? undefined : markById.get(hover.id)
-  // 提示框按窗口高度夹一下，免得贴着上下边时被裁掉
+  // 提示框按窗口高度夹一下，免得贴着上下边时被裁掉。
   const tipY = hover === null ? 0 : Math.min(Math.max(hover.y, 76), Math.max(viewHeight - 76, 76))
 
   return (
@@ -313,7 +257,7 @@ export const MessageRail = memo(function MessageRail({ scrollRef, marks, revisio
         ref={scaleRef}
         onPointerDown={onPointerDown}
         onKeyDown={onKeyDown}
-        // 移开**整条尺子**才淡出：在刻度之间划过去时不闪（enter 会撤掉渐隐定时器）
+        // 移开整条尺子才淡出：在刻度之间划过去时不闪（enter 会撤掉渐隐定时器）
         onMouseLeave={hideTip}
       >
         <div className="rail__ruler" style={{ transform: `translateY(${String(rulerShift(marks.length, selected, viewHeight))}px)` }}>
@@ -339,8 +283,8 @@ export const MessageRail = memo(function MessageRail({ scrollRef, marks, revisio
                 showTip(mark.id, rect.top - scale.getBoundingClientRect().top + rect.height / 2)
               }}
               onBlur={hideTip}
-              // 离开这道刻度就开始淡出（划到相邻刻度时 enter 会立刻撤掉定时器，
-              // 所以「一格一格扫过去」不会闪；停在刻度之间的空隙里则会淡掉）
+              // 离开这道刻度就开始淡出（划到相邻刻度时 enter 会撤掉定时器，一格一格
+              // 扫过去不会闪；停在刻度之间的空隙里则会淡掉）
               onMouseLeave={hideTip}
               onClick={() => { goTo(index, true) }}
             />

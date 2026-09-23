@@ -1,21 +1,9 @@
 /**
- * 输入框里的三种「触发符」候选：菜单长什么样 + 候选从哪来。
+ * 输入框三种触发符的候选菜单：`/` 命令与技能、`@` MCP 工具、`#` 工作目录文件。
  *
- * | 触发符 | 选什么 | chip 上显示 | 落库文本 |
- * | --- | --- | --- | --- |
- * | `/` | 用户命令 + 技能 | `/名字` / 技能名 | `/名字` / 「用 skill 工具加载 …」 |
- * | `@` | MCP 工具（按 server 分组） | 中文功能名（`补天 · 白帽排行`） | 「用 `mcp__butian__butian_rank` 工具：」 |
- * | `#` | 工作目录里的文件 | 相对路径 | 相对路径 |
- *
- * ## 分工
- *
- * - **触发与键盘**：交给 Tiptap 的 suggestion 插件（`editor/suggestions.ts`）。
- *   本模块只管「给一个触发符 + 查询词，返回候选」这件事，是纯函数。
- * - **选中后插什么**：候选自带 `kind` 与 `text`（`Mention`），由 composer 插成
- *   chip —— 不再往输入框里塞一段文本。所以这里**没有** `insert` 字段了：
- *   「显示什么」是 `label`，「落库什么」是 `text`。
- * - 「用 … 工具：」「用 skill 工具加载 …」这两句话是刻意保留的：它们是给**模型**
- *   看的明确指令（会话记录里的 token 染色也认这两种句式，见 rich-text-tokens.ts）。
+ * 触发与键盘交给编辑器的 suggestion 插件（`editor/suggestions.ts`），这里只负责
+ * 「给一个触发符 + 查询词，返回候选」，是纯函数。候选自带 `label` 与 `text`：前者显示在
+ * chip 上，后者落进会话记录；落库文本保持「用 … 工具：」句式，记录端的染色认它。
  *
  * @module Memento/desktop/renderer/src/components/mention-menu
  */
@@ -27,7 +15,7 @@ import { toolDisplay, toolOrder } from '../tool-names.ts'
 import type { Trigger } from './editor/triggers.ts'
 import type { CommandBrief, FileBrief, HostToolInfo, SkillBrief } from '../use-agent.ts'
 
-/** 一条候选 —— 它就是「还没插进输入框的那个 chip」，加上菜单要用的说明文字。 */
+/** 一条候选：还没插进输入框的那个 chip，加上菜单要用的说明文字。 */
 export interface Mention {
   /** 稳定 key。 */
   readonly key: string
@@ -50,13 +38,7 @@ export interface MentionsData {
 }
 
 /**
- * 按触发符组装候选列表。
- *
- * @param trigger - 触发符。
- * @param query - 已输入的部分。
- * @param data - 四类数据源。
- * @param limit - 最多返回多少条（菜单不做虚拟滚动，多了反而难找）。
- * @returns 过滤后的候选。
+ * 按触发符组装候选列表；`limit` 是上限（菜单不做虚拟滚动，多了反而难找）。
  */
 export function buildMentions(
   trigger: Trigger,
@@ -77,12 +59,8 @@ export function buildMentions(
         group: '命令',
       }))
     /*
-     * 只列**模型能加载**的全局技能。
-     *
-     * `disable-model-invocation` 的「命令专用技能」（`report`、`ip-as-logo` 这类）不能进这里：
-     * chip 落库是「用 skill 工具加载 X 后按它执行：」，而内核的 skill 工具**明确拒绝**加载
-     * 这类技能（`not available for model invocation`）—— 列出来就是个点了报错的选项。
-     * 它们的入口是各自的 `/命令`（就在上面的「命令」组里），设置界面里能看它们的调用政策。
+     * 只列模型能加载的全局技能：`disable-model-invocation` 的命令专用技能（`report` 这类）
+     * 会被内核的 skill 工具拒绝（`not available for model invocation`），列出来点了就报错。
      */
     const skills = data.skills
       .filter(item => item.invocation === 'global')
@@ -106,8 +84,7 @@ export function buildMentions(
       .sort((a, b) => toolOrder(a.item.name) - toolOrder(b.item.name) || a.item.name.localeCompare(b.item.name))
       .map(({ item, display }) => ({
         key: `tool:${item.name}`,
-        // 菜单里挂在「补天」分组下，所以只显示功能名；chip 插进输入框后会离开分组，
-        // 那时才需要带上 server 前缀（见下面 chip 的 label）
+        // 菜单里挂在「补天」分组下，所以只显示功能名；chip 离开分组后才需要 server 前缀
         label: display.label,
         chip: toolChip(item.name, `${display.group} · ${display.label}`),
         // 说明用中文描述（服务端没给中文就留空，不硬塞英文）

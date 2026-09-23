@@ -1,34 +1,10 @@
 /**
- * 侧栏背景的柱面粒子层：把 {@link ./sidebar-cylinder} 的纯模拟画到一块 canvas 上。
+ * 侧栏背景的柱面粒子层：把 `sidebar-cylinder.ts` 的纯模拟画到一块 canvas 上。
  *
- * ## 它只做「DOM 那半边」
- *
- * | 归它管 | 归 `sidebar-cylinder.ts` 管 |
- * | --- | --- |
- * | canvas / DPR / ResizeObserver | 柱面投影（列的位置与宽度）、明暗、纵向强度 |
- * | rAF 循环、帧率、`dt` 夹上限 | 小块的周期、被切下来的位移与消散曲线 |
- * | 暂停条件（窗口隐藏 / 系统「减弱动态效果」） | —— |
- * | 颜色与两遍绘制顺序 | —— |
- *
- * ## 绘制的两遍（顺序不能换）
- *
- * 1. **还在柱面上的格子**（轴对齐的 `fillRect`，便宜）——正在滚的那些**跳过**，
- *    它们的格子在画面上留空，那才是「被切走了一块」；
- * 2. **滚出去的碎屑**（`save/translate/rotate/fillRect/restore`）——画在最后，
- *    因为它们是「已经离开表面、离观察者更近」的东西。
- *
- * ## 三条不做就会出事的规则
- *
- * 1. **必须尊重 `prefers-reduced-motion`**：系统里开了「减弱动态效果」的人是真的会被
- *    持续动的东西弄难受，而这个效果**信息量为零**。命中时直接不启动循环，并清空画布。
- * 2. **窗口不可见时必须停**（`visibilitychange`）：侧栏在后台每帧还画一次 canvas 是白烧电。
- * 3. **`dt` 要夹上限**（{@link MAX_FRAME_MS}）：切回前台/系统卡顿后 `now - last` 可能是
- *    好几秒，不夹的话所有碎屑会「闪现」到远处。
- *
- * 另外两条是性能要求：**每帧不读布局**（尺寸只在 `ResizeObserver` 里读一次并缓存）、
- * 帧率压到 **30fps**、DPR 上限 **1.5** —— 这三条一起把渲染进程开销从 20% 压到几个百分点。
- *
- * canvas 是 `pointer-events: none` + `aria-hidden`：不参与交互，也不该被读屏软件念出来。
+ * 这里只做 DOM 那半边（canvas / DPR / rAF 循环与帧率、暂停条件、颜色与绘制顺序），
+ * 柱面投影、明暗与碎屑曲线在 `sidebar-cylinder.ts` 里。三条不做就会出事的规则：尊重
+ * `prefers-reduced-motion`（命中时不启动循环并清空画布）、窗口不可见时停循环（`visibilitychange`）、
+ * `dt` 要夹上限（见 {@link MAX_FRAME_MS}）。canvas 是 `pointer-events: none` + `aria-hidden`。
  *
  * @module Memento/desktop/renderer/src/components/sidebar-backdrop
  */
@@ -44,23 +20,18 @@ import {
   type TileFrame,
 } from './sidebar-cylinder.ts'
 
-/** 单帧最大步进（ms）。见文件头第 3 条。 */
+/** 单帧最大步进（ms）：切回前台或系统卡顿后 `now - last` 可能是好几秒。 */
 const MAX_FRAME_MS = 48
 
 /**
- * 目标帧率。
- *
- * **30fps 就够**：这是一层 5~20% 不透明度的背景，不是动画片；60fps 在观感上看不出差别，
- * 但渲染进程开销直接翻倍（实测：一个被遮住的窗口上，60fps 约 20%，30fps + 不读布局之后是几个百分点）。
+ * 目标帧率：这是一层 5~20% 不透明度的背景，30fps 与 60fps 在观感上看不出差别，
+ * 但渲染进程开销翻倍。
  */
 const FRAME_INTERVAL_MS = 1000 / 30
 
 /**
- * 画布像素上限倍率。
- *
- * 不用系统的 2 倍：这些是纯色小方块（5~25% 不透明度），1.25 倍与 2 倍的区别肉眼不可见，
- * 但**光栅化的开销几乎正比于覆盖的像素数**。整面柱面网格的覆盖率约 20%，
- * 实测 1.5 倍时渲染进程 ~9.6%、1.25 倍时 ~6.5%（同一台机器、窗口被遮住时的 TaskDuration 口径）。
+ * 画布像素上限倍率：纯色小方块（5~25% 不透明度）在 1.25 倍与 2 倍下肉眼没有区别，
+ * 而光栅化开销几乎正比于覆盖的像素数。
  */
 const MAX_DPR = 1.25
 
@@ -68,15 +39,8 @@ const MAX_DPR = 1.25
 const REDUCED_MOTION = '(prefers-reduced-motion: reduce)'
 
 /**
- * 从 CSS 变量里取颜色。
- *
- * 为什么不在 JS 里写死 rgb：这个仓库的规矩是**配色一律走令牌**（见 `app.css` 的 `@theme`），
- * 粒子色也得跟着主题/磨砂玻璃变。读不到就给一个很淡的白 —— 它只是背景，宁可看不见也不要报错。
- *
- * @param node - 任意挂在文档里的元素（借它读计算样式）。
- * @param name - CSS 变量名。
- * @param fallback - 兜底颜色。
- * @returns 可以直接喂给 `fillStyle` 的颜色字符串。
+ * 从 CSS 变量里取颜色：配色一律走令牌（见 `app.css` 的 `@theme`），粒子色也跟着主题变。
+ * 读不到就给 `fallback` —— 它只是背景，看不见也不要报错；返回值可直接喂给 `fillStyle`。
  */
 function cssColor(node: Element, name: string, fallback: string): string {
   const value = getComputedStyle(node).getPropertyValue(name).trim()
@@ -102,7 +66,7 @@ export function SidebarBackdrop(): ReactElement {
     let accumulator = 0
     /** 停着的时候用来盯「系统减弱动态效果」有没有被关掉的定时器（0 = 没开）。 */
     let poll = 0
-    /** 缓存的逻辑尺寸：**不在每帧读 `clientWidth`**，那会强制布局，是卡顿的经典来源。 */
+    /** 缓存的逻辑尺寸：每帧读 `clientWidth` 会强制布局。 */
     let size = { width: 0, height: 0 }
     /** 复用的 frame 对象：每帧要算上千次，不能每次 new。 */
     const scratch: TileFrame = {
@@ -114,9 +78,7 @@ export function SidebarBackdrop(): ReactElement {
 
     /**
      * 按 CSS 尺寸 + DPR 调整画布，并把逻辑尺寸记进 {@link size}。
-     *
-     * ⚠️ 只在「挂载 / 尺寸变化 / 重新开始」时调它。放进每帧循环里读 `clientWidth`
-     * 会每帧强制一次布局计算 —— canvas 动画最常见的性能坑。
+     * 只在挂载 / 尺寸变化 / 重新开始时调它，放进每帧循环会每帧强制一次布局。
      */
     const syncSize = (): { width: number; height: number } => {
       const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR)
@@ -151,7 +113,7 @@ export function SidebarBackdrop(): ReactElement {
     const draw = (active: Field): void => {
       context.clearRect(0, 0, size.width, size.height)
       const rows = visibleRows(active)
-      // ── 第一遍：还在柱面上的格子（轴对齐，便宜）─────────────────────────
+      // 第一遍：还在柱面上的格子（轴对齐，便宜）
       context.fillStyle = surfaceColor
       for (let row = 0; row < rows; row += 1) {
         for (let dense = 0; dense < active.dense; dense += 1) {
@@ -161,7 +123,7 @@ export function SidebarBackdrop(): ReactElement {
           context.fillRect(cell.x, cell.y, cell.width, cell.height)
         }
       }
-      // ── 第二遍：被切下来、正在向右滚的碎屑（要旋转，画在最上面）──────────
+      // 第二遍：被切下来、正在向右滚的碎屑要旋转，画在最上面
       context.fillStyle = shardColor
       for (let row = 0; row < rows; row += 1) {
         for (let dense = 0; dense < active.dense; dense += 1) {
@@ -195,12 +157,8 @@ export function SidebarBackdrop(): ReactElement {
     }
 
     /**
-     * 停着的时候，盯着「什么时候能再开」。
-     *
-     * 正常路径是 `matchMedia` 的 `change` 事件，但**不能只靠它**：某些环境下
-     * （切换模拟、某些平台的设置变更）事件不一定派发，那样效果会一直停着不回来。
-     * 这里每 1.5s 复查一次查询条件，条件满足就自己恢复 —— 一个定时器的成本，
-     * 换掉一整类「设置改回去了但画面还是死的」的静默故障。
+     * 停着的时候盯着「什么时候能再开」：每 1.5s 复查一次查询条件。
+     * 只靠 `matchMedia` 的 `change` 事件不够，某些环境下事件不派发，效果会一直停着不回来。
      */
     const scheduleResumeCheck = (): void => {
       if (poll !== 0 || frame !== 0) return
@@ -226,7 +184,7 @@ export function SidebarBackdrop(): ReactElement {
       frame = window.requestAnimationFrame(tick)
     }
 
-    /** 停循环并清屏 —— 停之前必须清，否则会留一帧残影在原地。 */
+    /** 停循环并清屏：停之前不清会留一帧残影。 */
     const stop = (): void => {
       if (frame !== 0) {
         window.cancelAnimationFrame(frame)
@@ -255,7 +213,7 @@ export function SidebarBackdrop(): ReactElement {
 
     document.addEventListener('visibilitychange', onVisibility)
     motionQuery.addEventListener('change', onMotionChange)
-    // 一开始就不可见（后台启动）时也别起循环。
+    // 一开始就不可见（后台启动）时不起循环。
     if (!document.hidden) start()
 
     return () => {

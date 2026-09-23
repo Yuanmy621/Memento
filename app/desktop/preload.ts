@@ -1,31 +1,10 @@
 /**
- * 安全桥（preload）—— 渲染进程能看到的**全部**原生能力都在这里。
+ * 安全桥（preload）：渲染进程能看到的全部原生能力，经 `contextBridge` 深拷贝到 `window.Memento`。
  *
- * ## 它是**构建产物**的源文件，而源文件必须是 TS 之外的样子
- *
- * 本文件（`.ts`）由 `scripts/build-renderer.ts` 用 esbuild 打成
- * **`app/desktop/preload.cjs`**（CommonJS、自包含、只把 `electron` 留作外部依赖），
- * Electron 加载的是那个 `.cjs`。为什么不直接让 Electron 加载 `.ts`：
- *
- *   - 主进程能直接跑 `.ts`（Electron 44 自带的 Node 24 默认开类型擦除，实测可用），
- *     但 **preload 不行**：沙箱化 preload 走的是 Electron 自己的 CJS 加载器，
- *     它不认识 TypeScript —— 直接把 preload 指到 `.ts` 会**静默失败**
- *     （`window.Memento` 不存在，界面只会说「preload 脚本没有加载」，看不出真因）。
- *     实测：同一个 preload，指 `.ts` 时 `window.probe === null`，指构建出来的
- *     `.cjs` 时正常。
- *   - 所以这里保持「**源码 .ts、产物 .cjs**」：类型检查照做，Electron 拿到的仍是
- *     CommonJS。官方 DSH 桌面端也是这么分工的（`main.js`(ESM) + `preload-app.cjs`）。
- *
- * ⚠️ 两条不能改：
- *   1. **产物必须是 CommonJS**：Electron 加载 preload 时会忽略 `"type": "module"`，
- *      一律按 CommonJS 执行；沙箱化 preload 也不支持 ESM `import`。
- *      所以本文件里只能 `import`，构建成 `require` —— 别把 `format` 改成 esm。
- *   2. **不能 import 任何本地文件**（包括 `./ipc.ts`）：沙箱下 preload 的 `require`
- *      只认 `electron` 和少数内置模块，**不支持相对路径**。频道名字面量因此只能
- *      重复一份（与 `ipc.ts` 的 `IPC` 表逐字对应，改名字要两处都改）。
- *
- * 为什么只暴露这几个方法：渲染进程是「网页」，不该拿到 ipcRenderer / require / fs。
- * `contextBridge` 把下面这个对象**深拷贝**到 `window.Memento`，网页只能看到函数。
+ * 本文件是构建产物的源文件：`scripts/build-renderer.ts` 用 esbuild 打成 `app/desktop/preload.cjs`（CommonJS、
+ * 自包含、只把 `electron` 留作外部依赖）；沙箱 preload 走 Electron 自己的 CJS 加载器，指到 `.ts` 会静默失败
+ * （`window.Memento` 不存在），所以 `format` 固定为 cjs，且不能 `import` 任何本地文件（沙箱下 `require` 只认
+ * `electron` 与少数内置模块），频道名只能自带字面量并与 `ipc.ts` 的 `IPC` 表逐字对应，改名要两处都改。
  *
  * @module Memento/desktop/preload
  */
@@ -86,120 +65,64 @@ const api = {
   getState: (): Promise<unknown> => ipcRenderer.invoke(CHANNEL.state),
   /** Electron / Node / 应用版本信息。 */
   getAppInfo: (): Promise<unknown> => ipcRenderer.invoke(CHANNEL.appInfo),
-  /**
-   * 订阅 agent 事件。
-   * @param listener - 收到每一个事件帧。
-   * @returns 取消订阅。
-   */
+  /** 订阅 agent 事件：`listener` 收到每个事件帧，返回值是取消订阅。 */
   onEvent: (listener: (event: unknown) => void): (() => void) => {
     const handle = (_event: IpcRendererEvent, payload: unknown): void => { listener(payload) }
     ipcRenderer.on(CHANNEL.hostEvent, handle)
     return () => { ipcRenderer.off(CHANNEL.hostEvent, handle) }
   },
-  /**
-   * 发起一个回合。
-   * @param text - 用户输入。
-   * @returns 主进程分配的回合 id。
-   */
+  /** 发起一个回合：`text` 是用户输入，返回主进程分配的回合 id。 */
   sendPrompt: (text: string): Promise<{ turnId: string }> => ipcRenderer.invoke(CHANNEL.prompt, text),
   /** 中断当前回合。 */
   cancel: (): Promise<unknown> => ipcRenderer.invoke(CHANNEL.cancel),
-  /**
-   * 让 agent host 重新扫描落盘会话。
-   * 结果不是返回值，而是随后到达的 `workspace` 事件。
-   */
+  /** 让 agent host 重新扫描落盘会话：结果不是返回值，而是随后到达的 `workspace` 事件。 */
   refreshSessions: (): Promise<unknown> => ipcRenderer.invoke(CHANNEL.listSessions),
-  /**
-   * 用系统默认程序打开一个文件（文件卡片的「打开」按钮）。
-   * @param path - 绝对路径。
-   * @returns 错误信息；成功时空串。
-   */
+  /** 用系统默认程序打开 `path`（绝对路径）；返回错误信息，成功时空串。 */
   openPath: (path: string): Promise<string> => ipcRenderer.invoke(CHANNEL.openPath, path),
-  /**
-   * 读某个项目的会话明细（侧栏里点开一个折叠的项目时用）。
-   * 结果不是返回值，而是随后到达的 `project-sessions` 事件。
-   * @param path - 项目根目录。
-   */
+  /** 读某个项目的会话明细（侧栏里点开折叠的项目时用）；结果以 `project-sessions` 事件回来。 */
   listProjectSessions: (path: string): Promise<unknown> => ipcRenderer.invoke(CHANNEL.listProjectSessions, path),
-  /**
-   * 中途调整目标：插给正在跑的回合（内核在下个 step 边界消费）。
-   * @param text - 纠偏内容。
-   */
+  /** 中途调整目标：把 `text` 插给正在跑的回合，内核在下个 step 边界消费。 */
   steer: (text: string): Promise<unknown> => ipcRenderer.invoke(CHANNEL.steer, text),
-  /**
-   * 要一批 `#` 候选文件；结果以 `files` 事件异步回来。
-   * @param query - 查询串（空串 = 列最短路径的前若干条）。
-   */
+  /** 要一批 `#` 候选文件（`query` 为空串时列最短路径的前若干条）；结果以 `files` 事件异步回来。 */
   listFiles: (query: string): Promise<unknown> => ipcRenderer.invoke(CHANNEL.listFiles, query),
   /** 要一次设置数据（skill / 命令 / MCP）；结果以 `settings` 事件异步回来。 */
   settingsList: (): Promise<unknown> => ipcRenderer.invoke(CHANNEL.settingsList),
-  /**
-   * 读一个配置文件。
-   * @param path - 绝对路径（主进程有白名单）。
-   */
+  /** 读一个配置文件（`path` 为绝对路径，主进程有白名单）。 */
   settingsRead: (path: string): Promise<FileResult> => ipcRenderer.invoke(CHANNEL.settingsRead, path),
-  /**
-   * 写一个配置文件。
-   * @param path - 绝对路径（主进程有白名单）。
-   * @param content - 新内容。
-   */
+  /** 写一个配置文件（`path` 为绝对路径，主进程有白名单）。 */
   settingsWrite: (path: string, content: string): Promise<FileResult> =>
     ipcRenderer.invoke(CHANNEL.settingsWrite, path, content),
-  /**
-   * 切换模型（下一次请求生效）。
-   * @param model - 模型 id。
-   */
+  /** 切换模型（下一次请求生效）：`model` 是模型 id。 */
   setModel: (model: string): Promise<unknown> => ipcRenderer.invoke(CHANNEL.setModel, model),
-  /**
-   * 切换推理强度（下一次请求生效）。
-   * @param effort - `off | low | high | max`。
-   */
+  /** 切换推理强度（下一次请求生效）：`effort` 取 `off | low | high | max`。 */
   setEffort: (effort: string): Promise<unknown> => ipcRenderer.invoke(CHANNEL.setEffort, effort),
-  /**
-   * 打开原生目录选择框。
-   * @returns 选中的目录，取消时为 null。
-   */
+  /** 打开原生目录选择框；取消时返回 null。 */
   pickDirectory: (): Promise<string | null> => ipcRenderer.invoke(CHANNEL.pickDirectory),
   /**
-   * 切到某个会话：主进程还留着它的 host 就直接挂回（后台回合不被打断），
-   * 否则起一个新的（必要时用 `--resume` 回放历史）。
-   * @param request - 目标项目 / 会话与复用策略。
-   * @returns 是否直接挂回了活着的 host，以及目标会话视图键。
+   * 切到某个会话：主进程还留着它的 host 就直接挂回（后台回合不被打断），否则起一个新的。
+   * 返回是否直接挂回了活着的 host 与目标会话视图键；`request` 的形状见 `AttachRequest`。
    */
   attach: (request: AttachRequest): Promise<AttachResult> => ipcRenderer.invoke(CHANNEL.attach, request),
   /**
-   * 让当前会话重放一次历史（结果以 `history` 事件回来）。
-   *
-   * 给「界面重载」用：视图没了但内核还活着，重放就能把内容补回来，**不必重启**。
+   * 让当前会话重放一次历史（结果以 `history` 事件回来）：界面重载后视图没了但内核还活着，
+   * 重放即可把内容补回来，不必重启。
    */
   replayHistory: (): Promise<unknown> => ipcRenderer.invoke(CHANNEL.replayHistory),
   /**
-   * 读一个文件用于右侧预览面板。
-   *
-   * 与 `openPath` 同一套路径语义（相对路径按工作目录解析），但**返回内容**：
-   * 主进程按扩展名判断类型（markdown/code/image/text/binary）并限制体积。
-   * @param path - 绝对路径或相对工作目录的路径。
+   * 读一个文件用于右侧预览面板：路径语义与 `openPath` 相同（相对路径按工作目录解析），
+   * 但返回内容 —— 主进程按扩展名判断类型（markdown/code/image/text/binary）并限制体积。
    */
   previewRead: (path: string): Promise<PreviewPayload> => ipcRenderer.invoke(CHANNEL.previewRead, path),
   /**
-   * 读当前工作目录的 git 情况（面包屑的分支段）。
-   *
-   * ⚠️ 不接受路径参数：目录由主进程按**当前会话**的工作目录决定。
-   * 这不是省事，是边界 —— 否则等于给网页开了一个「在任意目录执行 git」的口子。
+   * 读当前工作目录的 git 情况（面包屑的分支段）：不接受路径参数，目录由主进程按当前会话的
+   * 工作目录决定 —— 否则等于给网页开一个「在任意目录执行 git」的口子。
    */
   gitStatus: (): Promise<GitStatus> => ipcRenderer.invoke(CHANNEL.gitStatus),
-  /**
-   * 切分支。
-   * @param branch - 分支名，必须来自上一次 `gitStatus()` 给出的列表（主进程会校验）。
-   * @returns 是否成功、失败原因，以及切换后的最新状态。
-   */
+  /** 切分支：`branch` 取自上一次 `gitStatus()` 给出的列表（主进程会校验）；返回是否成功、失败原因与切换后的最新状态。 */
   gitSwitch: (branch: string): Promise<GitSwitchResult> => ipcRenderer.invoke(CHANNEL.gitSwitch, branch),
   /**
-   * 拉取**当前分支**的最新提交。
-   *
-   * ⚠️ 同样不接受参数：拉的就是当前分支，也不是任意仓库 —— 分支与目录都由主进程定。
-   * 主进程跑的是 `git pull --ff-only`（不生成合并提交），要 merge/rebase 请去终端。
-   * @returns 是否成功、git 的结论（「Already up to date.」/ diffstat），以及最新状态。
+   * 拉取当前分支的最新提交：不接受参数，分支与目录都由主进程定，跑的是 `git pull --ff-only`
+   * （不生成合并提交，要 merge/rebase 去终端）；返回是否成功、git 的结论（「Already up to date.」/ diffstat）与最新状态。
    */
   gitPull: (): Promise<GitPullResult> => ipcRenderer.invoke(CHANNEL.gitPull),
 }

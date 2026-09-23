@@ -1,13 +1,10 @@
 /**
  * `opencli butian vulns` —— 我的补天漏洞列表。
  *
- * 数据源：`POST /WhiteHat/Center/loo`（需要 Cookie + 漏洞列表页的 token）。
- * 参数与字段全部取自该页自身的筛选表单与行渲染代码：
- * 筛选是 `title` / `level` / `status` / `p`，行里有
- * `level, title, company_name, create_time, amount, extcredits, number, status` 等。
- *
- * 做 SRC 时的典型用法：`opencli butian vulns --status 4`（看已完结的）、
- * `--status 1`（看还在审核的）、`--title 某厂商`（按厂商筛）。
+ * 数据源 `POST /WhiteHat/Center/loo`，需要 Cookie 与漏洞列表页的 token；参数与字段取自该页自身的筛选表单与行渲染
+ * 代码（筛选为 `title` / `level` / `status` / `p`，行里有 `level, title, company_name, create_time, amount,
+ * extcredits, number, status` 等），所以两边字段名保持一致。典型用法：`opencli butian vulns --status 4` 看已完结、
+ * `--status 1` 看审核中、`--title 某厂商` 按厂商筛。
  *
  * @module Memento/opencli/clis/butian/vulns
  */

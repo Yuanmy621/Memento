@@ -1,19 +1,9 @@
 /**
- * 图标：**统一走 [lucide-react](https://lucide.dev/)**，这个文件只做「名字与尺寸的收敛」。
+ * 图标：统一走 `lucide-react`，这里只做名字与尺寸的收敛。
  *
- * ## 为什么从手写 SVG 换成图标库
- *
- * 早先这里是自己画 SVG（12 个）。到「轨迹按角色区分 + 会话导航条 + 预览面板」这一步，
- * 需要的图标变成 30 个上下：手写既慢又难统一（线宽、圆角、视觉重心各画各的）。
- * lucide 的图标是 24px 网格、`currentColor` 描边，与本项目的单色图标风格一致，
- * 而且**按需引入**（具名 import → Tree-shaking，用不到的不进 bundle）。
- *
- * ## 为什么还要包一层
- *
- * 三件事集中在这里，别散到各个组件里：
- *   1. **尺寸**：本项目界面偏紧（侧栏行 24px、标签栏 44px），图标基本是 12~16px；
- *   2. **线宽**：lucide 默认 2，在小尺寸下略粗，这里统一降到 1.75；
- *   3. **命名**：保留 `Icon*` 前缀，改图标库时组件侧不用动。
+ * 尺寸跟随界面（侧栏行 24px、标签栏 44px，图标基本 12~16px），线宽统一 1.75
+ * （lucide 默认 2，小尺寸下偏粗）；具名 import 保证用不到的图标不进 bundle。
+ * 保留 `Icon*` 前缀，换图标库时组件侧不用动。
  *
  * @module Memento/desktop/renderer/src/icons
  */
@@ -28,10 +18,8 @@ import type { LucideIcon } from 'lucide-react'
 import type { ReactElement } from 'react'
 
 /**
- * 图标属性。
- *
- * 颜色一律 `currentColor`（由 CSS 决定），所以这里只有尺寸和一个 class ——
- * class 是给「转圈」这类整体动效留的钩子（例如 `IconSpinner className="spin"`）。
+ * 图标属性：颜色一律 `currentColor`（由 CSS 决定）。
+ * `className` 是给「转圈」这类整体动效留的钩子（例如 `IconSpinner className="spin"`）。
  */
 export interface IconProps {
   readonly size?: number
@@ -45,7 +33,7 @@ function icon(Component: LucideIcon): (props: IconProps) => ReactElement {
   }
 }
 
-// ── 通用 ────────────────────────────────────────────────────────────────────
+// 通用
 export const IconSearch = icon(Search)
 export const IconPlus = icon(Plus)
 export const IconChevronDown = icon(ChevronDown)
@@ -60,21 +48,21 @@ export const IconTurns = icon(Repeat)
 export const IconGauge = icon(Gauge)
 /** git 分支：面包屑的分支段用。 */
 export const IconBranch = icon(GitBranch)
-/** 拉取最新（`git pull`）：面包屑分支段右边那个按钮 —— 一个往下落进横线的箭头。 */
+/** 拉取最新（`git pull`）：面包屑分支段右边那个按钮。 */
 export const IconPull = icon(ArrowDownToLine)
 export const IconClose = icon(X)
 export const IconCopy = icon(Copy)
 export const IconSpinner = icon(LoaderCircle)
-/** 思考（推理）的头图标：和输入框里的 `@` 提示语同一套「闪一下」的语汇。 */
+/** 思考（推理）块的头图标。 */
 export const IconSparkle = icon(Sparkles)
 
-// ── 标签栏 / 面板 ───────────────────────────────────────────────────────────
+// 标签栏 / 面板
 export const IconChat = icon(MessageSquare)
 export const IconTrace = icon(ListTree)
 export const IconPanelOpen = icon(PanelRightOpen)
 export const IconPanelClose = icon(PanelRightClose)
 
-// ── 预览面板（按文件类型区分）───────────────────────────────────────────────
+// 预览面板（按文件类型区分）
 export const IconCodeFile = icon(FileCode)
 export const IconImageFile = icon(FileImage)
 export const IconFileQuestion = icon(FileQuestionMark)
@@ -82,4 +70,3 @@ export const IconFolderOpen = icon(FolderOpen)
 
 /** 文件卡片等地方用的「普通文件」图标。 */
 export const IconFile = icon(FileText)
-/** 没有类型可判断时的中性图标。 */

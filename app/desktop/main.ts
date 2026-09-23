@@ -1,18 +1,9 @@
 /**
- * Memento Agent 桌面客户端 —— **Electron 主进程**。
+ * Memento Agent 桌面客户端的主进程：窗口与生命周期、agent host 子进程、IPC 收口、原生能力。
  *
- * 职责边界（保持这条线，界面渲染的事一律不进主进程）：
- *   1. **窗口与生命周期**：创建 BrowserWindow、应用菜单、单实例锁、退出清理；
- *   2. **agent host 子进程**：拉起来（系统 node）、转发消息、崩了要能看出来；
- *   3. **IPC 收口**：渲染进程只能通过 `preload.js` 暴露的 `window.Memento` 说话，
- *      每个 handler 都校验发送方是不是本窗口，主进程不信任渲染进程；
- *   4. **原生能力**：目录选择框、关于面板、外部链接。
- *
- * 主进程**不**做 agent 的事：内核跑在 `host/index.ts` 子进程里。原因见
- * `host/protocol.ts`：DSH 的执行能力 provider 是原生模块，ABI 与 Electron 自带
- * Node 不同，且这样窗口重载 / 崩溃不会带走内核状态。
- *
- * 参考文档：https://www.electronjs.org/zh/docs/latest/api/app
+ * 内核跑在 `host/index.ts` 子进程里（`host/protocol.ts` 的执行能力 provider 是原生模块，
+ * ABI 与 Electron 自带的 Node 不同），窗口重载或崩溃不会带走内核状态。渲染进程只能通过
+ * `preload.js` 暴露的 `window.Memento` 说话，每个 handler 先校验发送方是不是本窗口。
  *
  * @module Memento/desktop/main
  */
@@ -44,25 +35,20 @@ import type { WorkspaceListing } from './host/sessions.ts'
 /** host 子进程入口（TS 文件，由系统 node 的类型擦除能力直接运行）。 */
 const HOST_ENTRY = fileURLToPath(new URL('./host/index.ts', import.meta.url))
 /**
- * 安全桥的**构建产物**（`preload.ts` → esbuild → `preload.cjs`）。
- *
- * 沙箱化 preload 走 Electron 自己的 CJS 加载器，不认识 TypeScript，
- * 所以不能直接指 `.ts`（会静默失败，见 `preload.ts` 的模块注释）。
+ * 安全桥的构建产物（`preload.ts` → esbuild → `preload.cjs`）。沙箱化 preload 走 Electron
+ * 自己的 CJS 加载器，不认识 TypeScript，直接指 `.ts` 会静默失败。
  */
 const PRELOAD_ENTRY = fileURLToPath(new URL('./preload.cjs', import.meta.url))
 /** 界面入口。 */
 const INDEX_HTML = fileURLToPath(new URL('./renderer/index.html', import.meta.url))
 /**
- * 应用图标。
- *
- * - Windows / Linux：`BrowserWindow` 的 `icon` 用它（macOS 忽略这个字段，Dock 图标来自 .app 包）；
- * - macOS 开发态：`app.dock.setIcon()` 用它 —— 否则 Dock 上挂的是 Electron 的默认图标；
- * - 打包态：`forge.config.ts` 的 `packagerConfig.icon` 指向同一份 `assets/icon.icns`。
+ * 应用图标：Windows / Linux 走 `BrowserWindow` 的 `icon`（macOS 忽略该字段），macOS 开发态
+ * 走 `app.dock.setIcon()`，打包态由 `forge.config.ts` 的 `packagerConfig.icon` 指向同一份。
  */
 const APP_ICON = fileURLToPath(new URL('./assets/icon.png', import.meta.url))
 /** 内核装配超时：超过这个时间还没 ready 就认为 host 起不来。 */
 const HOST_READY_TIMEOUT_MS = 90_000
-/** 关闭窗口时，等待 host 优雅退出的时间；超时则 SIGKILL。 */
+/** host 优雅退出的等待时间；超时后依次升级为 SIGTERM、SIGKILL。 */
 const HOST_STOP_TIMEOUT_MS = 5_000
 /** 进程启动时刻：用于在冒烟/开发模式下报告「从启动到窗口可见」的耗时。 */
 const STARTED_AT = Date.now()
@@ -71,21 +57,13 @@ let win: BrowserWindow | null = null
 /** 渲染进程最后一次看到的 shell 状态，新窗口打开时用它立即出画面。 */
 let state: ShellState = { phase: 'booting' }
 /**
- * 最近一帧「项目 / 会话清单」。
- *
- * 渲染进程要解析 10MB 的 bundle，订阅事件往往晚于 host 推送的首帧 —— 只靠推会丢。
- * 所以这里缓存一份，随 `Memento:state` 一起返回（「推 + 拉」两条腿，与 ready 同理）。
+ * 最近一帧「项目 / 会话清单」：渲染进程解析 10MB 的 bundle，订阅事件往往晚于 host 推送的
+ * 首帧，这里缓存一份随 `Memento:state` 一起返回。
  */
 let workspaceSnapshot: WorkspaceListing | null = null
 /**
- * 默认打开哪个项目。
- *
- * 开发时就是「你启动 electron 时所在的目录」（现状不变，跑 `npm run desktop`
- * 打开的就是仓库自己）；**打包后 `process.cwd()` 是 `/`**，拿它当工作目录会让
- * agent 在一个没有意义的根目录上工作，所以那里换成：上次打开过的项目 → 家目录。
- *
- * `Memento_CWD` 可以显式指定（冒烟测试与「从终端打开某个项目」都用它）。
- * @returns {string} 项目根目录的绝对路径。
+ * 默认打开哪个项目：`Memento_CWD` 优先（冒烟测试与「从终端打开某个项目」用它），开发时是
+ * 启动 electron 时所在的目录，打包后 `process.cwd()` 是 `/`，改用上次打开过的项目、再退回家目录。
  */
 function defaultProjectDir() {
   const fromEnv = process.env.Memento_CWD
@@ -106,16 +84,8 @@ let launchConfig: LaunchConfig = {
 // ─────────────────────────────────────────────────────────────────────────────
 // 「最近打开过的项目」登记
 //
-// 为什么需要它：内核的 `stateDir` 默认是 `<cwd>/.Memento`，所以**每个项目一份
-// 会话库**；host 侧的 lister 只扫它自己那一个根，于是侧栏的「项目 → 会话」树里
-// 永远只有当前项目 —— 换到别的项目，上一个就直接消失了。
-//
-// 这里维护一份「打开过哪些项目」的清单（放在 app 级的 userData 里，因为项目
-// 自己的 `.Memento` 是每个项目一份、互相看不到），随环境变量交给 host，
-// 由它去扫这些项目各自的库。**数据位置一个字节都不动**。
-//
-// 它只是**线索**：路径可能早被删了、库可能还不存在，host 那边读不到就跳过。
-// 所以这里读写失败一律不抛 —— 一个线索文件不该拦住启动。
+// 内核的 `stateDir` 默认是 `<cwd>/.Memento`，每个项目一份会话库，host 侧的 lister 只扫自己那一
+// 个根，所以这份清单（放在 app 级 userData）要经环境变量交给它。清单只是线索，读写失败一律不抛。
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** 登记表里的一条：项目路径 + 最后打开时间。 */
@@ -129,12 +99,7 @@ const PROJECTS_FILE = process.env.Memento_PROJECTS_FILE ?? join(app.getPath('use
 /** 最多记多少个项目（超出丢最久没打开的）。 */
 const MAX_RECENT_PROJECTS = 20
 
-/**
- * 读登记表的原始条目（最近的在前）。
- *
- * 兼容「只有路径字符串」的简写 —— 手写这个文件调试时会那么写。
- * @returns 条目（最近的在前）；文件不存在或损坏时是空数组。
- */
+/** 读登记表的原始条目（最近的在前），兼容「只有路径字符串」的简写；读不到时是空数组。 */
 function readRecentEntries(): RecentEntry[] {
   try {
     const parsed: unknown = JSON.parse(readFileSync(PROJECTS_FILE, 'utf8'))
@@ -157,20 +122,12 @@ function readRecentEntries(): RecentEntry[] {
   }
 }
 
-/**
- * 最近打开过的项目路径（最近的在前）。
- * @returns 路径数组；读不到时是空数组（侧栏因此只列当前项目，功能降级但能用）。
- */
+/** 最近打开过的项目路径（最近的在前）；读不到时是空数组，侧栏只列当前项目。 */
 function readRecentProjects(): string[] {
   return readRecentEntries().map((entry) => entry.path)
 }
 
-/**
- * 记下一个项目（去重后移到最前），并裁到上限。
- *
- * 写失败只提示：登记丢了顶多是侧栏少列一个项目，不该影响正在跑的内核。
- * @param path - 项目根目录。
- */
+/** 记下一个项目（去重后移到最前）并裁到上限；写失败只提示，不影响正在跑的内核。 */
 function rememberProject(path: string): void {
   try {
     const next = [{ path, lastOpenedAt: Date.now() }, ...readRecentEntries().filter((entry) => entry.path !== path)]
@@ -187,58 +144,32 @@ function rememberProject(path: string): void {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * 同时活着的 host 上限。
- *
- * 每个 host 都是一整个内核（10MB 级 bundle + 插件树 + 可能的 MCP 子进程），
- * 所以「后台继续跑」不能等于「永远不回收」。超过这个数就牺牲最老的那个后台会话，
- * 并且**明确告诉用户**（而不是静默杀掉）。
+ * 同时活着的 host 上限：每个 host 都是一整个内核（bundle + 插件树 + 可能的 MCP 子进程），
+ * 超过这个数就牺牲最老的那个后台会话，并在界面上说一句。
  */
 const MAX_LIVE_SLOTS = 6
 
 /**
- * 找到用来跑 host 的运行时（可执行文件 + 它需要的环境变量）。
- *
- * 三种情形，优先级从高到低：
- *
- * | 情形 | 用什么 | 为什么 |
- * | --- | --- | --- |
- * | `Memento_NODE_BIN` 显式指定 | 照用 | 逃生口：想指定别的 node 时不改代码 |
- * | **打包后**（`app.isPackaged`） | **App 自带的那颗 Electron 二进制** + `ELECTRON_RUN_AS_NODE=1` | 用户机器上不该假设有 Node；Electron 自带的 Node 24 与开发机一致，实测能跑内核（含 node-pty/koffi 的原生模块） |
- * | 开发时 | npm/pnpm 注入的 node，退回 PATH | 与 CLI 完全同一条路，行为不会两套 |
- *
- * ⚠️ 打包形态依赖 `ELECTRON_RUN_AS_NODE`，所以 `forge.config.js` 里
- * **`FuseV1Options.RunAsNode` 必须保持 true**（Forge 模板默认是关掉的）。
- * 关掉的表现是：窗口能开，但 agent 永远是「不可用」。
- *
- * @returns {{ command: string, env: Record<string, string> }} 可执行文件与附加环境变量。
+ * 找到用来跑 host 的运行时：`Memento_NODE_BIN` 优先，打包后用 Electron 二进制加 `ELECTRON_RUN_AS_NODE=1`，
+ * 开发时用 npm/pnpm 注入的 node 再退回 PATH；`forge.config.js` 的 `RunAsNode` fuse 关掉会让 agent 永远不可用。
  */
 function resolveHostRuntime() {
   if (process.env.Memento_NODE_BIN) return { command: process.env.Memento_NODE_BIN, env: {} }
   if (app.isPackaged) {
     return {
       command: process.execPath,
-      // 让 Electron 以「纯 Node」身份启动这个子进程（不起 GUI、按 node 语义解析参数）。
-      // 这个变量会随 scrubbed parent env 传给 MCP 子进程 —— 它们同样用 process.execPath 拉起
-      // （见 app/cli/kernel.ts 的 availableMcpSpecs），所以「Electron 当 Node 用」这一条
-      // 必须一路传下去。kernel.ts 里还显式把它列进了 forwardEnv 兜底。
+      // 让 Electron 以「纯 Node」身份启动这个子进程（不起 GUI、按 node 语义解析参数）；这个变量
+      // 还要随环境传给同样用 `process.execPath` 拉起的 MCP 子进程（见 `app/cli/kernel.ts`）。
       env: { ELECTRON_RUN_AS_NODE: '1' },
     }
   }
   return { command: process.env.npm_node_execpath || 'node', env: {} }
 }
 
-/**
- * 把启动配置翻译成 host 的命令行参数。
- *
- * host 直接复用 CLI 的 `parseOptions`，所以这里用的就是 CLI 那套开关，
- * 桌面端与终端的行为不会两套。
- * @param {import('./ipc.ts').LaunchConfig} config - 启动配置。
- * @returns {string[]} 传给 node 的完整参数数组。
- */
+/** 把启动配置翻译成 host 的命令行参数（host 复用 CLI 的 `parseOptions`，两端行为一致）。 */
 function buildHostArgs(config: LaunchConfig): string[] {
   const args = [
-    // Node 原生类型擦除：直接运行 .ts，无需构建步骤（与 CLI 一致的取舍）。
-    // Electron 44 自带的 Node 24 同样支持，所以打包形态下这一条不用改。
+    // node 原生类型擦除：直接运行 .ts，无需构建步骤；Electron 44 自带的 Node 24 同样支持。
     '--experimental-strip-types',
     '--disable-warning=ExperimentalWarning',
     HOST_ENTRY,
@@ -253,19 +184,15 @@ function buildHostArgs(config: LaunchConfig): string[] {
   return args
 }
 
-/** host 子进程发来的帧：只认我们真正会读的三样东西，其余原样转给渲染进程。 */
+/** host 子进程发来的帧：只解析 `ready` / `fatal`，其余原样转给渲染进程。 */
 type HostFrame =
   | { readonly kind: 'ready'; readonly info: HostReadyInfo; readonly raw: unknown }
   | { readonly kind: 'fatal'; readonly message: string; readonly raw: unknown }
   | { readonly kind: 'other'; readonly raw: unknown }
 
 /**
- * 最小形状校验（子进程的输出按不可信处理）。
- *
- * 单独一个函数、而不是散在回调里：`ready` / `fatal` 要读里面的字段，读之前必须先
- * 证明它是什么形状。判据只有一条 —— `type` 得是字符串。
- * @param raw - 子进程发来的任意值。
- * @returns 归一化后的帧；形状不认识时返回 `null`（调用方直接丢弃）。
+ * 最小形状校验：`ready` / `fatal` 的字段在被读取之前先证明它是什么形状，判据只有 `type`
+ * 得是字符串；形状不认识时返回 `null`，调用方直接丢弃。
  */
 function asHostFrame(raw: unknown): HostFrame | null {
   if (typeof raw !== 'object' || raw === null) return null
@@ -279,21 +206,19 @@ function asHostFrame(raw: unknown): HostFrame | null {
 }
 
 /**
- * agent host 的生命周期封装：拉起、转发、优雅关闭。
- *
- * 消息通道用 child_process 的 Node IPC（不是 stdout 解析）：
- * 结构化、天然帧边界，且父进程消失时子进程会收到 `disconnect` 自行收敛。
+ * agent host 的生命周期封装：拉起、转发、优雅关闭。消息通道用 child_process 的 Node IPC
+ * 而不是解析 stdout —— 结构化、天然帧边界，父进程消失时子进程还会收到 `disconnect` 自行收敛。
  */
 class AgentHost {
   /** host 推来的每个事件。 */
   private readonly onEvent: (event: unknown) => void
-  /** 子进程退出（不是我们主动关的时候才回调）。 */
+  /** 子进程自己退出时回调（主动 stop 不算）。 */
   private readonly onExit: (detail: { readonly code: number | null; readonly error?: Error }) => void
   /** 当前子进程。 */
   private child: ChildProcess | null = null
   /** 就绪信息（`ready` 帧里的那份）。 */
   private info: HostReadyInfo | null = null
-  /** 是我们主动关的，还是它自己崩的。 */
+  /** 这次退出是不是主动 stop 引起的。 */
   private stopping = false
   /** 等待 `ready` 的结算函数（同时只有一个）。 */
   private resolveReady: ((info: HostReadyInfo) => void) | null = null
@@ -304,20 +229,11 @@ class AgentHost {
   /** ready 超时定时器。 */
   private readyTimer: NodeJS.Timeout | null = null
   /**
-   * 子进程的「代际」。
-   *
-   * 每次 start / stop 都 +1；回调里捕获自己那一代，**不是当前代就什么都不做**。
-   * 为什么需要：连着点两个会话时，第一次的内核可能还在启动（或刚被 kill），
-   * 它晚到的 `history` / `workspace` 帧会盖到第二次切换的界面上 ——
-   * 表现是「点 A 又点 B，结果先看到 A 的会话闪一下，或者停在 A」。
-   * 上一版只靠 `this.child !== child` 判断，那只覆盖了 close，覆盖不了 message。
+   * 子进程的代际：每次 start / stop 都 +1，回调里捕获自己那一代，不是当前代就丢弃 —— 否则前一代
+   * 晚到的 `history` / `workspace` 帧会盖到新一代的界面上（只看 `this.child !== child` 覆盖不了 message）。
    */
   private generation = 0
 
-  /**
-   * @param onEvent - host 推来的每个事件。
-   * @param onExit - 子进程退出。
-   */
   constructor(
     onEvent: (event: unknown) => void,
     onExit: (detail: { readonly code: number | null; readonly error?: Error }) => void,
@@ -326,11 +242,7 @@ class AgentHost {
     this.onExit = onExit
   }
 
-  /**
-   * 启动 host 并等待 `ready`。
-   * @param config - 启动配置。
-   * @returns 就绪信息。
-   */
+  /** 启动 host 并等待 `ready`。 */
   async start(config: LaunchConfig): Promise<HostReadyInfo> {
     await this.stop()
     const generation = ++this.generation
@@ -338,8 +250,8 @@ class AgentHost {
     this.failureReported = false
     this.info = null
 
-    // 把「最近打开过的其他项目」交给 host：它只扫当前项目的会话库，
-    // 不带上这份清单，侧栏的项目树里就永远只有当前项目（见文件上半部分的说明）。
+    // host 只扫当前项目的会话库，没有这份「其他打开过的项目」清单，侧栏的项目树里就永远
+    // 只有当前项目。
     const recentProjects = readRecentProjects().filter((path) => path !== config.cwd)
     const runtime = resolveHostRuntime()
     const child = spawn(runtime.command, buildHostArgs(config), {
@@ -364,7 +276,7 @@ class AgentHost {
     })
 
     child.on('message', (raw: unknown) => {
-      // 已经不是当前这一代子进程了（用户又切了一次）：它的帧一律丢弃。
+      // 已经不是当前这一代子进程：它的帧一律丢弃。
       if (generation !== this.generation) return
       // 子进程输出不可信：只做最小形状校验，非法消息直接丢弃。
       const frame = asHostFrame(raw)
@@ -380,16 +292,15 @@ class AgentHost {
 
     child.once('error', (error: Error) => {
       if (generation !== this.generation) return
-      // spawn 失败（例如 PATH 里没有 node）：把错误交给等待者，并松开引用，
-      // 否则下一次 start() 的 stop() 会去等一个永远不存在的 close。
+      // spawn 失败（例如 PATH 里没有 node）：把错误交给等待者并松开引用，否则下一次
+      // start() 的 stop() 会去等一个永远不存在的 close。
       this.settleReady(error)
       if (this.child === child) this.child = null
     })
 
     child.once('close', (code: number | null) => {
-      // 用「代际」判断这次退出是不是我们主动引起的：重启时旧的 close 回调
-      // 可能晚于新子进程的创建，靠代际把它认出来（比 `this.child !== child` 更准：
-      // 新子进程还没创建时，child 也已经是 null 了）。
+      // 用代际判断这次退出是不是主动引起的：重启时旧的 close 回调可能晚于新子进程的创建，
+      // 那时 `this.child` 也已经是 null 了，只有代际认得出来。
       const expected = this.stopping || generation !== this.generation
       if (this.child === child) {
         this.child = null
@@ -398,7 +309,7 @@ class AgentHost {
       // 还没就绪就退出 → 把一个可读的错误结算给等待者（firstFailure）。
       const firstFailure = this.settleReady(new Error(`agent host 已退出 (code ${String(code)})`))
       if (expected) return
-      // 之前已经报过错（例如刚收到 fatal）就不再重复弹一条。
+      // 已经报过错（例如刚收到 fatal）就不重复弹一条。
       if (!firstFailure && this.failureReported) return
       this.onExit({ code })
     })
@@ -406,11 +317,7 @@ class AgentHost {
     return ready
   }
 
-  /**
-   * 结束 ready 的等待（成功 / 失败都走这里，保证只结算一次）。
-   * @param error - `null` 表示成功。
-   * @returns 是否真的结算了（`false` 说明此前已经有结果）。
-   */
+  /** 结束 ready 的等待（成功 / 失败都走这里，保证只结算一次）；`false` 说明此前已经有结果。 */
   settleReady(error: Error | null): boolean {
     if (this.readyTimer !== null) {
       clearTimeout(this.readyTimer)
@@ -426,9 +333,8 @@ class AgentHost {
       reject?.(error)
       return true
     }
-    // 成功路径上 info 一定已经写好了（`ready` 分支先赋值再结算）。
-    // 万一没有，也必须给等待者一个结果 —— 否则 ready 的定时器已经被清掉，
-    // 调用方会一直挂着。
+    // 成功路径上 info 已经写好了（`ready` 分支先赋值再结算）；万一没有也要给等待者一个结果，
+    // 否则定时器已经被清掉，调用方会一直挂着。
     if (this.info === null) reject?.(new Error('agent host 报了就绪但没有带 info'))
     else resolve?.(this.info)
     return true
@@ -441,12 +347,12 @@ class AgentHost {
     return true
   }
 
-  /** 请求 host 优雅退出；超时逐级升级为信号，最终放弃等待（不能让窗口关不掉）。 */
   /** 就绪信息（`info` 频道要读它的 nodeVersion）。 */
   get readyInfo(): HostReadyInfo | null {
     return this.info
   }
 
+  /** 请求 host 优雅退出；超时逐级升级为信号，最终放弃等待（不能让窗口关不掉）。 */
   async stop(): Promise<void> {
     // 无论有没有子进程，都推进代际：这样「已经停掉的那一代」晚到的帧会被丢掉。
     this.generation += 1
@@ -455,7 +361,6 @@ class AgentHost {
     this.stopping = true
     if (child.connected) child.send({ type: 'shutdown' })
     const closed = new Promise((resolve) => { child.once('close', resolve) })
-    // 三级收敛：先礼后兵，最后放开等待，避免一个不听话的子进程卡住退出流程。
     const termTimer = setTimeout(() => { child.kill('SIGTERM') }, HOST_STOP_TIMEOUT_MS)
     const killTimer = setTimeout(() => { child.kill('SIGKILL') }, HOST_STOP_TIMEOUT_MS * 2)
     const deadline = new Promise((resolve) => {
@@ -479,21 +384,14 @@ function sendToRenderer(event: BridgeEvent): void {
   win.webContents.send(IPC.hostEvent, event)
 }
 
-/**
- * 校验 IPC 发送方：只接受我们自己的主窗口主框架。
- * @param {import('electron').IpcMainInvokeEvent} event - IPC 事件。
- */
+/** 校验 IPC 发送方：只接受本窗口的主框架。 */
 function assertSender(event: Electron.IpcMainInvokeEvent): void {
   if (win === null || event.sender !== win.webContents) {
     throw new Error('Memento: 拒绝来自非本窗口的 IPC 调用')
   }
 }
 
-/**
- * host 退出 / 启动失败时统一把状态推给界面。
- * @param error - 失败原因。
- * @param hostId - 出问题的会话视图键（渲染进程据此把错误挂到那个会话上）。
- */
+/** host 退出 / 启动失败时统一把状态推给界面；`hostId` 决定错误挂到哪个会话上。 */
 function reportHostFailure(error: Error, hostId?: string): void {
   state = { phase: 'error', error: error.message, ...(hostId === undefined ? {} : { activeKey: hostId }) }
   sendToRenderer({ type: 'host-error', message: error.message, ...(hostId === undefined ? {} : { hostId }) })
@@ -504,15 +402,8 @@ function reportHostFailure(error: Error, hostId?: string): void {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * 一个会话的 host 槽位。
- *
- * 为什么不再是一个全局 host：切换会话如果直接把 host 杀掉，**正在跑的回合就没了**
- * （用户报的就是这件事）。现在按会话（`cwd + sessionId`）持有 host：
- *
- *   - 切到别的会话时，**还有回合在跑的 host 原样留着**，它继续跑完并落盘；
- *   - 空闲的 host 在切换时收掉（省内存），切回来用 `--resume` 回放历史；
- *   - 每个 host 的每一帧都打上 `hostId = slot.key`，渲染进程按它把事件路由到
- *     各自会话的视图 —— 后台会话的正文不会串进前台会话。
+ * 一个会话的 host 槽位。按 `cwd + sessionId` 持有 host：切换时还有回合在跑的留着（杀掉会丢掉
+ * 正在跑的回合），空闲的收掉、切回来用 `--resume` 回放；每帧打上 `hostId = slot.key` 供路由。
  */
 interface HostSlot {
   /** 会话视图键（`sessionKey(cwd, sessionId)`）；新建会话就绪后会改名。 */
@@ -529,7 +420,7 @@ interface HostSlot {
   info: HostReadyInfo | null
   /** 主进程侧记录的「有回合在跑」：`prompt` 之后到 `turn-end` 之前。 */
   busy: boolean
-  /** 已经收掉：它的帧一律不再转发。 */
+  /** 已经收掉：它的帧一律丢弃。 */
   dead: boolean
 }
 
@@ -544,11 +435,8 @@ function activeSlot(): HostSlot | null {
 }
 
 /**
- * 当前会话的 host，拿不到就抛。
- *
- * 界面上除了「切会话」以外的每一个动作都发给**当前会话** —— 后台会话继续跑，
- * 但用户能操作（发消息 / 纠偏 / 中断 / 换模型）的只有前台这一个。
- * @returns 当前会话的子进程封装。
+ * 当前会话的 host，拿不到就抛。界面上除「切会话」以外的动作都发给当前会话：后台会话继续跑，
+ * 但能操作（发消息 / 纠偏 / 中断 / 换模型）的只有前台这一个。
  */
 function requireActiveHost(): AgentHost {
   const slot = activeSlot()
@@ -568,11 +456,8 @@ function syncState(): void {
 }
 
 /**
- * 收掉一个槽位。
- *
- * 立刻从表里摘掉（后续帧一律丢弃，见 `slot.dead`），再让子进程自己优雅退出 ——
- * **不 await**：切换会话不该被一个正在收敛的内核拖住。
- * @param slot - 要收掉的槽位。
+ * 收掉一个槽位：立刻从表里摘掉（后续帧一律丢弃，见 `slot.dead`），再让子进程自己优雅退出。
+ * 不 await —— 切换会话不被一个正在收敛的内核拖住。
  */
 function retire(slot: HostSlot): void {
   if (slot.dead) return
@@ -583,13 +468,8 @@ function retire(slot: HostSlot): void {
 }
 
 /**
- * 造一个槽位并接上它的两条回调。
- *
- * `slot` 用「先声明后赋值」是因为 host 的帧回调要引用槽位本身（`ready` 帧要把
- * 占位键改成真实会话 id 的键）—— 而 `new AgentHost()` 只是构造，不会同步产生帧。
- * @param config - 启动配置。
- * @param resume - 要恢复的会话 id；新会话为 undefined。
- * @returns 新槽位（已入表）。
+ * 造一个槽位并接上它的两条回调。`slot` 先声明后赋值：帧回调要引用槽位本身（`ready` 要把
+ * 占位键改成真实会话 id 的键），而 `new AgentHost()` 只是构造，不会同步产生帧。
  */
 function spawnSlot(config: LaunchConfig, resume: string | undefined): HostSlot {
   const cwd = config.cwd
@@ -602,25 +482,24 @@ function spawnSlot(config: LaunchConfig, resume: string | undefined): HostSlot {
       if (frame.type === 'workspace') {
         workspaceSnapshot = { projects: frame.projects, sessions: frame.sessions }
       }
-      // ⚠️ 顺序要紧：**先转发、再改名**。`ready` 必须带着旧键出去，
-      // 渲染进程才知道「这个新会话 id 对应的是刚才那个占位视图」，两边各自改名。
+      // 顺序要紧：先转发、再改名 —— `ready` 要带着旧键出去，渲染进程才知道这个新会话 id
+      // 对应的是刚才那个占位视图，两边各自改名。
       sendToRenderer({ ...frame, hostId: slot.key })
       if (frame.type === 'ready') adoptReady(slot, frame.info)
       if (frame.type === 'turn-end' && slot.busy) {
         slot.busy = false
-        // 后台会话跑完了：它已经没有继续留着的理由，收掉。
-        // （下次切回去走 `--resume` 历史回放，结果一点不少。）
+        // 后台会话跑完了：它没有继续留着的理由，收掉；下次切回去走 `--resume` 历史回放。
         if (slot.key !== activeKey) retire(slot)
       }
     },
     ({ code }) => {
-      // 不是我们主动收的：host 自己退了。
+      // host 自己退了（不是主动收的）。
       if (slot.dead) return
       const message = `agent host 异常退出 (code ${String(code)})，可在菜单里新建会话重试`
       if (slot.key === activeKey) reportHostFailure(new Error(message), slot.key)
       else sendToRenderer({ type: 'notice', level: 'warn', message, hostId: slot.key })
-      // ⚠️ 无论哪种都要把槽位摘掉：留着它会让下一次 `attach(reuse: true)` 挂到一个
-      // 已经死掉的子进程上（表现是「切回来一片空白、发消息没反应」）。
+      // 无论哪种都要把槽位摘掉：留着它会让下一次 `attach(reuse: true)` 挂到已经死掉的
+      // 子进程上，表现是切回来一片空白、发消息没反应。
       retire(slot)
     },
   )
@@ -639,12 +518,8 @@ function spawnSlot(config: LaunchConfig, resume: string | undefined): HostSlot {
 }
 
 /**
- * `ready` 帧到了：记下真实会话 id，并把「新会话」的占位键换成带 id 的键。
- *
- * 两边（主进程与渲染进程）都要做这次改名，否则「切走再切回同一个新会话」时
- * 键对不上，就会为一个会话起两个 host —— 两个内核写同一份会话日志。
- * @param slot - 就绪的槽位。
- * @param info - 就绪信息。
+ * `ready` 帧到了：记下真实会话 id，并把「新会话」的占位键换成带 id 的键。主进程与渲染进程
+ * 两边都要做这次改名，否则切走再切回同一个新会话时键对不上，会为一个会话起两个 host。
  */
 function adoptReady(slot: HostSlot, info: HostReadyInfo): void {
   slot.info = info
@@ -661,28 +536,16 @@ function adoptReady(slot: HostSlot, info: HostReadyInfo): void {
 }
 
 /**
- * 切到某个会话。
- *
- * 三种走法：
- *   1. **挂回**：渲染进程已有视图 + 这边还留着它的 host（多半是后台还在跑）→
- *      只换前台，不动进程，后台进度一点不丢；
- *   2. **挂不上就重启**：目标会话已空闲被收掉 / 从没打开过 → 起一个新 host，
- *      需要时带 `--resume` 回放历史；
- *   3. **正在跑的别的会话原样留着**，跑完自己收掉（见 {@link spawnSlot}）。
- * @param request - 目标项目 / 会话与复用策略。
- * @returns 是否直接挂回了活着的 host，以及目标会话视图键。
+ * 切到某个会话：主进程还留着它的 host（多半后台回合还在跑）就直接挂回、不动进程，否则起一个
+ * 新 host（需要时带 `--resume` 回放历史）。正在跑的别的会话原样留着，跑完自己收掉。
  */
 async function attach(request: AttachRequest): Promise<AttachResult> {
   const cwd = typeof request.cwd === 'string' && request.cwd !== '' ? request.cwd : launchConfig.cwd
   const resume = typeof request.resume === 'string' && request.resume !== '' ? request.resume : undefined
   const key = sessionKey(cwd, resume)
 
-  /**
-   * 「我刚离开的那个会话有回合在跑」：主进程可能还没收到 `prompt`（同一个 tick 里
-   * 先发指令再切走），先按忙处理，别把刚发出去的那一轮当成空闲收掉。
-   *
-   * ⚠️ 必须排在下面「挂回」之前：挂回那条路也会回收空闲槽位。
-   */
+  // 「刚离开的会话有回合在跑」：主进程可能还没收到 `prompt`（同一 tick 里先发指令再切走），先按忙
+  // 处理，别把刚发出去的那一轮当空闲收掉。这段要排在下面「挂回」之前 —— 挂回也会回收空闲槽位。
   if (request.activeBusy === true) {
     const leaving = activeSlot()
     if (leaving !== null && leaving.key !== key) leaving.busy = true
@@ -691,8 +554,7 @@ async function attach(request: AttachRequest): Promise<AttachResult> {
   // ① 直接挂回还活着的 host（切走再切回一个仍在跑的会话）。
   const live = slots.find((slot) => !slot.dead && slot.key === key)
   if (request.reuse && live !== undefined) {
-    // 顺手把**空闲**的槽位收掉（多半是刚才那个前台会话）—— 每个槽位都是一整个内核，
-    // 没有理由让一个空闲的继续占着。正在跑的照样留着。
+    // 顺手把空闲槽位收掉（每个槽位都是一整个内核，没理由让空闲的占着）；正在跑的留着。
     for (const slot of [...slots]) {
       if (slot === live || slot.busy) continue
       retire(slot)
@@ -703,8 +565,8 @@ async function attach(request: AttachRequest): Promise<AttachResult> {
     return { attached: true, key }
   }
 
-  // ② 回收：目标键上的旧槽位无论如何都收掉（要么重启，要么被新 host 取代）；
-  //    其他会话**在跑的留着**，空闲的收掉。
+  // ② 回收：目标键上的旧槽位无论如何都收掉（要么重启，要么被新 host 取代）；其他会话
+  //    在跑的留着，空闲的收掉。
   for (const slot of [...slots]) {
     if (slot.key === key) { retire(slot); continue }
     if (slot.busy) continue
@@ -735,7 +597,7 @@ async function attach(request: AttachRequest): Promise<AttachResult> {
   const slot = spawnSlot(config, resume)
   try {
     const info = await slot.host.start(config)
-    // 起来之前又被切走了：这一代的结果不再影响界面（它的 host 已被 `retire`）。
+    // 起来之前又被切走了：这一代的结果不影响界面（它的 host 已被 `retire`）。
     if (slot.dead) return { attached: false, key }
     slot.info = info
     slot.sessionId = info.sessionId
@@ -743,7 +605,7 @@ async function attach(request: AttachRequest): Promise<AttachResult> {
     // 起来了才算「打开过」：这样登记表里不会攒下一堆启动失败的路径。
     rememberProject(cwd)
   } catch (error) {
-    // 被后一次切换取代的那一次不算失败（它的失败是「我们自己 kill 的」）。
+    // 被后一次切换取代的那一次不算失败（它的失败是主动 kill 造成的）。
     if (slot.dead) return { attached: false, key }
     retire(slot)
     reportHostFailure(error instanceof Error ? error : new Error(String(error)), key)
@@ -756,15 +618,8 @@ async function attach(request: AttachRequest): Promise<AttachResult> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * 窗口材质：侧栏的「磨砂玻璃」由**系统**提供，不用 CSS 的 `backdrop-filter`。
- *
- * - macOS：`vibrancy: 'sidebar'` 是 Apple 给侧栏预留的材质，配合
- *   `visualEffectState: 'active'` 让窗口失焦时材质也保持稳定；
- * - Windows 11：`backgroundMaterial: 'acrylic'`；
- * - Linux：没有等价物，退回不透明底色（渲染进程会按 `nativeMaterial` 走 fallback）。
- *
- * 启用材质时窗口底色必须是**全透明**，否则材质会被盖住；主内容区由
- * `.main-column` 自己刷不透明背景，所以只有侧栏露出材质。
+ * 窗口材质：侧栏磨砂玻璃由系统提供（macOS `vibrancy: 'sidebar'` + `visualEffectState`，Windows 11
+ * `backgroundMaterial: 'acrylic'`，Linux 退回不透明底色）；启用材质时窗口底色是全透明，否则被盖住。
  */
 function windowMaterial(): BrowserWindowConstructorOptions {
   if (process.platform === 'darwin') {
@@ -781,12 +636,8 @@ function windowMaterial(): BrowserWindowConstructorOptions {
 const NATIVE_MATERIAL = process.platform === 'darwin' || process.platform === 'win32'
 
 /**
- * 隐藏系统标题栏。
- *
- * macOS：`hidden` 保留红绿灯（用 `trafficLightPosition` 摆到自绘顶栏上），
- * 窗口拖动交给渲染进程里的 `.drag-region`。
- * Windows：`hidden` + `titleBarOverlay` 保留最小化/最大化/关闭三个原生按钮。
- * Linux：保留原生标题栏 —— 否则窗口没有关闭按钮，用起来反而更糟。
+ * 隐藏系统标题栏：macOS 用 `hidden` 保留红绿灯（`trafficLightPosition` 摆到自绘顶栏上），Windows 用
+ * `titleBarOverlay` 保留三个原生按钮，Linux 保留原生标题栏 —— 否则窗口没有关闭按钮。
  */
 function titleBarOptions(): BrowserWindowConstructorOptions {
   if (process.platform === 'darwin') {
@@ -801,12 +652,9 @@ function titleBarOptions(): BrowserWindowConstructorOptions {
   return { titleBarStyle: 'default' }
 }
 
-/** 创建主窗口。 */
 /**
- * macOS 开发态把 Dock 图标换成本项目的 logo。
- *
- * 为什么只在开发态做：打包后的 .app 自带 `icon.icns`，Dock 直接读包里的图标；
- * 而 `electron app/desktop/main.ts` 这种跑法用的是 Electron.app，Dock 上会是 Electron 的图标。
+ * macOS 开发态把 Dock 图标换成本项目的 logo。打包后的 .app 自带 `icon.icns`，Dock 直接读
+ * 包里的图标；而 `electron app/desktop/main.ts` 这种跑法用的是 Electron.app 的图标。
  */
 function applyDockIcon(): void {
   if (process.platform !== 'darwin' || app.isPackaged) return
@@ -819,6 +667,7 @@ function applyDockIcon(): void {
   }
 }
 
+/** 创建主窗口。 */
 function createWindow(): void {
   const base: BrowserWindowConstructorOptions = {
     width: 1180,
@@ -838,13 +687,13 @@ function createWindow(): void {
       spellcheck: false,
     },
   }
-  // 材质与标题栏逐平台不同，两个都返回 BrowserWindowConstructorOptions，
-  // 展开在这里而不是塞进上面的字面量里 —— 联合类型的展开没法被 TS 收窄（会报不可赋值）。
+  // 材质与标题栏逐平台不同，展开在这里而不是塞进上面的字面量里：联合类型的展开没法被
+  // TS 收窄（会报不可赋值）。
   const options: BrowserWindowConstructorOptions = { ...base, ...windowMaterial(), ...titleBarOptions() }
   win = new BrowserWindow(options)
 
-  // 把渲染进程的 console 转发到主进程输出：界面出问题时（React 抛错、CSP 拦截、
-  // Promise 未处理）这里是唯一的线索。开发模式下才开，避免正常使用刷屏。
+  // 把渲染进程的 console 转发到主进程输出：界面出问题时（React 抛错、CSP 拦截、Promise
+  // 未处理）这里是唯一的线索；只在开发模式下开，避免正常使用刷屏。
   if (process.env.Memento_DEV === '1') {
     win.webContents.on('console-message', (...args) => {
       // Electron 新旧版本签名不同：新版是 ({level, message, ...})，旧版是 (event, level, message)。
@@ -858,7 +707,7 @@ function createWindow(): void {
 
   win.once('ready-to-show', () => {
     win?.show()
-    // 渲染进程的 bundle 有 10MB 左右（主要是 shiki 的语法定义），这里量一下真实代价。
+    // 渲染进程的 bundle 有 10MB 左右（主要是 shiki 的语法定义），启动耗时因此值得单独量一次。
     if (process.env.Memento_DEV === '1') {
       process.stdout.write(`[desktop] 窗口可见 · 启动耗时 ${String(Date.now() - STARTED_AT)}ms\n`)
     }
@@ -933,12 +782,8 @@ async function openWorkspace() {
 // ─────────────────────────────────────────────────────────────────────────────
 // 右侧预览面板：读文件
 //
-// 与 `openPath` 同一套路径语义（相对路径按工作目录解析），差别是**把内容读回来**。
-// 三条边界：
-//   1. 只读，不写（写文件仍然只能走设置界面那条带白名单的路）；
-//   2. **有体积上限**：文本 1MB、图片 8MB —— 预览面板是给人看一眼的，不是编辑器，
-//      把 40MB 的日志塞进渲染进程只会卡住界面（超限时如实告知并提示用系统程序打开）；
-//   3. 类型由**扩展名**判断，认不出来的一律当 binary（只说体积，不给内容）。
+// 与 `openPath` 同一套路径语义（相对路径按工作目录解析），差别是把内容读回来。只读不写，文本
+// 1MB、图片 8MB 是上限，类型由扩展名判断、认不出来的一律当 binary（只说体积不给内容）。
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** 文本类预览的体积上限（字节）。 */
@@ -950,7 +795,7 @@ const PREVIEW_IMAGE_MAX = 8_000_000
 const IMAGE_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'avif', 'ico', 'svg'])
 const MARKDOWN_EXT = new Set(['md', 'markdown', 'mdx'])
 const TEXT_EXT = new Set(['txt', 'log', 'jsonl', 'ndjson', 'csv', 'tsv', 'diff', 'patch'])
-/** 代码类：值是给高亮用的语言名（Streamdown 内部是 Shiki，认这些名字）。 */
+/** 代码类：值是给高亮用的语言名（底层是 Shiki，认这些名字）。 */
 const CODE_EXT: Readonly<Record<string, string>> = {
   ts: 'typescript', tsx: 'tsx', mts: 'typescript', cts: 'typescript',
   js: 'javascript', jsx: 'jsx', mjs: 'javascript', cjs: 'javascript',
@@ -970,11 +815,7 @@ const IMAGE_MIME: Readonly<Record<string, string>> = {
   svg: 'image/svg+xml',
 }
 
-/**
- * 按扩展名判断该怎么渲染。
- * @param target - 文件绝对路径。
- * @returns 渲染类型与（代码类的）语言名。
- */
+/** 按扩展名判断该怎么渲染（代码类同时给出高亮用的语言名）；认不出来当 binary。 */
 function previewTypeOf(target: string): { kind: PreviewKind; language: string } {
   const name = target.slice(target.lastIndexOf('/') + 1)
   const dot = name.lastIndexOf('.')
@@ -987,11 +828,7 @@ function previewTypeOf(target: string): { kind: PreviewKind; language: string } 
   return { kind: 'binary', language: '' }
 }
 
-/**
- * 读一个文件给预览面板。
- * @param raw - 渲染进程传来的路径（可能是相对的）。
- * @returns 预览载荷（读不到时 `ok: false` + `error`）。
- */
+/** 读一个文件给预览面板（读不到时 `ok: false` + `error`）。 */
 async function readForPreview(raw: unknown): Promise<PreviewPayload> {
   if (typeof raw !== 'string' || raw.trim() === '') {
     return { ok: false, path: '', kind: 'binary', error: '路径为空' }
@@ -1033,11 +870,8 @@ async function readForPreview(raw: unknown): Promise<PreviewPayload> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * 设置界面允许读写的根目录。
- *
- * 只包含「配置与技能/命令」这几处，不含工作目录本身 —— 免得「编辑技能」变成
- * 「任意文件写入」。路径一律先 `resolve()` 再判断前缀，`../` 逃逸因此无效。
- * @returns 绝对路径数组。
+ * 设置界面允许读写的根目录：只含「配置与技能/命令」这几处，不含工作目录本身，免得「编辑
+ * 技能」变成「任意文件写入」。路径一律先 `resolve()` 再判断前缀，`../` 逃逸因此无效。
  */
 function settingsRoots() {
   const cwd = launchConfig.cwd
@@ -1058,11 +892,7 @@ function settingsRoots() {
   return roots
 }
 
-/**
- * 判断一个路径是否允许被设置界面读写。
- * @param {unknown} path - 渲染进程传来的路径。
- * @returns {{ path: string } | { error: string }} 通过时给出绝对路径。
- */
+/** 判断一个路径是否允许被设置界面读写；通过时给出绝对路径，否则给出拒绝原因。 */
 function allowedSettingsPath(path: unknown): { ok: true; path: string } | { ok: false; error: string } {
   if (typeof path !== 'string' || path.trim() === '') return { ok: false, error: '路径为空' }
   const target = resolve(path)
@@ -1077,32 +907,19 @@ function allowedSettingsPath(path: unknown): { ok: true; path: string } | { ok: 
 // git：面包屑要的「当前分支 + 可切换的分支列表」
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** git 探测的超时与输出上限：大仓库的 `status` 会慢，但绝不能拖住界面。 */
+/** git 探测的超时与输出上限：大仓库的 `status` 会慢，但拖不住界面。 */
 const GIT_TIMEOUT_MS = 5_000
 const GIT_MAX_BUFFER = 1 << 20
 
 /**
- * `git pull` 的超时。
- *
- * 它要**联网**，与本地探测不是一个量级 —— 沿用 5s 会把正常的拉取误杀成失败。
- * 两分钟足够覆盖慢网络；再久就判失败，把控制权还给用户（比无限转圈强）。
+ * `git pull` 的超时单独放宽：它要联网，沿用 5s 会把正常的拉取误杀成失败；两分钟覆盖慢
+ * 网络，再久就判失败，把控制权还给用户。
  */
 const GIT_PULL_TIMEOUT_MS = 120_000
 
 /**
- * 跑一条 git 命令。
- *
- * 三条硬约束，都是安全/稳定性要求：
- *   1. **参数数组、不拼 shell**（`execFile` 而不是 `exec`）—— 分支名这类外部输入
- *      因此不可能变成 shell 元字符；
- *   2. `cwd` 由**主进程**决定（当前会话的工作目录），不接受渲染进程传路径；
- *   3. **失败也 resolve**：`code !== 0` + `stderr` 正是界面要显示的那句话
- *      （例如「Your local changes would be overwritten」），不是异常。
- * @param args - git 的子命令与参数（不含 `git` 本身）。
- * @param cwd - 在哪个目录里执行。
- * @param options - 可选的时限与**追加**环境变量（默认 `GIT_TIMEOUT_MS`、不加）。
- *   `pull` 要单独放宽时限并关掉交互提示，见 {@link pullGitBranch}。
- * @returns 退出码、两路输出，以及「进程根本没跑起来」时的原因（超时 / 没装 git）。
+ * 跑一条 git 命令。参数数组、不拼 shell（分支名不可能变成 shell 元字符），`cwd` 由主进程决定；
+ * 失败也 resolve —— `code !== 0` 加 `stderr` 正是界面要显示的那句话，不是异常。
  */
 function runGit(
   args: readonly string[],
@@ -1116,8 +933,8 @@ function runGit(
       maxBuffer: GIT_MAX_BUFFER,
       windowsHide: true,
       encoding: 'utf8',
-      // ⚠️ 传了 `env` 就是**整个替换**（execFile 的语义），所以必须带上 `process.env`：
-      // 否则 git 会丢掉 PATH / HOME，连 `~/.gitconfig` 和 ssh 都找不到。
+      // 传了 `env` 就是整个替换（execFile 的语义），所以要带上 `process.env`：否则 git 会
+      // 丢掉 PATH / HOME，连 `~/.gitconfig` 和 ssh 都找不到。
       ...(options.env === undefined ? {} : { env: { ...process.env, ...options.env } }),
     }, (error, stdout, stderr) => {
       // `error.code` 是数字（git 的退出码）或字符串（ENOENT、超时）；统一压成数字。
@@ -1138,12 +955,8 @@ function gitLines(output: string): string[] {
 }
 
 /**
- * 命令输出里**最后**一句有内容的话。
- *
- * `pull` 的结论就在那儿：没事时是 `Already up to date.`，真拉到东西时是 diffstat
- * 的末行（`1 file changed, 1 insertion(+)`）—— 都比第一行（`Updating 3f2a1b…`）有用。
- * @param output - stdout。
- * @returns 那句话；没有任何内容时是空串。
+ * 命令输出里最后一句有内容的话。`pull` 的结论就在那儿：没事时是 `Already up to date.`，
+ * 真拉到东西时是 diffstat 的末行，都比第一行（`Updating 3f2a1b…`）有用。
  */
 function gitLastLine(output: string): string {
   const lines = gitLines(output)
@@ -1151,13 +964,8 @@ function gitLastLine(output: string): string {
 }
 
 /**
- * git 失败时给人看的那句话。
- *
- * 优先 `stderr`（`fatal: Not possible to fast-forward, aborting.` 这类都在那儿），
- * 退回 `stdout`，再退回进程根本没起来的 `error`。**原样转交**，不编文案 ——
- * git 自己说的比我们准。
- * @param result - {@link runGit} 的返回。
- * @returns 要显示的一句话。
+ * git 失败时给人看的那句话：优先 `stderr`（`fatal: Not possible to fast-forward, aborting.`
+ * 这类都在那儿），退回 `stdout`，再退回进程根本没起来的 `error`；原样转交，不编文案。
  */
 function gitFailureText(result: { readonly stdout: string; readonly stderr: string; readonly error: string | null }): string {
   const stderr = result.stderr.trim()
@@ -1168,17 +976,8 @@ function gitFailureText(result: { readonly stdout: string; readonly stderr: stri
 }
 
 /**
- * 探测当前工作目录的 git 情况。
- *
- * 几条判断都是刻意的：
- *   - **不是仓库不算错误**（`repo: false`、`error: null`）：绝大多数目录不是仓库，
- *     那是正常状态，界面据此不显示分支段而已；
- *   - 没装 git / 目录被删才是 `error`（`runGit` 的 `error` 字段有值）；
- *   - `HEAD` 有两种「不是分支」的形态：仓库还没有第一次提交（`abbrev-ref` 直接报错）
- *     与 detached HEAD（输出字面量 `HEAD`）—— 两种都记成 `branch: ''`，
- *     后者额外带上短 SHA 供界面显示 `detached@abc1234`。
- * @param cwd - 要探测的工作目录（当前会话的）。
- * @returns git 情况。
+ * 探测当前工作目录的 git 情况。不是仓库不算错误（`repo: false`、`error: null`），没装 git / 目录
+ * 被删才是 `error`；首次提交前与 detached HEAD 两种形态都记成 `branch: ''`，后者额外带短 SHA。
  */
 async function readGit(cwd: string): Promise<GitStatus> {
   const none = {
@@ -1195,7 +994,7 @@ async function readGit(cwd: string): Promise<GitStatus> {
     runGit(['rev-parse', '--abbrev-ref', 'HEAD'], cwd),
     runGit(['rev-parse', '--short', 'HEAD'], cwd),
     runGit(['for-each-ref', '--format=%(refname:short)', 'refs/heads'], cwd),
-    // 连 `%(symref)` 一起取：远程的 `origin/HEAD` 是**符号引用**，见下面那两行过滤。
+    // 连 `%(symref)` 一起取：远程的 `origin/HEAD` 是符号引用，见下面那两行过滤。
     runGit(['for-each-ref', '--format=%(refname:short)%09%(symref)', 'refs/remotes'], cwd),
     // `-uno`：只看已跟踪文件 —— 面包屑的 tooltip 不值得为几万个未跟踪文件买单。
     runGit(['status', '--porcelain', '-uno'], cwd),
@@ -1215,22 +1014,8 @@ async function readGit(cwd: string): Promise<GitStatus> {
 }
 
 /**
- * 解析 `for-each-ref refs/remotes` 的输出，滤掉**不是分支**的引用。
- *
- * 两种都要滤，而且理由不同：
- *
- *   1. **符号引用**（`%(symref)` 非空）—— `origin/HEAD` 就是它，指向「远程默认分支」。
- *      它最坑的地方是 `%(refname:short)` 会给出 **`origin`**（不是 `origin/HEAD`），
- *      所以「按名字结尾判 HEAD」的老写法**根本拦不住它**，菜单里会冒出一个叫
- *      `origin` 的假分支；点下去退化成 `checkout -b origin --track origin`，
- *      报一句莫名其妙的上游不存在。只在 **clone 出来**的仓库里出现
- *      （`refs/remotes/origin/HEAD` 存在），手写 `git remote add` 的仓库没有 ——
- *      这正是它一直没被发现的原因。
- *   2. **真的叫 `/HEAD` 的分支**：极少数情况下远程 HEAD 是个普通引用，按名字再兜一层。
- *
- * 分隔符用制表符（`%09`）而不是空格：引用名里可能有空格，按空白切会切错。
- * @param output - `for-each-ref --format=%(refname:short)%09%(symref)` 的 stdout。
- * @returns 可以切换的远程分支名，例如 `origin/main`。
+ * 解析 `for-each-ref refs/remotes` 的输出，滤掉不是分支的引用：`origin/HEAD` 是符号引用，而
+ * `%(refname:short)` 对它给出的是 `origin`，按名字判断 HEAD 拦不住；分隔符用制表符（`%09`）。
  */
 function remoteBranches(output: string): string[] {
   return gitLines(output)
@@ -1241,16 +1026,8 @@ function remoteBranches(output: string): string[] {
 }
 
 /**
- * 切分支。
- *
- * ⚠️ **白名单**：只允许切到刚刚探测出来的分支名（`local ∪ remote` 里精确匹配）。
- * 渲染进程送来的字符串因此既不可能变成 git 的选项（`--upload-pack=…` 之类），
- * 也不可能指向别的仓库 —— 白名单里没有的名字一律拒绝。
- *
- * 远程分支不是直接 checkout（那会进 detached HEAD），而是建一个同名的本地跟踪
- * 分支；同名本地分支已经存在时就直接切过去。
- * @param branch - 目标分支名（来自界面上那份列表）。
- * @returns 是否成功、失败原因，以及切换后的最新状态。
+ * 切分支。分支名只允许取刚探测出的列表（`local ∪ remote` 精确匹配），渲染进程送来的字符串因此
+ * 不可能变成 git 的选项（`--upload-pack=…`）；远程分支建同名本地跟踪分支而不是直接 checkout。
  */
 async function switchGitBranch(branch: string): Promise<GitSwitchResult> {
   const cwd = launchConfig.cwd
@@ -1292,22 +1069,8 @@ async function switchGitBranch(branch: string): Promise<GitSwitchResult> {
 }
 
 /**
- * 拉取**当前分支**的最新提交（`git pull`）。
- *
- * 三个决定都是刻意的，改之前先想清楚：
- *
- *   1. **`--ff-only`，不做 merge。** 界面上的一个按钮不该在背后生成合并提交，
- *      更不该把仓库留在「合并冲突」的半途 —— 那是 agent 正在干活的目录。
- *      分叉时 git 会以 `Not possible to fast-forward` 失败，把那句话原样显示，
- *      让用户自己去终端决定 merge 还是 rebase。
- *   2. **`GIT_TERMINAL_PROMPT=0`。** 没配凭据时 git 会**问你要密码**并一直等着 ——
- *      在这个没有终端的子进程里那就是挂死。关掉提示，让它立刻以
- *      `could not read Username` 失败，把原因显示出来。
- *   3. **单独的超时**（{@link GIT_PULL_TIMEOUT_MS}）：要联网，不能沿用 5s。
- *
- * 不接受分支参数：拉的就是**当前**分支。要拉别的分支，先切过去（两个动作分开，
- * 各自的失败原因才不会混在一起）。
- * @returns 是否成功、成功时 git 的结论，以及拉取后的最新状态。
+ * 拉取当前分支的最新提交。`--ff-only` 不做 merge（不该把 agent 正在干活的目录留在冲突半途），
+ * `GIT_TERMINAL_PROMPT=0` 避免没有终端的子进程里等密码挂死；超时单独放宽见 `GIT_PULL_TIMEOUT_MS`。
  */
 async function pullGitBranch(): Promise<GitPullResult> {
   const cwd = launchConfig.cwd
@@ -1329,7 +1092,7 @@ async function pullGitBranch(): Promise<GitPullResult> {
   return { ok: true, message: gitLastLine(result.stdout), status: after }
 }
 
-/** 注册全部 IPC handler。channel 名与 `preload.js` 必须一致。 */
+/** 注册全部 IPC handler。channel 名与 `preload.js` 保持一致。 */
 function registerIpc() {
   ipcMain.handle(IPC.state, (event) => {
     assertSender(event)
@@ -1404,13 +1167,7 @@ function registerIpc() {
     return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0]
   })
 
-  /**
-   * 切到某个会话。
-   *
-   * 旧的 `restart` / `new-session` 两个频道合并成了这一个：它们的区别只是
-   * 「要不要 resume」，而**要不要真的重启**现在由主进程看着会话忙不忙决定
-   * （见 `attach`）—— 界面不需要、也不应该知道这件事。
-   */
+  /** 切到某个会话；要不要真的重启由主进程看着会话忙不忙决定（见 `attach`），界面不参与。 */
   ipcMain.handle(IPC.attach, async (event, request) => {
     assertSender(event)
     const raw = (request ?? {}) as Partial<AttachRequest>
@@ -1450,15 +1207,13 @@ function registerIpc() {
     if (typeof path !== 'string' || path === '') throw new Error('路径为空')
     // 相对路径按 agent 的工作目录解析：工具调用里的 file_path 常常是相对的。
     const target = isAbsolute(path) ? path : join(launchConfig.cwd, path)
-    // shell.openPath 成功返回空串，失败返回错误描述 —— 原样交回渲染进程显示。
+    // `shell.openPath` 成功返回空串，失败返回错误描述 —— 原样交回渲染进程显示。
     return shell.openPath(target)
   })
 
   // ── 设置界面：读 / 写配置文件 ─────────────────────────────────────────────
-  //
-  // ⚠️ 这是**安全边界**：渲染进程可以要求写文件，所以这里必须自己判断「允许写哪」，
-  // 不能相信传进来的路径。允许的范围只包含配置与技能/命令目录 ——
-  // 也就是「设置界面合法能改的东西」，别的路径一律拒绝。
+  // 渲染进程可以要求写文件，所以「允许写哪」由主进程自己判断，不能相信传进来的路径；
+  // 范围只含配置与技能/命令目录，别的路径一律拒绝。
   ipcMain.handle(IPC.settingsRead, async (event, path) => {
     assertSender(event)
     const allowed = allowedSettingsPath(path)
@@ -1568,17 +1323,14 @@ if (!app.requestSingleInstanceLock()) {
     if (process.platform !== 'darwin') app.quit()
   })
 
-  // 退出前让内核收敛（子进程会自己 dispose 插件树）；不等它，但也不留孤儿进程。
-  // **所有**槽位都要收：后台会话的 host 也是独立子进程，漏一个就是孤儿。
+  // 退出前让内核收敛（子进程会自己 dispose 插件树）；不等它，但所有槽位都要收 ——
+  // 后台会话的 host 也是独立子进程，漏一个就是孤儿进程。
   app.on('before-quit', () => {
     for (const slot of [...slots]) void slot.host.stop()
   })
 
-  // ⚠️ 这里**故意不用顶层 `await app.whenReady()`**：
-  //   Electron 的 ESM 主进程入口是异步加载的，在模块顶层 await `ready`
-  //   会与 Electron 自己的启动流程互相等待 —— 现象是进程活着、日志停在
-  //   「模块已加载」，但永远不出现窗口（实测 Electron 44 必现）。
-  //   用 `.then()` 注册回调是可靠写法。
+  // 不用顶层 `await app.whenReady()`：Electron 的 ESM 入口异步加载，顶层 await `ready` 会与它
+  // 自己的启动流程互相等待 —— 进程活着、日志停在「模块已加载」，但永远不出现窗口。
   app.whenReady().then(onReady).catch((error) => {
     process.stderr.write(`Memento: 启动失败: ${error instanceof Error ? error.message : String(error)}\n`)
     app.exit(1)

@@ -1,14 +1,9 @@
 /**
- * 把 DSH 内核的事件流翻译成桌面端 UI 帧。
+ * 把内核的事件流翻译成桌面端 UI 帧。
  *
- * 数据来源与 CLI 的 `app/cli/ui.ts` 完全一致，只是出口不同：
- *   - `agent/assistant-stream`：**过程内**的流式增量（打字机效果）；
- *   - `session/event`：**已落盘**的会话事件（工具调用、工具结果、回合结束）；
- *   - `agent/error`：驱动层抛出的异常。
- *
- * CLI 把它们渲染成 ANSI 文本；桌面端把它们变成可 JSON 序列化的 {@link HostEvent}
- * 帧，由 Electron 主进程转发给渲染进程。工具摘要的格式化逻辑直接复用 CLI 的实现，
- * 保证两边「工具调用长什么样」不会分叉。
+ * 订阅 `agent/assistant-stream`（过程内流式增量）、`session/event`（已落盘会话事件）
+ * 与 `agent/error`（驱动层异常），产出可 JSON 序列化的 {@link HostEvent} 帧。
+ * 工具摘要复用 CLI 的 `app/cli/ui.ts`，终端与界面的展示不分叉。
  *
  * @module Memento/desktop/host/bridge
  */
@@ -16,7 +11,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { AssistantStreamFrame } from '@deepseek-ai/dsh-agent'
-// 复用 CLI 的工具摘要格式化，避免终端与 GUI 的展示逻辑各写一份。
+// 与 CLI 共用工具摘要格式化，避免终端与界面两处展示分叉。
 import { summarizeCall, summarizeResult, toolResultText } from '../../cli/ui.ts'
 import { clampToolOutput, toOutcome, type HostEvent, type TurnOutcome } from './protocol.ts'
 
@@ -65,12 +60,7 @@ export class DesktopBridge {
   /** 本回合的错误信息。 */
   private error: string | undefined
 
-  /**
-   * @param ctx - 根上下文（事件总线）。
-   * @param agent - 本次运行的 agent；其他 agent 的事件会被忽略。
-   * @param emit - UI 帧出口。
-   * @param options - 桥接选项。
-   */
+  /** 建立事件桥：只处理传入 `agent` 的事件，其他 agent 的事件会被忽略。 */
   constructor(ctx: Context, agent: Agent, emit: FrameSink, options: BridgeOptions) {
     this.emit = emit
     this.options = options
@@ -104,7 +94,7 @@ export class DesktopBridge {
             callId,
             name: this.callNames.get(callId) ?? '',
             summary: summarizeResult(event.data.message.content, isError),
-            // 摘要给折叠状态，原文给展开状态 —— 两个都发，界面点开就有东西看
+            // 摘要给折叠状态、原文给展开状态，两个都发，界面点开就有内容。
             output: clampToolOutput(toolResultText(event.data.message.content)),
             isError,
           })
@@ -137,10 +127,7 @@ export class DesktopBridge {
     }))
   }
 
-  /**
-   * 开始一个新回合：清空上一轮的累计值。
-   * @param turnId - 主进程生成的回合 id。
-   */
+  /** 开始一个新回合：清空上一轮的累计值。 */
   startTurn(turnId: string): void {
     this.turnId = turnId
     this.toolCalls = 0
@@ -150,10 +137,7 @@ export class DesktopBridge {
     this.callNames.clear()
   }
 
-  /**
-   * 结束当前回合并返回统计。
-   * @returns 本轮正文、工具调用次数与结束原因。
-   */
+  /** 结束当前回合并返回统计（本轮正文、工具调用次数与结束原因）。 */
   finishTurn(): TurnStats {
     const stats: TurnStats = {
       text: this.text,
@@ -176,7 +160,7 @@ export class DesktopBridge {
     return this.turnId ?? ''
   }
 
-  /** 安全地发出一帧：JSON 序列化失败不应拖垮内核。 */
+  /** 发一帧给界面；帧要经 IPC 序列化，失败不应拖垮内核。 */
   private send(event: HostEvent): void {
     this.emit(event)
   }
@@ -197,4 +181,4 @@ export class DesktopBridge {
   }
 }
 
-/** 把 DSH 的结束原因映射成本项目的枚举（与回放共用，见 `protocol.ts` 的 `toOutcome`）。 */
+/** 结束原因的映射见 `protocol.ts` 的 `toOutcome`（实时与回放共用）。 */

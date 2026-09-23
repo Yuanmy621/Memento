@@ -1,17 +1,10 @@
 /**
  * 桌面端「主进程 ⇄ agent host 子进程」之间的消息协议。
  *
- * 这个文件不依赖 electron，也不依赖 DSH —— 它只是**类型契约**，
- * 被三处同时引用：
- *   1. `host/index.ts`   —— agent host（跑在独立的 Node 进程里）产生事件；
- *   2. `main.js`        —— Electron 主进程转发事件到渲染进程；
- *   3. `preload.js`     —— 渲染进程通过 `window.Memento` 收到同一批事件。
- *
- * 为什么 agent 要跑在**子进程**而不是 Electron 主进程里：
- *   DSH 的执行能力 provider（`dsh-fs-local` → koffi、`dsh-subprocess-local` → node-pty）
- *   都是**原生模块**，是按系统 Node 的 ABI 编译的；Electron 自带 Node 的 ABI 不同，
- *   直接在主进程里 `import` 会在加载 .node 时失败。把内核放进一个用系统 `node`
- *   启动的子进程，既绕开了 ABI 问题，也让「渲染进程崩溃 / 窗口关闭」不会带走内核状态。
+ * 不依赖 electron，只作为类型契约被三处引用：`host/index.ts` 产生事件，Electron 主进程与
+ * preload 转发给渲染进程。agent 跑在子进程里，是因为内核的执行能力 provider
+ * （`dsh-fs-local`、`dsh-subprocess-local`）依赖按系统 Node ABI 编译的原生模块，而
+ * Electron 自带的 Node ABI 不同，在主进程里 import 会在加载 .node 时失败。
  *
  * @module Memento/desktop/host/protocol
  */
@@ -20,36 +13,27 @@
 export const PROTOCOL_VERSION = 1
 
 /**
- * 会话视图的键。
+ * 会话视图的键：主进程给帧打上它，渲染进程按它把事件路由到对应会话。
  *
- * **主进程与渲染进程必须用同一个算法**：主进程给每个 host 的帧打上这个键，
- * 渲染进程按它把事件路由到对应会话的视图（后台会话的事件不能落进前台会话里）。
- *
- * 用 `cwd + sessionId` 而不是单看 sessionId：会话 id 只在它自己的项目里唯一
- * （每个项目的会话库是 `<cwd>/.Memento`，两份库互不可见）。
- *
- * 新建但还没就绪的会话没有 id，用空串占位；`ready` 帧带回真实 id 后，
- * 两边各自把键改名为带真实 id 的那个（见 `main.ts` 的 `renameSlot` 与
- * 渲染进程的 `ready` 分支）—— 于是「切走再切回来」能重新挂到同一个 host 上。
- * @param cwd - 会话所属项目根目录（绝对路径）。
- * @param sessionId - 会话 id；新建会话尚未就绪时传 `undefined`。
- * @returns 会话视图键。
+ * 用 `cwd`（项目根绝对路径）+ `sessionId` 而不是单看 sessionId —— 会话 id 只在各自的会话库
+ * （`<cwd>/.Memento`）内唯一。新建但未就绪的会话没有 id，调用时传 `undefined`、先用空串占位，
+ * `ready` 帧带回真实 id 后两边各自改名（见 `main.ts` 的 `renameSlot`）。
  */
 export function sessionKey(cwd: string, sessionId: string | undefined): string {
   return `${cwd}\n${sessionId ?? ''}`
 }
 
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 会话记录（transcript）的词表
+// 会话记录（transcript）词表：界面上一条会话长什么样。
 //
-// 这一组类型描述「界面上一条会话长什么样」，由三处共用：
-//   - 实时路径：`bridge.ts` 发出的增量帧 → 渲染进程归约成这些结构；
-//   - 回放路径：`history.ts` 读落盘日志，直接产出同样的结构；
-//   - 渲染：组件只认这些结构。
-// 放在协议里（而不是渲染进程内部）是因为**回放是 host 的职责** ——
-// 官方客户端同样由 host 提供已完成回合的 transcript，客户端只负责渲染。
-// ─────────────────────────────────────────────────────────────────────────────
+// 三处共用：实时路径（`bridge.ts` 的增量帧 → 渲染进程归约成这些结构）、
+// 回放路径（`history.ts` 读落盘日志，直接产出同样的结构）、渲染组件。
+//
+// 放在协议里而不是渲染进程内部，是因为回放由 host 负责；
+// 渲染进程只负责按这些结构渲染。
+//
+// 字段名是主进程与渲染进程之间的契约，改名要两边同时改。
+
 
 /** 助手正文块。 */
 export interface TextBlock {
@@ -60,12 +44,9 @@ export interface TextBlock {
 /**
  * 助手思考（推理）块 —— **按位置排在 `blocks` 里**，不是整回合的一坨。
  *
- * 为什么要有这个类型：真实回合是「想一段 → 说一句/调个工具 → 再想一段」，
- * 推理与动作**交替**发生。早先把整回合的推理拼成一个字符串、统一画在消息最上方，
- * 于是所有思考堆在开头，看不出「哪段思考导致了哪一步动作」，长回合里还会在顶部
- * 压出一大块。现在推理像正文一样按到达顺序落成块，位置天然正确。
- *
- * 流式期间同一个块的 `text` 会持续增长（归约器把增量接在最后一段推理后面）。
+ * 真实回合是「想一段 → 说一句 / 调个工具 → 再想一段」，推理与动作交替发生；
+ * 按到达顺序落成块，位置才对得上它导致的那一步动作。
+ * 流式期间同一个块的 `text` 持续增长（归约器把增量接在最后一段推理后面）。
  */
 export interface ReasoningBlock {
   readonly type: 'reasoning'
@@ -78,17 +59,13 @@ export interface ToolBlock {
   readonly callId: string
   readonly name: string
   readonly args: string
-  /**
-   * 一行摘要（`summarizeResult` 的口径）：首行 + `(N 行)` + `exit N`。
-   * 折叠状态下就显示这一行 —— 所以它必须短。
-   */
+  /** 一行摘要（`summarizeResult` 的口径）：首行 + `(N 行)` + `exit N`；折叠状态下只显示它，需保持短。 */
   readonly result: string | null
   /**
    * 完整输出（保留换行），点击展开时看的就是它。
    *
-   * 为什么要单独一份：`result` 是给人扫读的**一行**摘要，原来的实现只有它，
-   * 于是 bash 那几十行输出在界面上**无处可看**（用户报的「展示残缺」就是这个）。
-   * 长度由 host 侧 {@link TOOL_OUTPUT_LIMIT} 兜底，超了会在末尾补一行说明。
+   * 与 `result` 是同一份数据的两个视图；长度由 host 侧 {@link TOOL_OUTPUT_LIMIT} 兜底，
+   * 超了会在末尾补一行说明。
    */
   readonly output: string | null
   readonly isError: boolean
@@ -97,17 +74,15 @@ export interface ToolBlock {
 /**
  * 单次工具输出传给界面的上限（字符）。
  *
- * 内核自己也会截（bash 是每路 64 KB，截尾并给 spill 文件路径），所以正常情况根本到不了；
- * 这一层只是防止某个工具一口气吐回几十万字符把渲染进程撑爆 —— 超了就截断并**明说**截了。
+ * 内核自己也会截（bash 每路 64 KB，截尾并给 spill 文件路径），这一层用于防止某个工具
+ * 一次吐回几十万字符撑爆渲染进程 —— 超了就截断并写明截断。
  */
 export const TOOL_OUTPUT_LIMIT = 100_000
 
 /**
  * 把工具输出裁到 {@link TOOL_OUTPUT_LIMIT}。
  *
- * 截断必须**看得见**：末尾补一行说明，否则界面上「点开只有一半」会被当成 bug。
- * @param text - 原始输出（已保留换行）。
- * @returns 可直接存进 {@link ToolBlock.output} 的文本。
+ * 截断要看得见：末尾补一行说明，否则界面上「点开只有一半」会被当成 bug。
  */
 export function clampToolOutput(text: string): string {
   if (text.length <= TOOL_OUTPUT_LIMIT) return text
@@ -145,10 +120,9 @@ export interface AssistantItem {
   /** 尚未认领主进程的 turnId 时为 null。 */
   readonly turnId: string | null
   /**
-   * 整回合推理的**拼接**（只有摘要用途：右侧刻度尺的提示框、轨迹的兜底）。
+   * 整回合推理的**拼接**，只有摘要用途（右侧刻度尺的提示框、轨迹的兜底）。
    *
-   * 界面渲染**不要**用它 —— 推理按位置存在 `blocks` 里的 {@link ReasoningBlock} 中，
-   * 用这个字段画就会把所有思考又堆回消息最上方。
+   * 渲染用 `blocks` 里的 {@link ReasoningBlock}；用这个字段画会把所有思考堆回消息最上方。
    */
   readonly reasoning: string
   readonly blocks: readonly Block[]
@@ -191,8 +165,8 @@ export interface LlmUsage {
   /**
    * **未命中缓存**的输入 token。
    *
-   * ⚠️ DSH 的计数是**互斥**的：`inputTokens` 只算未缓存的那部分，命中缓存的输入
-   * 单独记在 {@link cacheReadTokens}。所以「计费输入」是三者之和，命中率的分母也是它。
+   * 内核的计数是互斥的：`inputTokens` 只算未缓存的那部分，命中缓存的输入单独记在
+   * {@link cacheReadTokens}；所以「计费输入」是三者之和，命中率的分母也是它。
    */
   readonly inputTokens: number
   /** 输出 token（含推理）。 */
@@ -243,9 +217,8 @@ export interface ModelInfo {
    * 这个模型可选的**推理强度**（来自适配器的 exact-route 元数据
    * `ctx.llm.resolveModelInfo().reasoning.efforts`）。
    *
-   * 适配器没申报时为 `undefined`（界面退回内置的 `low | high | max` 兜底，
-   * 见 `composer.tsx` 的 `effortChoices`）—— 这是刻意的：强度是**模型能力**，
-   * 不该由界面写死。
+   * 适配器没申报时为 `undefined`（界面退回内置的 `low | high | max` 兜底，见
+   * `composer.tsx` 的 `effortChoices`）—— 强度是模型能力，不由界面写死。
    */
   readonly efforts?: readonly ModelEffortInfo[]
 }
@@ -264,8 +237,8 @@ export interface ModelEffortInfo {
  * 输入框 `/` 菜单要的**精简**技能信息。
  *
  * 与 {@link SkillEntry}（设置界面用）的区别：这里不要路径、不要大小 ——
- * 菜单只需要「名字 + 一句话 + 属于哪一类」，而它要在**每次启动**就绪时发给界面，
- * 所以刻意做得轻（`ctx.skills.list()` 直接就有这些字段，不用逐个读正文）。
+ * 菜单只需要名字、一句话与分类，而它每次启动就绪时都要发给界面，所以保持轻量
+ * （`ctx.skills.list()` 直接就有这些字段，不用逐个读正文）。
  */
 export interface SkillBrief {
   readonly name: string
@@ -291,9 +264,9 @@ export interface FileBrief {
 /**
  * 设置界面要的一条 skill 记录。
  *
- * `invocation` 是这次重构的核心区分（内核的 `SkillInvocationPolicy`）：
- *   - `global`：进模型的会话目录，模型能自己按需加载（**长期**）；
- *   - `command`：`disable-model-invocation: true`，不进目录，只由 `/命令` 触发（**短期**）；
+ * `invocation` 的三种取值（内核的 `SkillInvocationPolicy`）：
+ *   - `global`：进模型的会话目录，模型能自己按需加载（长期）；
+ *   - `command`：`disable-model-invocation: true`，不进目录，只由 `/命令` 触发（短期）；
  *   - `user-only`：连人工入口都不给（`user-invocable: false`）。
  */
 export interface SkillEntry {
@@ -311,10 +284,9 @@ export interface SkillEntry {
   /**
    * 盘上有、内核却没加载时的原因。
    *
-   * 为什么要有这个字段：磁盘上的 `SKILL.md` 一旦 frontmatter 不合法（缺 name/description、
-   * YAML 写坏），provider 只写一条 `logger.warn` 就**静默忽略**整个 skill ——
-   * 从界面上看就是「文件明明在，技能却不生效」。真踩过：上游 `report` skill 的
-   * description 里有 `EN: ` 这种「冒号+空格」，YAML 判定成嵌套映射直接抛错。
+   * frontmatter 不合法（缺 name/description、YAML 写坏）时 provider 只写一条 `logger.warn`
+   * 就静默忽略整个 skill，界面上表现为「文件明明在，技能却不生效」；例如 description 里的
+   * `EN: ` 这种「冒号 + 空格」会被 YAML 判成嵌套映射并抛错。
    */
   readonly warning?: string
 }
@@ -390,21 +362,18 @@ export interface HostToolInfo {
   readonly description: string
 }
 
-/** 一次回合的结束原因（与 DSH `turn/end` 的 `reason.kind` 对齐）。 */
+/** 一次回合的结束原因（与内核 `turn/end` 的 `reason.kind` 对齐）。 */
 export type TurnOutcome = 'completed' | 'aborted' | 'error' | 'max-tokens' | 'unknown'
 
 /**
- * 把 DSH 的回合结束原因映射成本项目的 {@link TurnOutcome}。
+ * 把内核的回合结束原因映射成本项目的 {@link TurnOutcome}。
  *
- * 放在协议里（而不是桥或回放里）是因为**两条路径必须给出同一个结论**：
- * 实时路径由 `bridge.ts` 的 `turn/end` 事件调用它，回放路径由 `history.ts`
- * 读日志里的 `turn/end` 时调用它。任何一边单独改都会让「同一回合刷新前后不一样」。
+ * 放在协议里，是因为两条路径要给出同一个结论：实时路径由 `bridge.ts` 的 `turn/end`
+ * 事件调用它，回放路径由 `history.ts` 读日志时调用它 —— 任何一边单独改，
+ * 都会让同一回合在刷新前后不一样。只读 `reason.kind`。
  *
- * ⚠️ 内核的 `TurnEndReason` 比这里的枚举长：`blocked`（被插件拦下）与
- * `interrupted`（崩溃后补写的收尾）都归到 `unknown` —— 它们对用户都是
- * 「这回合没跑完」，界面不必区分。
- * @param reason - 日志 / 事件里的结束原因（只用到 `kind`）。
- * @returns 界面枚举值。
+ * 内核的 `TurnEndReason` 比这里的枚举长：`blocked`（被插件拦下）与 `interrupted`
+ * （崩溃后补写的收尾）都归到 `unknown`，它们对用户都是「这回合没跑完」。
  */
 export function toOutcome(reason: { readonly kind: string }): TurnOutcome {
   switch (reason.kind) {
@@ -435,10 +404,8 @@ export type HostRequest =
   /**
    * **中途调整目标**：把这段话作为「纠偏」交给正在跑的回合。
    *
-   * 对应内核的 `agent.steer()` —— 语义是「在最近的 step 边界消费」：
-   * 已经在跑就在下一个 step 生效（不打断已发出的请求），空闲时则直接开一个新回合。
-   * 与 `prompt` 的区别：`prompt` 是**排队**（当前回合跑完才轮到它），
-   * `steer` 是**插进去改方向**。
+   * 对应内核的 `agent.steer()`：在最近的 step 边界消费 —— 已经在跑就在下一个 step 生效
+   * （不打断已发出的请求），空闲时直接开一个新回合。`prompt` 是排队，`steer` 是插进去改方向。
    */
   | { readonly type: 'steer'; readonly text: string }
   /** 要一份可引用的文件清单（`#` 菜单）。 */
@@ -446,8 +413,8 @@ export type HostRequest =
   /**
    * 要一次设置数据（skill / 命令 / MCP），回一个 `settings` 帧。
    *
-   * 与之配套的文件读写**不在这里** —— 那是主进程的活（它有 fs，也是安全边界），
-   * 见 `main.js` 的 `Memento:settings-read` / `Memento:settings-write`。
+   * 配套的文件读写不在这里：那是主进程的活（它有 fs，也是安全边界），见 `main.js` 的
+   * `Memento:settings-read` / `Memento:settings-write`。
    */
   | { readonly type: 'settings:list' }
   | {
@@ -458,8 +425,8 @@ export type HostRequest =
     /**
      * 读**指定项目**的会话明细（侧栏里点开一个折叠的项目时用）。
      *
-     * 刻意与 `list-sessions` 分开：项目清单随首屏一起到，但每个项目的会话明细
-     * 只在真被点开时才读盘 —— 项目再多，首屏也只付「每个项目读一个日志头」的代价。
+     * 与 `list-sessions` 分开：项目清单随首屏一起到，每个项目的会话明细只在被点开时
+     * 才读盘，于是项目再多，首屏也只付「每个项目读一个日志头」的代价。
      */
     readonly type: 'list-project-sessions'
     /** 目标项目根目录（`ProjectSummary.path`）。 */
@@ -575,8 +542,8 @@ export type HostEvent =
   /** 一次模型调用的 token 计量（每步一次，界面累加成会话总量）。 */
   | { readonly type: 'usage'; readonly turnId: string; readonly usage: LlmUsage }
   /**
-   * 非致命提示（例如凭据缺失），界面以系统消息展示。
-   * `error` 目前只由渲染进程自己使用（例如 preload 没注入），host 只发 info / warn。
+   * `notice` 成员：非致命提示（例如凭据缺失），界面以系统消息展示。
+   * `error` 目前只由渲染进程使用（例如 preload 没注入），host 只发 info / warn。
    */
   /**
    * 设置界面的数据：把「现有 skill / 命令 / MCP」一次性发过去。
@@ -612,14 +579,11 @@ const HOST_EVENT_TYPES: ReadonlySet<string> = new Set([
 ])
 
 /**
- * 这个值是不是一个 host 事件。
+ * 这个值是不是一个 host 事件（传进来的通常是 child_process 的 message）。
  *
- * 为什么要它：主进程拿到的是**子进程**的输出，按不可信处理 —— 转发给渲染进程之前
- * 至少得确认「它是个我们认识的事件」。只认 `type` 在名单里这一条，字段内容由
- * 渲染进程自己的归约器兜（它本来就有 default 分支）。
- *
- * @param value - 任意值（通常是 child_process 的 message）。
- * @returns 是 host 事件时为 `true`（类型收窄成 {@link HostEvent}）。
+ * 主进程拿到的是子进程的输出，按不可信处理：转发给渲染进程之前至少要确认它是认识的
+ * 事件类型。只校验 `type` 在名单里，字段内容由渲染进程自己的归约器兜（它本来就有
+ * default 分支）；返回 `true` 时类型收窄成 {@link HostEvent}。
  */
 export function isHostEvent(value: unknown): value is HostEvent {
   if (typeof value !== 'object' || value === null) return false

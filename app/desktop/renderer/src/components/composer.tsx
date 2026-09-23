@@ -1,41 +1,9 @@
 /**
- * 输入区：**Tiptap 富文本输入框** + 加号 / 权限 / 模型下拉 + 发送，下面一行会话统计。
+ * 输入区：富文本输入框（`@tiptap/react` + ProseMirror）+ 各下拉 + 发送，下面一行会话统计。
  *
- * ## 输入框为什么是富文本
- *
- * 用户用 `/` `@` `#` 选出来的东西要以**看得见的样子**留在输入框里：选中的命令是一个
- * 带底色的 chip（`/report`），不是一个碰巧长得像命令的字符串。于是：
- *
- * ```
- * 打字                →  ProseMirror 文档（paragraph > text | chip | hardBreak）
- * Enter / 发送按钮     →  docToText(doc).trim()  →  纯文本  →  host/内核
- * ```
- *
- * chip 的显示文字（`label`）和落库文字（`text`）是两回事，序列化规则集中在
- * `editor/doc-text.ts` —— **别用 `editor.getText()`**：chip 是 atom，没有文本，
- * `getText()` 会把它整个丢掉，命令就等于没发。
- *
- * ## 四个下拉里有两个「真的能改东西」
- *
- *   - **模型**：真下拉。选项来自内核 `ctx.llm.listModels(provider)`（`state.models`），
- *     不是界面写死的常量；选中即 `setModel`，下一次请求生效。
- *   - **强度**：真下拉（low / high / max）。档位来自适配器对**这个模型**申报的
- *     推理强度（`ModelInfo.efforts`），只挑出「强度」三档（`off` 是关掉推理，
- *     不算强度，见 `effortChoices`）；选中即 `setEffort`，同样下一次请求生效。
- *   - **权限**：Memento 的本地 provider **没有沙箱、没有审批**（见根 README「已知边界」），
- *     所以这里只如实显示「完全访问」，**不做成一个能选的假开关** ——
- *     一个假的安全控件比没有控件更糟：它会让人以为有沙箱。
- *   - **加号**：放真实的会话 / 工作区动作（新建会话、打开工作目录）。
- *
- * ## 三件容易被改回去的事
- *
- * 1. **不要用 `state.busy` 去禁用输入框**。回合进行中输入框必须可用：Enter 在空闲时是
- *    发一轮，在生成中是**纠偏**（`steer`，内核在下一个 step 边界消费）。
- * 2. **输入法守卫必须是键盘处理的第一句**（`ime.isImeKeyNative`）。中文/日文组字时
- *    Enter 是「确认候选词」，拦不住就会把半成品发出去 —— 详见 `composition.ts`。
- * 3. **菜单的键要排在提交之前问**（`controller.key(event)`）。ProseMirror 取
- *    `handleKeyDown` 的顺序是「view 自己的 props 先，然后才是插件」，所以这里就是
- *    唯一的总闸：先输入法、再菜单、最后才是提交/中断。
+ * chip 的显示文字（`label`）与落库文字（`text`）是两份，序列化规则集中在 `editor/doc-text.ts`：
+ * 不能用 `editor.getText()`（chip 是 atom，会被整个丢掉）。回合进行中输入框保持可用，
+ * Enter 在空闲时发一轮，在生成中是 `steer` 纠偏。
  *
  * @module Memento/desktop/renderer/components/composer
  */
@@ -57,18 +25,15 @@ import { Button } from '../ui/beautifului/atoms/Button.tsx'
 import { ValuePill } from '../ui/beautifului/atoms/ValuePill.tsx'
 import { IconClock, IconGauge, IconPlus, IconSend, IconShield, IconToken, IconTurns } from '../icons.tsx'
 
-/** 空输入框里的提示语 **/
+/** 空输入框里的提示语。 */
 const PLACEHOLDER = '说点什么开始我们的学习吧～'
 
 /** 输入框最高长到多少像素，超过就内部滚动。 */
 const MAX_INPUT_HEIGHT = 190
 
 /**
- * 推理强度的**兜底档位**（适配器不申报时用）。
- *
- * 名字与 DSH 的 `Effort` 对齐（`off | low | high | max`）。刻意**不带 `off`**：
- * `off` 是「关掉推理」，不是一种强度，放进这个下拉会让人以为它是最低一档。
- * 真要它，启动时给 `--effort off`（见 README 的参数表）。
+ * 推理强度的兜底档位（适配器不申报时用），与内核的 `Effort` 同名（`off | low | high | max`）；
+ * 不含 `off` —— 那是「关掉推理」而不是一种强度，放进来会被当成最低一档。
  */
 const EFFORT_FALLBACK: readonly ModelEffortInfo[] = [
   { id: 'low', name: 'Low', description: '常规任务：更快、更省。' },
@@ -80,13 +45,9 @@ const EFFORT_FALLBACK: readonly ModelEffortInfo[] = [
 const EFFORT_IDS: readonly string[] = ['low', 'high', 'max']
 
 /**
- * 当前模型可选的「强度」档位。
- *
- * 优先用适配器对**这个模型**申报的档位（host 的 `modelEfforts` 会带上，
- * 见 `host/index.ts`），只挑出 low / high / max；申报了但一个都没挑中
- * （比如 thinking 被关掉，只剩 `off`）就退回内置兜底 —— 下拉永远不是空的。
- * @param model - 当前模型（可能还没就绪）。
- * @returns 至少一项的档位列表。
+ * 当前模型可选的强度档位：优先用适配器对这个模型申报的档位（host 的 `modelEfforts`，
+ * 见 `host/index.ts`），只挑 low / high / max；模型还没就绪或一个都没挑中时退回兜底，
+ * 返回值至少一项，下拉不为空。
  */
 function effortChoices(model: ModelInfo | undefined): readonly ModelEffortInfo[] {
   const declared = model?.efforts
@@ -95,7 +56,7 @@ function effortChoices(model: ModelInfo | undefined): readonly ModelEffortInfo[]
   return picked.length > 0 ? picked : EFFORT_FALLBACK
 }
 
-/** 紧凑数字：1234 → 1.2k，1234567 → 1.2M。 */
+/** 紧凑数字：1234 显示为 1.2k，1234567 显示为 1.2M。 */
 function formatTokens(value: number): string {
   if (value < 1000) return String(value)
   if (value < 1_000_000) return `${(value / 1000).toFixed(value < 10_000 ? 1 : 0)}k`
@@ -128,16 +89,10 @@ function UsageRow(props: {
 }
 
 /**
- * 「用量 + 缓存命中」胶囊，悬停 / 聚焦时弹出**明细卡**。
+ * 「用量 + 缓存命中」胶囊，悬停 / 聚焦时弹出明细卡。
  *
- * 为什么不用原生 `title`：那个只有一行、跟不了样式、也没法分组，而这里要一口气
- * 说清 7 个数（未命中 / 命中 / 写入 / 计费输入 / 输出 / 推理 / 命中率）+
- * 最近一次调用的明细。`title` 早期版本就是那么干的，读起来是一串数字。
- *
- * 交互细节：弹出的卡片是 `.usage` 的**子元素**，所以指针移进卡片不会触发
- * `mouseleave`（那会一闪就没了）；卡片下沿还有一块透明桥接区，跨过胶囊与卡片
- * 之间那几像素的空隙时也不会关。键盘用户 `Tab` 聚焦同样能看（`tabIndex`）。
- * @param props - 会话累计用量。
+ * 卡片是 `.usage` 的子元素，指针移进卡片不会触发 `mouseleave`；卡片下沿的透明桥接区
+ * 让指针跨过胶囊与卡片之间的空隙时也不会关。原生 `title` 只有一行、无法分组。
  */
 function UsageDetail({ usage }: { readonly usage: UsageTotals }): ReactElement {
   const [open, setOpen] = useState(false)
@@ -232,17 +187,13 @@ export interface ComposerProps {
   readonly onNewSession: () => void
   readonly onPickDirectory: () => void
   /**
-   * 输入卡**正上方**那一行（`app.tsx` 把面包屑塞进来）。
-   *
-   * 为什么做成插槽、而不是让这里直接 import 面包屑：数据（cwd / git 状态 /
-   * 切分支的动作）都在 `App` 手里。这里只出一个「行位」—— 于是面包屑自动拿到
-   * 输入卡的全部水平度量（同宽、同居中，连「有刻度尺时输入框让位 58px」那条
-   * `.main-column--rail .composer` 都跟上），不会和输入框错开半个身位。
+   * 输入卡正上方那一行（`app.tsx` 把面包屑塞进来）。做成插槽而不是直接 import：
+   * 数据都在 `App` 手里，这里只出一个行位，面包屑因此自动拿到输入卡的水平度量。
    */
   readonly above?: ReactElement
 }
 
-/** 加号菜单的两项（真实动作，不是占位）。函数放模块级，免得每次渲染现拼数组。 */
+/** 加号菜单的两项。函数放模块级，免得每次渲染现拼数组。 */
 function ACTION_ENTRIES(onNewSession: () => void, onPickDirectory: () => void): MenuEntry[] {
   return [
     { key: 'new-session', label: '新建会话', note: '清空当前上下文，开一段新对话', onSelect: onNewSession },
@@ -259,25 +210,21 @@ export function Composer(props: ComposerProps): ReactElement {
   const [plain, setPlain] = useState('')
 
   /**
-   * 「能不能打字」只看内核好没好 —— **不看是否正在生成**。
-   *
-   * 这是刻意的：回合进行中不该把输入框封起来。用户随时可能想调整目标，
-   * 逼他先按「停止」再重发一遍是双重成本（中断了已经跑出来的进度，还得重述）。
+   * 能不能打字只看内核好没好，不看是否正在生成：回合进行中封住输入框，用户想调整
+   * 目标就得先停止再重述，代价是丢掉已经跑出来的进度。所以不能用 `state.busy` 禁用它。
    */
   const ready = state.phase === 'ready'
   const hint = state.phase !== 'ready'
     ? (state.phase === 'error' ? 'agent 不可用' : '内核启动中…')
     : state.switching
-      // 切换会话/项目时内核在重启：输入框**保持可打字**（草稿不会丢），
+      // 切换会话 / 项目时内核在重启：输入框保持可打字（草稿不会丢），
       // 只是这一小会儿按回车不提交 —— 新内核还没就绪，发过去只会失败。
       ? '正在切换…（输入会保留）'
       : state.busy ? '正在生成…（Enter 可中途调整目标）' : '就绪'
 
   /**
-   * 数据源与回调走 ref 交给插件。
-   *
-   * 扩展只在首帧建一次（`useEditor` 的 options 只读第一遍），直接闭包会永远停在
-   * 首帧那份「命令/技能/工具/文件」上 —— 内核启动后加载出来的命令表就永远进不了菜单。
+   * 数据源与回调走 ref 交给插件：扩展只在首帧建一次（`useEditor` 的 options 只读
+   * 第一遍），直接闭包会永远停在首帧那份命令 / 技能 / 工具 / 文件上。
    */
   const sourceRef = useRef<SuggestSource>({
     data: () => ({ commands: [], skills: [], tools: [], files: [] }),
@@ -315,8 +262,8 @@ export function Composer(props: ComposerProps): ReactElement {
     editorProps: {
       attributes: {
         class: 'composer__input',
-        // a11y：Tiptap 本该给 `role="textbox"`，但实测这一版没落到 DOM 上（属性表里没有它），
-        // 所以显式写一遍 —— 读屏软件要能认出这是个多行输入框。
+        // a11y：`role="textbox"` 显式写一遍 —— 编辑器不保证把它落到 DOM 上，
+        // 读屏软件靠它认出这是个多行输入框。
         role: 'textbox',
         'aria-label': '输入消息',
         'aria-multiline': 'true',
@@ -325,20 +272,9 @@ export function Composer(props: ComposerProps): ReactElement {
         autocomplete: 'off',
       },
       handleKeyDown: (view, event) => {
-        // ⚠️ 前两句必须是输入法守卫：中文/日文组字时 Enter 是「确认候选词」。
-        //
-        // 两道闸缺一不可：
-        //   ① `view.composing` —— ProseMirror 自己的组字状态。**只有它在「合成事件」上
-        //      也成立**，而合成事件正是这里最阴的坑：
-        //      prosemirror-view 的 `readDOMChange` 在「DOM 变化看起来像是按了 Enter」时
-        //      会自己造一个 Enter 键事件（`keyEvent(13, 'Enter')` =
-        //      `document.createEvent('Event')`）再走一遍 handleKeyDown 链。那个事件
-        //      **没有 `isComposing`、`isTrusted === false`**，只有 `keyCode === 13`。
-        //      输入法用回车确认候选词时，提交动作恰好产生一次「新增段落」的 DOM 变化，
-        //      于是这个合成 Enter 打进来 —— 只信 `event.isComposing` 的守卫会放行，
-        //      半成品就被当成消息发出去了（本项目实测踩到过）。
-        //   ② 事件自带的信号（真事件的 `isComposing` / `keyCode 229` / 刚结束组字），
-        //      见 composition.ts。组字事件挂在外层 `.composer__box` 上冒泡过来。
+        // 前两句是输入法守卫：组字时 Enter 是「确认候选词」，拦不住会把半成品发出去。
+        // 两道闸缺一不可：`view.composing` 在 prosemirror-view 自造的合成 Enter
+        // （`keyEvent(13, 'Enter')`，无 `isComposing`）上同样成立，另一半见 `composition.ts`。
         if (view.composing || ime.isImeKeyNative(event)) return false
         // 菜单开着时方向键/回车/Tab/Esc 归菜单（它自己会 preventDefault）。
         // ProseMirror 先问 view props 再问插件，所以这里就是唯一的总闸。
@@ -353,8 +289,8 @@ export function Composer(props: ComposerProps): ReactElement {
         return false
       },
       handleDOMEvents: {
-        // 点到别处（侧栏、标签栏）时先把菜单收起来：编辑器的选区没变，插件自己不会退出，
-        // 不收就会在输入框上方留一个悬空菜单。这里只收起，不「忽略」——回来接着打字还会弹。
+        // 点到别处（侧栏、标签栏）时先收起菜单：编辑器选区没变，插件自己不会退出，
+        // 不收会在输入框上方留一个悬空菜单。这里只收起，回来接着打字还会弹。
         blur: () => {
           controller.hide()
           return false
@@ -367,21 +303,19 @@ export function Composer(props: ComposerProps): ReactElement {
   })
 
   /**
-   * 提交。
-   *
-   * 空闲 → 正常发一轮；**生成中 → 中途调整目标**（内核的 `steer`，
-   * 下一个 step 边界生效）。两条路都不清空输入框以外的任何东西。
+   * 提交：空闲时正常发一轮，生成中则中途调整目标（内核的 `steer`，下一个 step
+   * 边界生效）。
    */
   const submit = (): void => {
     if (!ready) return
-    // 切换内核期间不提交：留着草稿，等新会话就绪后用户再按一次即可。
-    // （不做「排队自动发」是因为历史帧可能晚于 ready 到达，先发的消息会被历史覆盖掉。）
+    // 切换内核期间不提交：留着草稿，等新会话就绪后用户再按一次。
+    // 不做「排队自动发」：历史帧可能晚于 ready 到达，先发的消息会被历史覆盖掉。
     if (state.switching) return
     const text = docToText(editor.state.doc.toJSON()).trim()
     if (text === '') return
     if (state.busy) onSteer(text)
     else onSend(text)
-    // 清空输入框。`clearContent()` 默认 emitUpdate=true，发送按钮的禁用态跟着刷新。
+    // `clearContent()` 默认 emitUpdate=true，发送按钮的禁用态跟着刷新。
     editor.commands.clearContent()
     editor.commands.focus()
   }
@@ -395,13 +329,13 @@ export function Composer(props: ComposerProps): ReactElement {
     if (ready) editor.commands.focus()
   }, [editor, ready])
 
-  // 可编辑性跟着内核状态走。注意**不跟 busy 走**：回合进行中照样能打字（见模块注释）。
+  // 可编辑性跟着内核状态走，不跟 busy 走：回合进行中照样能打字。
   useEffect(() => {
     editor.setEditable(ready)
   }, [editor, ready])
 
-  // `#` 的候选是异步来的（host 的 `files:list`）：文件列表到货后重算当前菜单。
-  // 不重算的话，光打一个 `#` 会一直是空菜单 —— 候选是「先开菜单、后到货」的。
+  // `#` 的候选是异步来的（host 的 `files:list`）：列表到货后重算当前菜单，
+  // 否则光打一个 `#` 会一直是空菜单 —— 候选是「先开菜单、后到货」的。
   useEffect(() => {
     controller.refresh(sourceRef.current, state.filesQuery)
   }, [controller, state.files, state.filesQuery])
@@ -417,10 +351,8 @@ export function Composer(props: ComposerProps): ReactElement {
   const currentModel = state.info?.model ?? ''
   const currentName = state.models.find((model) => model.id === currentModel)?.name ?? currentModel
   /**
-   * 强度档位与当前值。
-   *
-   * 档位跟着**当前模型**走（适配器可能只给某个模型开高档位）；当前值来自
-   * `ready` / `effort-changed` 帧。取不到（老 host 没有这个字段）时按默认档显示。
+   * 强度档位与当前值：档位跟着当前模型走（适配器可能只给某个模型开高档位），
+   * 当前值来自 `ready` / `effort-changed` 帧，取不到时按默认档显示。
    */
   const modelInfo = state.models.find((model) => model.id === currentModel)
   const efforts = effortChoices(modelInfo)
@@ -505,7 +437,7 @@ export function Composer(props: ComposerProps): ReactElement {
             <span className="composer__spacer" />
 
             <span className="composer__state">{hint}</span>
-            {/* 停止 / 发送：Beautiful UI 的 Button（accent = 主操作，secondary = 次操作） */}
+            {/* 停止 / 发送：`accent` 是主操作，`secondary` 是次操作 */}
             {state.busy && (
               <Button variant="secondary" size="sm" className="composer__stop" onClick={onCancel}>
                 停止

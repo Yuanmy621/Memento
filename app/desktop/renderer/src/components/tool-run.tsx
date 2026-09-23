@@ -1,22 +1,9 @@
 /**
- * 一次回合里的工具调用：Beautiful UI 的 {@link ToolChips} + 我们的数据映射。
+ * 一次回合里的工具调用：把 `ToolBlock[]` 映射成 `ToolChips` 的行。
  *
- * 上游那个构件是按演示数据写的（`step` 每 700ms 放一行、页脚永远是「+N more」），
- * 这里用它的 `live` / `compact` 开关（vendored 时加的补丁）把它变成**真实数据驱动**：
- *   - 行数、每行图标与文案都来自 `ToolBlock[]`；
- *   - 主文案用**中文功能名**（`toolDisplay()`），原来那种 `mcp__butian__butian_rank`
- *     只在展开的明细里出现（排查日志时还对得上）；
- *   - 点 chip = 打开右侧预览（文件类工具），行尾的箭头才是展开明细 ——
- *     原来文件卡片上「点主体预览」的能力因此没丢。
- *
- * ## 折叠一行、展开全文（改过一次）
- *
- * 早先折叠时行尾只显示参数的**第一个词**（`args.split(' ')[0]`，bash 上就是 `cd`），
- * 展开后又只有「首行摘要 + 省略号」—— 几十行的 bash 输出**哪里都看不到**。
- * 现在：
- *   - 行尾灰字 = 输出的**首行**（`preview`），一眼知道这一步干了什么、出了什么；
- *   - chip = **完整参数**（bash 就是整条命令，CSS 里超宽才省略，hover 有 title）；
- *   - 点行 = 展开**完整输出**（不截断、按原文换行、超过 320px 自己滚）。
+ * 行数、每行图标与文案都来自真实数据；主文案用中文功能名（`toolDisplay()`），原始工具名
+ * 只出现在展开的明细里。点 chip = 打开右侧预览（文件类工具），行尾箭头才是展开明细。
+ * 折叠时行尾显示输出的首行、chip 显示完整参数，展开则是不截断的完整输出。
  *
  * @module Memento/desktop/renderer/components/tool-run
  */
@@ -29,8 +16,6 @@ import type { ToolBlock } from '../use-agent.ts'
 
 /**
  * 工具名 → ToolChips 的图标键（它只认 4 个内置图标：think / write / run / read）。
- * @param name - 工具原名。
- * @returns 图标键。
  */
 function iconOf(name: string): string {
   if (name === 'write' || name === 'edit' || name.endsWith('_write') || name.endsWith('_edit')) return 'write'
@@ -54,8 +39,6 @@ function previewOf(block: ToolBlock): string {
 
 /**
  * 把一个工具块映射成 ToolChips 的一行。
- * @param block - 会话里的工具块。
- * @returns 行数据。
  */
 function toStep(block: ToolBlock): ToolStep {
   const display = toolDisplay(block.name)
@@ -76,9 +59,8 @@ function toStep(block: ToolBlock): ToolStep {
     icon: iconOf(block.name),
     // 主文案：中文功能名（界面不该出现 `mcp__butian__butian_rank` 这种变量名）
     label: display.label,
-    // chip：这一行「动了什么」——命令 / 路径 / 查询，等宽显示。
-    // 多行参数（bash 里的 heredoc、带续行的命令）只取第一行：chip 是一行的高度，
-    // 塞下整段会变成一团糊；完整的那份在明细的「命令：」里。
+    // chip：这一行动了什么（命令 / 路径 / 查询），等宽显示。
+    // 多行参数（bash 的 heredoc、带续行的命令）只取第一行，完整的那份在明细里。
     chip: args === '' ? block.name : firstLine(args),
     mono: isMonoTool(block.name),
     detailMono: true,
@@ -105,14 +87,14 @@ export const ToolRun = memo(function ToolRun({ blocks, onPreview, running }: Too
       live
       compact
       steps={steps}
-      // diff 页脚要的是「文件 + 增删行数」，我们的数据里没有，整块不渲染
+      // diff 页脚要的是「文件 + 增删行数」，数据里没有，整块不渲染
       diffs={[]}
       labels={{
         header: running && pending > 0
           ? `${String(blocks.length)} 次工具调用 · 正在跑 ${String(pending)} 个`
           : `${String(blocks.length)} 次工具调用`,
       }}
-      // 点 chip：认得出文件路径就打开右侧预览（原来文件卡片「点主体预览」的能力）
+      // 点 chip：认得出文件路径就打开右侧预览
       onChipActivate={(index) => {
         const block = blocks[index]
         if (block === undefined) return

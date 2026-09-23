@@ -1,26 +1,10 @@
 /**
  * 补天（butian.net）适配器的共享层：凭据、页面 token、envelope 解包。
  *
- * ## 为什么是 Node 侧 fetch，而不是驱动浏览器
- *
- * 补天的个人中心是「服务端渲染页面 + 站内 POST 接口」的老式结构：
- * 接口路径、参数、envelope 都已经从页面自身的内联脚本里读出来了，用 `fetch`
- * 就能拿到数据。所以这些命令都是 `browser: false` —— **不需要 opencli 的
- * Chrome 扩展**（`opencli doctor` 里那项 Extension 没连上也能用）。
- *
- * 代价只有一个：Cookie 要自己提供（见 {@link readCookie}）。
- *
- * ## 三个必须遵守的约定（缺一个就拿不到数据）
- *
- * | 约定 | 依据 |
- * | --- | --- |
- * | `POST` 要带 `ajax=1` + `x-www-form-urlencoded` | 站点自己的 axios 封装就是这么发的 |
- * | 成功判定 `status === 1 \|\| success === 1` | 业务失败也返回 HTTP 200，必须看 envelope |
- * | 个人中心接口要带 **页面 token** | 少了它返回 `{"status":0,"info":"no token"}` |
- *
- * ⚠️ token 是**每页一个**、嵌在该页 HTML 里的（形如 `token: "40位hex"`），
- * 所以 {@link pageToken} 要按页取并缓存 —— 拿 A 页的 token 去调 B 页的接口同样会
- * `no token`。
+ * 补天是「服务端渲染页面 + 站内 POST 接口」结构，接口路径与参数都能从页面内联脚本读出，用 `fetch` 就够（`browser: false`），
+ * 代价是 Cookie 要自己提供（见 `readCookie`）。三条约定：`POST` 要带 `ajax=1` 与 `x-www-form-urlencoded`；
+ * 成功判定为 `status === 1 || success === 1`（业务失败也返回 HTTP 200）；个人中心接口要带页面 token，少了它返回
+ * `{"status":0,"info":"no token"}`；token 每页一个、嵌在该页 HTML 里，`pageToken` 按页缓存，拿 A 页的调 B 页同样报错。
  *
  * @module Memento/opencli/clis/butian/utils
  */
@@ -36,11 +20,8 @@ export const DOMAIN = 'www.butian.net'
 export const ORIGIN = `https://${DOMAIN}`
 
 /**
- * 凭据文件位置 —— 与 Memento 里的补天 MCP 共用同一份。
- *
- * 填一次两边都能用：`~/.Memento/butian-cookie.txt` 里放浏览器里 butian.net 的
- * Cookie 整串（`Cookie:` 前缀、换行都会被自动清掉）。
- * 想放别处用 `BUTIAN_COOKIE_FILE`，或直接用环境变量 `BUTIAN_COOKIE`。
+ * 凭据文件位置（与 Memento 的补天 MCP 共用同一份）：`~/.Memento/butian-cookie.txt` 里放 butian.net 的 Cookie 整串，
+ * `Cookie:` 前缀与换行会被清掉；可用 `BUTIAN_COOKIE_FILE` 换路径，或用环境变量 `BUTIAN_COOKIE` 直接给。
  */
 const COOKIE_FILE = process.env.BUTIAN_COOKIE_FILE ?? join(homedir(), '.Memento', 'butian-cookie.txt')
 
@@ -54,11 +35,7 @@ function normalizeCookie(raw) {
     .join('; ')
 }
 
-/**
- * 读登录 Cookie。
- * @returns {Promise<string>} Cookie 串。
- * @throws {AuthRequiredError} 两处都没有（或为空）时，提示去哪填。
- */
+/** 读登录 Cookie：环境变量与凭据文件都没有（或为空）时抛 `AuthRequiredError`，并提示去哪填。 */
 export async function readCookie() {
   const fromEnv = process.env.BUTIAN_COOKIE
   if (typeof fromEnv === 'string' && fromEnv.trim() !== '') return normalizeCookie(fromEnv)
@@ -83,17 +60,8 @@ export async function readCookie() {
 const tokenCache = new Map()
 
 /**
- * 取某个页面里嵌的 CSRF token。
- *
- * 页面里的形态有两种（都见过）：`token: "40位hex"` 与 `var token = "40位hex"`，
- * 所以匹配 `token` 后面跟 `:` 或 `=` 的十六进制串。
- *
- * ⚠️ 这里刻意用 `redirect: 'manual'`：凭据失效时补天返回的是 **302**（body 为空），
- * 而跟随后拿到的是登录页 HTML —— 那样就只能靠「找不到 token」来猜，
- * 提示会写成「站点改版了」，把人带偏。拦住 3xx 就能准确说成「Cookie 失效」。
- *
- * @param {string} pagePath - 页面路径（如 `/WhiteHat/Center/loo`）。
- * @returns {Promise<string>} token。
+ * 取某个页面里嵌的 CSRF token：形态有 `token: "40位hex"` 与 `var token = "40位hex"` 两种，匹配 `token` 后跟 `:` 或 `=` 的十六进制串。
+ * 用 `redirect: 'manual'` 是因为凭据失效时补天返回 302（body 为空），跟随重定向只会拿到登录页 HTML，拦住 3xx 才能准确报「Cookie 失效」。
  */
 export async function pageToken(pagePath) {
   const cached = tokenCache.get(pagePath)
@@ -116,7 +84,7 @@ export async function pageToken(pagePath) {
   const html = await response.text()
   const match = /token\s*[:=]\s*"([0-9a-f]{16,})"/.exec(html)
   if (match === null) {
-    // 没 302、也没有 token：两种可能都说清楚，别只报一种。
+    // 没 302、也没有 token：登录页与改版两种可能都要说清楚。
     if (/登录|loginForm|passport/i.test(html.slice(0, 4000))) {
       throw new AuthRequiredError(
         DOMAIN,
@@ -133,12 +101,8 @@ export async function pageToken(pagePath) {
 }
 
 /**
- * 发一次请求并解包 envelope。
- * @param {string} path - 接口路径。
- * @param {'GET'|'POST'} method - `POST` 会带上 `ajax=1` 与表单编码。
- * @param {Record<string, string|number|undefined>} params - 参数，`undefined` 的键丢掉。
- * @param {string} referer - 来源页（站点会校验）。
- * @returns {Promise<unknown>} `envelope.data`。
+ * 发一次请求并解包 envelope，返回 `envelope.data`：`POST` 会带上 `ajax=1` 与表单编码，
+ * `params` 里 `undefined` 的键丢掉，`referer` 是来源页（站点会校验）。
  */
 async function call(path, method, params, referer) {
   const cookie = await readCookie()
@@ -203,11 +167,7 @@ export function apiGet(path, params, referer) {
 /** 漏洞级别：0 低 / 1 中 / 2 高 / 其余严重（取自漏洞列表页的行渲染代码）。 */
 const LEVEL_LABEL = { 0: '低', 1: '中', 2: '高' }
 
-/**
- * 级别码转文字。
- * @param {unknown} value - 接口返回的 level。
- * @returns {string} 低 / 中 / 高 / 严重。
- */
+/** 级别码转文字：低 / 中 / 高 / 严重。 */
 export function levelLabel(value) {
   return LEVEL_LABEL[Number(value)] ?? '严重'
 }
@@ -215,11 +175,7 @@ export function levelLabel(value) {
 /** 漏洞状态码（取自漏洞列表页的筛选按钮）。 */
 const STATUS_LABEL = { 1: '待审核', 3: '待打款', 4: '已完结', 5: '已忽略', 6: '待补充', 7: '处理中' }
 
-/**
- * 状态码转文字。
- * @param {unknown} value - 接口返回的 status。
- * @returns {string} 中文状态；未知码原样显示，不瞎猜。
- */
+/** 状态码转文字；未知码原样显示。 */
 export function statusLabel(value) {
   return STATUS_LABEL[Number(value)] ?? String(value ?? '')
 }

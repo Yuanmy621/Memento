@@ -1,11 +1,8 @@
 /**
  * `opencli butian sign` —— 补天签到状态。
  *
- * 数据源：`POST /WhiteHat/Sign/continue_days`（需要 Cookie，不需要 token）。
- * 这个接口直接返回一个数字：连续签到天数。
- *
- * 只读：**不**调用签到接口本身（`/WhiteHat/Sign/userCheckin`）——
- * 那会真实改变账号数据，要加的话请自己确认清楚再加。
+ * 数据源 `POST /WhiteHat/Sign/continue_days`，需要 Cookie、不需要 token，接口直接返回连续签到天数。
+ * 只读：不调用签到接口本身（`/WhiteHat/Sign/userCheckin`）—— 那会真实改变账号数据，要加的话需自行确认。
  *
  * @module Memento/opencli/clis/butian/sign
  */

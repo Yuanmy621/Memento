@@ -1,12 +1,9 @@
 /**
  * `opencli butian missions` —— 补天的任务进度。
  *
- * 数据源：`GET /WhiteHat/Mission/lists`（需要 Cookie，不需要 token）。
- * 返回是按分类分组的对象（如「邀请好友」「日常任务」），每类下面一组任务，
- * 所以这里摊平成一张表，分类作为一列。
- *
- * 任务的 `status` 是补天自己的一套码，这里**原样显示**（不猜）—— 想按状态筛
- * 就看输出里的数字，或去页面上对照。
+ * 数据源 `GET /WhiteHat/Mission/lists`，需要 Cookie、不需要 token；返回是按分类分组的对象（如「邀请好友」
+ * 「日常任务」），每类下面一组任务，所以摊平成一张表、分类单独一列。任务的 `status` 是补天自己的一套码，
+ * 这里原样显示，按状态筛要看输出里的数字或去页面核对。
  *
  * @module Memento/opencli/clis/butian/missions
  */

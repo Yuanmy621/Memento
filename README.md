@@ -237,8 +237,8 @@ await ctx.plugin(AgentLoop, { agents: [] })                 // ctx.agentLoop
 
 ```
 .agents/skills/
-  Memento-desktop-ui/SKILL.md    改桌面端界面的固定套路与两个已修 bug 的复现条件
-  Memento-mcp/SKILL.md           往 Memento 上接 MCP 服务器的固定套路
+  memento-desktop-ui/SKILL.md    改桌面端界面的固定套路与两个已修 bug 的复现条件
+  memento-mcp/SKILL.md           往 Memento 上接 MCP 服务器的固定套路
   src-hunter/                   SRC / 众测漏洞挖掘工作流（27 个文件 + 上游 MIT LICENSE）
 ```
 
@@ -286,7 +286,7 @@ description: 往 Memento 上接 MCP 服务器的固定套路 …… 当你要给
 
 ```bash
 node app/cli/main.ts --list-tools | grep '^skill'   # skill 工具已注册
-node app/cli/main.ts -p "用 skill 工具加载 Memento-mcp，告诉我它的第二节标题"
+node app/cli/main.ts -p "用 skill 工具加载 memento-mcp，告诉我它的第二节标题"
 ```
 
 ⚠️ frontmatter 写错（`name` 与目录名不一致、`description` 为空）的技能会被 provider

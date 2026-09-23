@@ -1,45 +1,10 @@
 #!/usr/bin/env node
 /**
- * 漏洞盒子（vulbox.com）MCP server —— **只读**。
+ * 漏洞盒子（vulbox.com）MCP server：把私有接口包装成只读 MCP 工具，写接口不注册。
  *
- * 把漏洞盒子的私有接口包装成 MCP 工具，由 Memento 内核里的 `@deepseek-ai/dsh-mcp-client`
- * 挂载后，模型就能像调用原生工具一样调用它们（工具名形如
- * `mcp__vulbox__vulbox_projects`）。
- *
- * ## 它能回答什么问题（挖洞现场最常问的）
- *
- *   - 「漏洞盒子上有哪些企业 SRC 可以打？奖金多少？我加入了没？」→ `vulbox_projects`
- *   - 「PayPal 这个 SRC 的范围（assets）和规则是什么？」→ `vulbox_src_scope`
- *   - 「这个门户有哪些公告（评级标准 / 处理流程 / 活动）？」→ `vulbox_src_notices` / `vulbox_src_notice`
- *   - 「平台上谁在挖、分数多少？」→ `vulbox_rank` / `vulbox_src_rank`
- *   - 「提交/评级规范在哪？」→ `vulbox_help`
- *   - 「凭据通不通？」→ `vulbox_doctor`
- *
- * ## 运行方式
- *
- * stdio 上的 JSON-RPC，由 MCP 客户端拉起：
- *
- * ```bash
- * node --experimental-strip-types app/mcp/vulbox/server.ts
- * ```
- *
- * ## 凭据填在哪里
- *
- * 按顺序取：
- *   1. 环境变量 `VULBOX_COOKIE`（内核会显式转发）；
- *   2. 文件 `~/.Memento/vulbox-cookie.txt` ← 推荐：把浏览器里 vulbox.com 的 Cookie
- *      整串粘进去即可（`Cookie:` 前缀、换行都会自动清掉）。
- *      换路径用 `VULBOX_COOKIE_FILE`。
- *
- * 内容里真正用到的只有 `vulbox_token`（JWT，鉴权）和 `uuid`（请求头）。
- * 没配也能启动：需要登录的工具会给出「去哪填」的明确提示。
- *
- * ## 只读承诺
- *
- * 这里**故意不注册**任何改变账号状态的接口：加入项目（`/hacker/project/join`）、
- * 项目邀请（`/hacker/project/invitation`）、提交漏洞、意见反馈（`/web/feedback/in`）、
- * 退出登录（`/openapi/account/logout`）都不在表里。要加写操作请先想清楚：
- * 它们会真实改变你账号的数据（比如「加入项目」之后范围才可见，但那也该由人点）。
+ * 走 stdio 上的 JSON-RPC，由内核的 `@deepseek-ai/dsh-mcp-client` 拉起，工具名形如 `mcp__vulbox__vulbox_projects`。
+ * 凭据依次取 `VULBOX_COOKIE` 与 `~/.Memento/vulbox-cookie.txt`（`VULBOX_COOKIE_FILE` 可改路径），
+ * 其中只有 `vulbox_token`（JWT，鉴权）与 `uuid`（请求头）被用到。
  *
  * @module Memento/mcp/vulbox/server
  */
@@ -55,16 +20,12 @@ import {
   VulboxError, type Credential,
 } from './client.ts'
 
-/** 这个 server 的名字：工具名会变成 `mcp__vulbox__<工具>`。 */
+/** server 名；工具名会变成 `mcp__vulbox__<工具>`。 */
 const SERVER_NAME = 'vulbox'
 /** 版本号，`initialize` 时报给客户端。 */
 const VERSION = '0.1.0'
 
-/**
- * 自己填 Cookie 时的默认位置。
- *
- * 换位置用环境变量 `VULBOX_COOKIE_FILE`（冒烟测试必须用它，别读用户真实凭据）。
- */
+/** 默认 Cookie 文件位置；`VULBOX_COOKIE_FILE` 可覆盖（冒烟测试用它可避开真实凭据）。 */
 const COOKIE_FILE = process.env['VULBOX_COOKIE_FILE'] ?? join(homedir(), '.Memento', 'vulbox-cookie.txt')
 
 /** 读登录 Cookie：环境变量优先，其次文件。 */
@@ -83,7 +44,7 @@ async function credential(): Promise<Credential | undefined> {
   return credentialOf(await readCookie())
 }
 
-/** 把网页里的 HTML 片段压成一行纯文本（公告 / 规则的 content 是富文本）。 */
+/** 把 HTML 片段压成纯文本；公告与规则的 `content` 是富文本。 */
 function plain(html: string): string {
   return html
     .replace(/<(script|style)[\s\S]*?<\/\1>/gi, '')
@@ -113,13 +74,8 @@ function reply(text: string): { content: { type: 'text'; text: string }[] } {
 }
 
 /**
- * 统一的错误 → 文本转换。
- *
- * 四条不同的出路，别混成一句「调用失败」：
- *   - 没凭据 → 去哪填；
- *   - 凭据无效 → 重新复制 Cookie；
- *   - **暂无权限** → 去门户点「加入项目」（企业 SRC 的范围与公告详情都要先加入）；
- *   - 其余业务失败 → 原样报出来。
+ * 按 `kind` 分成四种提示：没凭据说去哪填，凭据无效说重新复制 Cookie，
+ * 无权限提示去门户点「加入项目」（企业 SRC 的范围与公告详情都要先加入），其余业务失败原样报出。
  */
 function describe(error: unknown): string {
   if (error instanceof VulboxError) {
@@ -145,7 +101,7 @@ function describe(error: unknown): string {
   return `漏洞盒子工具内部错误：${error instanceof Error ? error.message : String(error)}`
 }
 
-/** 包一层：把错误变成可读文本，而不是让 MCP 层抛栈。 */
+/** 捕获异常并转成文本回复，避免 MCP 层抛栈。 */
 async function guard(run: () => Promise<string>): Promise<{ content: { type: 'text'; text: string }[] }> {
   try {
     return reply(await run())
@@ -155,10 +111,8 @@ async function guard(run: () => Promise<string>): Promise<{ content: { type: 'te
 }
 
 /**
- * `assets.accessible` 的语义 —— 摘自门户前端自己的提示文案（`f53acb0.js`）。
- *
- * 这张表比「暂无权限」四个字有用得多：模型据此能直接告诉用户**该做哪一步**
- * （去认证 / 联系管理员 / 换项目），而不是反复重配 Cookie。
+ * `assets.accessible` 的取值语义，摘自门户前端 `f53acb0.js` 的提示文案，
+ * 用于把「暂无权限」细分成完成认证、联系管理员、未加入项目这几种情况。
  */
 const ACCESSIBLE_HINT: Record<number, string> = {
   0: '有权限（接口会直接返回资产范围）',
@@ -172,13 +126,12 @@ const ACCESSIBLE_HINT: Record<number, string> = {
 const portalArg = z.string().optional()
   .describe(`SRC 门户域名，如 ${DEFAULT_PORTAL}（默认就是它）。可从 vulbox_projects 的「门户」列拿。`)
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 工具
-// ─────────────────────────────────────────────────────────────────────────────
+// 只注册读工具：加入项目（`/hacker/project/join`）、项目邀请（`/hacker/project/invitation`）、
+// 提交漏洞、意见反馈（`/web/feedback/in`）、退出登录（`/openapi/account/logout`）都不在表里。
 
 const server = new McpServer({ name: SERVER_NAME, version: VERSION })
 
-// ── 企业 SRC 大厅（免登录）──────────────────────────────────────────────────
+// 企业 SRC 大厅（免登录）
 
 server.registerTool('vulbox_projects', {
   title: '漏洞盒子企业SRC大厅',
@@ -250,7 +203,7 @@ server.registerTool('vulbox_rank', {
   return [`赛季榜（统计起点 ${String(data.start ?? '?')}，本页 ${String(list.length)} 人）`, ...lines].join('\n')
 }))
 
-// ── SRC 门户（只读；范围/规则需要先加入项目）─────────────────────────────────
+// SRC 门户（只读；范围与规则需先加入项目）
 
 server.registerTool('vulbox_src_info', {
   title: 'SRC 门户概况',
@@ -454,7 +407,7 @@ server.registerTool('vulbox_src_vulns', {
   return out.join('\n')
 }))
 
-// ── 我是谁（读主站 SSR，用 Cookie）───────────────────────────────────────────
+// 我是谁（读主站 SSR，用 Cookie）
 
 server.registerTool('vulbox_me', {
   title: '我的漏洞盒子账号',
@@ -488,7 +441,7 @@ server.registerTool('vulbox_me', {
   ].join('\n')
 }))
 
-// ── 帮助中心（免登录）───────────────────────────────────────────────────────
+// 帮助中心（免登录）
 
 server.registerTool('vulbox_help', {
   title: '漏洞盒子帮助中心',
@@ -518,7 +471,7 @@ server.registerTool('vulbox_help', {
   return ['帮助中心目录（用 vulbox_help id=<编号> 读全文）', ...walk(Array.isArray(data) ? data : [], 0)].join('\n')
 }))
 
-// ── 自检 ────────────────────────────────────────────────────────────────────
+// 自检
 
 server.registerTool('vulbox_doctor', {
   title: '漏洞盒子连接自检',
@@ -564,7 +517,7 @@ server.registerTool('vulbox_doctor', {
       lines.push(`  ✗ ${label} — [${kind}] ${error instanceof Error ? error.message : String(error)}`)
     }
   }
-  // SSR 那一路单独探：它是唯一能证明「Cookie 还有效」的路径
+// SSR 是唯一能判断 Cookie 是否仍有效的路径，单独探一次
   try {
     const user = await fetchPortalUser(await readCookie())
     lines.push(user.logged
@@ -577,15 +530,11 @@ server.registerTool('vulbox_doctor', {
   return lines.join('\n')
 }))
 
-// ─────────────────────────────────────────────────────────────────────────────
 // 启动
-// ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * 连上 stdio 传输。
- *
- * ⚠️ stdio 下 **stdout 是协议通道**：任何 `console.log` 都会破坏 JSON-RPC 帧，
- * 日志一律走 `console.error`。
+ * 连上 stdio 传输。stdio 下 stdout 是协议通道，日志只能走 `console.error`，
+ * 任何 `console.log` 都会破坏 JSON-RPC 帧。
  */
 async function main(): Promise<void> {
   const transport = new StdioServerTransport()

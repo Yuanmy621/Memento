@@ -1,43 +1,16 @@
 /**
- * 侧栏背景：**整个侧栏是一段柱面**，被切成小块，向右滚动着消散 —— 纯模拟（不碰 DOM）。
+ * 侧栏背景：整个侧栏是一段柱面，被切成小块向右滚动着消散 —— 纯模拟，不碰 DOM。
  *
- * ## 它到底是什么
- *
- * 把侧栏看成一截**立着的圆柱**（轴垂直，我们看到的是它正面那一小段曲面）：
- *
- * ```
- *              光的来向
- *                 ↓
- *    ╭─────────────────────╮   ① 柱面：左右边缘转过去了 → 格子被投影压窄 + 变暗，
- *    │ ▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪ │      中间最亮，光带略微偏左（高光）
- *    │ ▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪ │   ② 网格：整段曲面按 13px 的小方块切开
- *    │ ▪▪▪▫▫▪▪▪▪▪▫▫▪▪▪▪▪▪▪ │   ③ 切下来：随机有小块脱离表面，底下的格子**留空**
- *    │ ▪▪▫▫▫▪▪▪▫▫▪▪▪▪▪▪▪▪▪ │      → 向右滚（自转 = 滚动）+ 略放大 + 渐隐（消散）
- *    │ ▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪ │   ④ 强度：越靠上越明显，向下平滑衰减到 0
- *    ╰─────────────────────╯
- * ```
- *
- * | 现象 | 由什么决定 |
- * | --- | --- |
- * | 柱面感 | 屏幕 x = R·sin θ（格子被投影压窄）+ {@link cylinderShade} 的明暗与高光 |
- * | 切成小块 | 曲面按 `cell` 切格子，每格有自己的「静止 / 被切下来」周期 |
- * | 整体向右滚动 | `drumSpeed`：整段曲面在转（网格与「哪块料在哪一格」一起右移） |
- * | 消散 | 被切下来的那块：`easeOut` 右移 + 滚动式自转 + 渐隐，最后什么都不剩 |
- * | 上强下弱 | {@link verticalIntensity}：同时乘在「表面亮度」和「消散幅度」上 |
- *
- * ## 为什么单独一个文件、而且不 import 任何 DOM
- *
- * 仓库老规矩（见 `rich-text-tokens.ts`）：**会自己演化的几何最该能被推演**。
- * 这里全是「状态 + dt + 随机源 → 新状态」，随机源是注入的，所以柱面投影宽度、
- * 强度曲线、切割周期、消散进度都能在 Node 里直接验（仓库里不放测试文件，跑临时脚本）。
- * 画布、rAF、`prefers-reduced-motion` 都在 `components/sidebar-backdrop.tsx`。
+ * 屏幕 x = R·sin θ 让边缘的格子被投影压窄，配合 {@link cylinderShade} 的明暗形成柱面感；
+ * 曲面按 `cell` 切格，每格有自己的「静止 / 被切下来」周期，`drumSpeed` 让整段曲面向右转。
+ * 随机源是注入的，几何、强度曲线、切割周期都能在 Node 里推演。
  *
  * @module Memento/desktop/renderer/src/components/sidebar-cylinder
  */
 
 /** 可调参数。 */
 export interface CylinderOptions {
-  /** 小方块的边长（**弧长**，CSS px）。 */
+  /** 小方块的边长（弧长，CSS px）。 */
   cell: number
   /** 方块之间的缝（px）—— 网格靠它才看得见。 */
   gap: number
@@ -49,7 +22,7 @@ export interface CylinderOptions {
   surfaceAlpha: number
   /** 被切下来那一小块的不透明度（顶部）。 */
   shardAlpha: number
-  /** 「静止 → 切下来 → 滚走消散 → 回来」一轮的时长范围（ms）。 */
+  /** 「静止、切下来、滚走消散、回来」一轮的时长范围（ms）。 */
   cycleMs: readonly [number, number]
   /** 一轮里「静止」占的比例（0.6 = 任意时刻约 40% 的小块正在滚）。 */
   restRatio: number
@@ -93,14 +66,11 @@ export interface Field {
   /** 每列的角度跨度（弧度）。 */
   stepAngle: number
   /**
-   * 要画的**稠密列数** = `columns + 2 × DENSE_PAD`。
-   *
-   * 为什么比 `columns` 多：鼓面一转，可见的那段弧就在「材料」上滑动了不到一格，
-   * 最左/最右会露出「上一格的材料」——不把多出来的那一两列也画上，
-   * 侧栏左边缘会出现一条会呼吸的空缝。
+   * 要画的稠密列数 = `columns + 2 × DENSE_PAD`：鼓面一转，可见的弧就在材料上滑动
+   * 不到一格，两侧不多铺几列的话，侧栏边缘会出现一条会呼吸的空缝。
    */
   dense: number
-  /** 鼓面已经转过多少**整格**（材料整体挪了几列）。 */
+  /** 鼓面已经转过多少整格（材料整体挪了几列）。 */
   shift: number
   /** 稠密列当前的角度（含鼓面位移）。 */
   geoTheta: number[]
@@ -163,14 +133,12 @@ export const DEFAULT_OPTIONS: CylinderOptions = {
   fadePower: 2.0,
 }
 
-/** 低于这个纵向强度就整行不画（底部那截是纯背景，别为它白算）。 */
+/** 低于这个纵向强度就整行不画：底部那截是纯背景，不必为它计算。 */
 export const MIN_INTENSITY = 0.02
 
 /**
- * 稠密列在两侧各多铺几格。
- *
- * 鼓面位移不是整格时，可见的这段弧会在材料上滑动不到一格 —— 两侧各多一列就够了，
- * 这里给 2 是留冗余（浮点累积、极端尺寸下不会露缝）。
+ * 稠密列在两侧各多铺几格：鼓面位移不是整格时，可见的弧会在材料上滑动不到一格。
+ * 两侧各多一列就够，给 2 是留浮点累积与极端尺寸的冗余。
  */
 const DENSE_PAD = 2
 
@@ -180,11 +148,8 @@ function between(rng: () => number, min: number, max: number): number {
 }
 
 /**
- * 柱面半径：让 ±curvature 的弧**正好**投到宽度 width 的两端。
- *
- * @param width - 逻辑宽度。
- * @param curvature - 半角（弧度）。
- * @returns 半径；`curvature` 为 0 时返回 `Infinity`（= 平面）。
+ * 柱面半径：让 ±curvature（半角，弧度）的弧正好投到逻辑宽度 width 的两端；
+ * `curvature` 为 0 时返回 `Infinity`，即平面。
  */
 export function radiusOf(width: number, curvature: number): number {
   const sin = Math.sin(curvature)
@@ -192,13 +157,8 @@ export function radiusOf(width: number, curvature: number): number {
 }
 
 /**
- * 柱面明暗：光从 `light` 方向来，边缘（|θ| 大）自然变暗。
- *
- * 这是「柱面感」的一半（另一半是投影压窄）：没有它，网格只是一张贴在平面上的图。
- *
- * @param theta - 这一列此刻的屏幕角度（弧度）。
- * @param light - 光源角度。
- * @returns 0.28~1.1 的亮度系数（边缘约 0.28，正对光时 1 + 高光）。
+ * 柱面明暗：光从 `light` 方向来，屏幕角度 `theta`（弧度）越靠边缘（|θ| 大）越暗；
+ * 它和投影压窄一起构成柱面感。返回 0.28~1.1 的亮度系数（边缘约 0.28，正对光时 1 + 高光）。
  */
 export function cylinderShade(theta: number, light: number = DEFAULT_OPTIONS.light): number {
   const facing = Math.max(0, Math.cos(theta - light))
@@ -207,15 +167,8 @@ export function cylinderShade(theta: number, light: number = DEFAULT_OPTIONS.lig
 }
 
 /**
- * 纵向强度：上面 1，往下平滑衰减到 0。
- *
- * 它同时乘在「表面亮度」和「消散幅度」上，所以底部既没有网格、也不会动 ——
- * 侧栏下半部分是纯背景，那里的文字区安静。
- *
- * @param y - 逻辑 y（CSS px）。
- * @param height - 逻辑高度。
- * @param options - 取 `fadeHeight` / `fadePower`。
- * @returns 0..1。
+ * 纵向强度：逻辑 y（CSS px）在上面时是 1，往下按 `fadeHeight` / `fadePower` 平滑衰减到 0。
+ * 它同时乘在表面亮度与消散幅度上，所以侧栏下半部分既没有网格也不会动，那里的文字区安静。
  */
 export function verticalIntensity(
   y: number,
@@ -241,10 +194,8 @@ function newTile(rng: () => number, options: CylinderOptions): Tile {
 }
 
 /**
- * 重算几何：列数、行数、每列的角度跨度，以及小块数组（尽量保留原有状态）。
- *
- * @param field - 场（原地修改）。
- * @param rng - 随机源（补新格子用）。
+ * 原地重算几何：列数、行数、每列的角度跨度，以及小块数组（尽量保留原有状态）；
+ * 随机源 `rng` 只用来补齐新增的格子。
  */
 function layout(field: Field, rng: () => number): void {
   const { cell, gap, curvature } = field.options
@@ -278,21 +229,13 @@ function layout(field: Field, rng: () => number): void {
 }
 
 /**
- * 按当前鼓面位移，更新每一列在屏幕上的中心、宽度与明暗。
- *
- * 三件事都在这一步做完，是因为它们都只跟**角度**有关：
- *
- * - 位移用**角度**表达（而不是屏幕像素），柱面才整体一致 ——
- *   屏幕等距的位移在边缘会因为投影压缩而多走/少走，看起来会「跳一下」；
- * - 明暗跟着**屏幕角度**算：光固定在空间里，材质是从光里转过去的；
- * - 每帧只有 `columns`（≈23）次三角函数，格子的循环里一次都不用。
- *
- * @param field - 场（原地修改）。
+ * 按当前鼓面位移原地更新每列的中心、宽度与明暗：位移用角度表达（屏幕等距的位移在边缘
+ * 会因投影压缩而多走 / 少走），明暗跟着屏幕角度算，每帧只有 `columns` 次三角函数。
  */
 export function updateColumns(field: Field): void {
   const { cell, gap, curvature, light } = field.options
   const step = cell + gap
-  // 转过多少**整格**：材料整体挪几列（材料是首尾相接的，所以取模就好）
+  // 转过多少整格：材料整体挪几列（材料首尾相接，取模即可）
   const shift = Math.floor(field.drum / step + 1e-9)
   const fraction = field.drum - shift * step
   const fractionAngle = Number.isFinite(field.radius) ? fraction / field.radius : 0
@@ -312,13 +255,8 @@ export function updateColumns(field: Field): void {
 }
 
 /**
- * 造一个场，并按当前尺寸算好几何与初始周期。
- *
- * @param width - 逻辑宽度。
- * @param height - 逻辑高度。
- * @param rng - 随机源（`Math.random` 或固定种子）。
- * @param options - 参数覆盖。
- * @returns 场。
+ * 造一个场，并按当前尺寸算好几何与初始周期：随机源用 `Math.random` 或固定种子，
+ * `options` 覆盖 `DEFAULT_OPTIONS` 里的默认参数。
  */
 export function createField(
   width: number,
@@ -351,12 +289,7 @@ export function createField(
 }
 
 /**
- * 改尺寸（侧栏宽度固定，主要是窗口高度在变）。
- *
- * @param field - 场（原地修改）。
- * @param width - 新的逻辑宽度。
- * @param height - 新的逻辑高度。
- * @param rng - 随机源。
+ * 原地改尺寸（侧栏宽度固定，主要是窗口高度在变），尺寸没变就直接返回。
  */
 export function resizeField(field: Field, width: number, height: number, rng: () => number): void {
   const nextWidth = Math.max(0, width)
@@ -368,11 +301,8 @@ export function resizeField(field: Field, width: number, height: number, rng: ()
 }
 
 /**
- * 推进一帧：小块走自己的周期，整段柱面也在慢慢向右转。
- *
- * @param field - 场（原地修改）。
- * @param dtMs - 距上一帧的毫秒数（调用方要夹上限）。
- * @param rng - 随机源（周期轮回时重掷节奏）。
+ * 原地推进一帧：小块走自己的周期，整段柱面也在慢慢向右转。`dtMs` 是距上一帧的毫秒数，
+ * 调用方要夹上限；`rng` 在周期轮回时重掷节奏。
  */
 export function stepField(field: Field, dtMs: number, rng: () => number): void {
   const dt = Math.max(0, dtMs)
@@ -380,9 +310,8 @@ export function stepField(field: Field, dtMs: number, rng: () => number): void {
   const { cell, gap, drumSpeed } = field.options
   const span = (cell + gap) * Math.max(1, field.columns)
   field.drum += (drumSpeed * dt) / 1000
-  // 转满**一整圈**才取模：一圈对应 `columns` 格，也就是角度上正好 2Θ ——
-  // 几何与材料映射都回到原样，所以画面看不出接缝，而浮点数不会一直涨。
-  // ⚠️ 不能按「一格」取模：那样材料映射会突然错开一列，画面上是一次跳变。
+  // 转满一整圈才取模：一圈对应 `columns` 格（角度上正好 2Θ），几何与材料映射都回到
+  // 原样，浮点数也不会一直涨。按「一格」取模不行：材料映射会突然错开一列，画面跳变。
   if (field.drum >= span) field.drum -= span
   for (const tile of field.tiles) {
     tile.phase += dt / tile.period
@@ -399,15 +328,10 @@ export function stepField(field: Field, dtMs: number, rng: () => number): void {
 }
 
 /**
- * 屏幕上某一列（slot）现在显示的是哪一块料。
+ * 屏幕上某一列（`dense`：0..`columns + 2×DENSE_PAD`，含两侧多铺的列）现在显示的是哪块料。
  *
- * 柱面每转过一整格，「料」就整体挪一列 —— 网格的移动因此是连续的，
- * 而每块料的周期状态也跟着一起走（看起来是**材质**在转，不是贴图在滑）。
- *
- * @param field - 场。
- * @param dense - 稠密列号（0..`columns + 2×DENSE_PAD`，含两侧多铺的那几列）。
- * @param row - 行号。
- * @returns 小块状态。
+ * 柱面每转过一整格，「料」就整体挪一列 —— 网格的移动因此是连续的，而每块料的周期状态
+ * 也跟着一起走（看起来是材质在转，不是贴图在滑）。
  */
 export function tileAt(field: Field, dense: number, row: number): Tile {
   const materialSlot = field.geoMaterial[dense] ?? 0
@@ -417,17 +341,11 @@ export function tileAt(field: Field, dense: number, row: number): Tile {
 }
 
 /**
- * 算出一小块这一帧该画成什么样。
+ * 算出一小块这一帧该画成什么样：`field` 的几何要是本帧 {@link updateColumns} 之后的状态，
+ * `dense` 取 0..`columns + 2×DENSE_PAD`，`out` 是复用对象（每帧算上千次，避免分配）。
  *
- * 返回 `null` 表示「这一帧不画它」——只有一种情形：纵向强度已经衰减到看不出来。
- * 至于「正在滚」的那些块，**调用方要跳过它们**（`detached === true` 时不要画静止的
- * 格子）：底下的格子留空，才看得出这一块是从表面上被切走的。这是切割感的来源。
- *
- * @param field - 场（几何要是本帧 {@link updateColumns} 之后的状态）。
- * @param dense - 稠密列号（0..`columns + 2×DENSE_PAD`）。
- * @param row - 行号。
- * @param out - 复用的对象（组件每帧算上千次，别分配垃圾）。
- * @returns 这一帧的画法；不用画时为 `null`。
+ * 不用画时返回 `null`（纵向强度已衰减到看不出来）。调用方要跳过 `detached === true` 的块，
+ * 不要画静止的格子：底下的格子留空，才看得出这一块是从表面上被切走的。
  */
 export function tileFrame(field: Field, dense: number, row: number, out?: TileFrame): TileFrame | null {
   const { cell, gap, restRatio, shardAlpha, surfaceAlpha, rollPx, rollSpin } = field.options
@@ -473,9 +391,6 @@ export function tileFrame(field: Field, dense: number, row: number, out?: TileFr
 
 /**
  * 纵向强度还看得见的行数（底部的行整行不画）。
- *
- * @param field - 场。
- * @returns 行数。
  */
 export function visibleRows(field: Field): number {
   const step = field.options.cell + field.options.gap

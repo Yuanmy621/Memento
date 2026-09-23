@@ -1,28 +1,10 @@
 /**
- * System One 插件：把 TypeSafe/Jev 那套「决策原语」接进 Memento。
+ * System One 插件：把 TypeSafe/Jev 的决策原语接进 Memento，注册 `sysone_ask` 与
+ * `sysone_compose` 两个工具。
  *
- * ## 为什么要接这个（设计逻辑，不是照抄 API）
- *
- * 上游那篇 Introduction 的核心论点不是「我们有个新模型」，而是**分工**：
- * LLM 负责生成文本，**代码**负责决策；把「判断」做成一等公民（typed question →
- * 结构化答案 + 概率 + 置信度），代码就能像用函数一样用它，而不是解析自由文本。
- * 由此推出的四条工程约定，本插件逐条落地：
- *
- * | 上游约定 | 本插件里的落点 |
- * | --- | --- |
- * | 一次问多个**原子**问题，并行且互相隔离 | `sysone_ask`：一次请求里全部问题独立评估 |
- * | 复杂判断要**拆**，再用代码里的权重合起来 | `sysone_compose(mode=composite)`：权重/归一化都在代码里 |
- * | 用置信度决定「动 / 复核 / 升级」 | `sysone_compose(mode=route)`：三个出口 + `alsoNotify` |
- * | 代码拥有工作流，模型只给判断 | 组合、阈值、权重全是**确定性纯函数**（`primitives.ts`），不花 token |
- *
- * ## 只有一个后端：TypeSafe 官方 Jev
- *
- * `sysone_ask` 直接打 `POST {baseUrl}/v1/systemone`，一次请求回答全部问题，概率是
- * **标定过**的。需要 `TYPESAFE_API_KEY`（变量名可用 `apiKeyEnv` 配置）；没配 key、
- * 鉴权失败或网络失败时**直接报错**，绝不退回本地模型采样 —— 本地自一致性不是 Jev，
- * 概率未标定，本插件不再接受这种兜底。
- *
- * 挂在 `app/cli/kernel.ts` 里，随内核默认挂载。
+ * 分工是「模型生成文本、代码负责决策」：拆解、加权、归一化与阈值判定都在
+ * `primitives.ts` 的确定性纯函数里，不花 token。后端只有 TypeSafe 官方 Jev，
+ * 缺 `TYPESAFE_API_KEY` 或鉴权失败时直接报错，不退回概率未标定的本地采样。
  *
  * @module Memento/plugins/system-one
  */
@@ -37,15 +19,12 @@ import {
 } from './primitives.ts'
 
 /**
- * 本文件内部用的 JSON 值类型。
- *
- * 内核的 `JsonValue` 来自 `@deepseek-ai/dsh-util-values`，它不是本仓库的**顶层依赖**
- * （pnpm 严格布局下 import 不到，见 `Memento-mcp` 技能里记的那两个坑），
- * 所以这里按同一形状自己标一个 —— 结构上等价，不引入依赖。
+ * 本文件内部用的 JSON 值类型：内核的 `JsonValue` 来自 `@deepseek-ai/dsh-util-values`，
+ * 而它不是本仓库的顶层依赖（pnpm 严格布局下 import 不到），故按同一形状自己标一个。
  */
 type Json = string | number | boolean | null | Json[] | { [key: string]: Json }
 
-/** 插件名（DSH 约定）。 */
+/** 插件名。 */
 export const name = 'Memento-system-one'
 /** 需要工具注册表；官方后端直接走 HTTP，不需要 LLM 运行时。 */
 export const inject = ['tools']
@@ -92,13 +71,8 @@ function renderAnswer(answer: Answer): string {
 }
 
 /**
- * 领域答案 → 纯 JSON。
- *
- * 工具返回值必须是可无损序列化的 JSON，而领域类型里 `legend` 是 `readonly`
- * （`JsonValue` 只认可变数组），所以在出口处展开成普通对象 —— 只在这一层做，
- * 领域类型保持 `readonly` 不被污染。
- * @param answer - TypeSafe 返回并解析出来的答案。
- * @returns 可直接放进工具输出的 JSON 对象。
+ * 领域答案 → 纯 JSON：工具返回值需要可无损序列化，而 `legend` 是 `readonly`
+ * （`JsonValue` 只认可变数组），所以在出口处展开，领域类型保持 `readonly`。
  */
 function toJsonAnswer(answer: Answer): { [key: string]: Json } {
   const base: { [key: string]: Json } = {
@@ -129,7 +103,7 @@ function renderQuestions(questions: readonly Question[]): string {
     .join(' ')
 }
 
-/** 这个插件的 `apply`：注册两个工具。 */
+/** 插件入口：注册两个工具。 */
 export function apply(ctx: Context, config: Config): void {
   const apiKeyEnv = config.apiKeyEnv ?? DEFAULTS.apiKeyEnv
   const typesafe = {

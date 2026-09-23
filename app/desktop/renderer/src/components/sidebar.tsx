@@ -1,16 +1,8 @@
 /**
  * 左侧边栏：「工作区」标题 + 搜索 + 新会话 + 会话列表。
  *
- * 结构上保留上一版的**项目 → 会话**树（默认视图），并在顶部加了搜索：
- * 一旦输入关键词就切成**平铺的搜索结果**（跨项目），因为「找某个会话」
- * 时层级反而是干扰。搜索匹配会话标题与 id。
- *
- * 每条会话显示：标题 + 最后更新时间；当前会话灰色高亮 + 左侧竖标。
- *
- * 视觉上刻意不放的东西（重复或只在排查时才有用）：模型名（输入区那份）、
- * 会话 id（树里已高亮）、凭据（只在缺失时提示）。
- *
- * 顶部一段是窗口**拖拽区**：系统标题栏已隐藏，靠它拖动窗口。
+ * 默认是项目 / 会话树；一旦输入关键词就切成跨项目的平铺搜索结果，匹配会话标题与 id。
+ * 顶部一段是窗口拖拽区（系统标题栏已隐藏），滚动容器是 `.sidebar__scroll`。
  *
  * @module Memento/desktop/renderer/components/sidebar
  */
@@ -25,7 +17,7 @@ import { EntityChip, Monogram } from '../ui/beautifului/atoms/EntityChip.tsx'
 import { Shimmer } from '../ui/beautifului/atoms/Shimmer.tsx'
 import type { AgentState, AppInfo, ProjectSummary, SessionSummary } from '../use-agent.ts'
 
-/** 相对时间：列表里「多久以前」比绝对时间更有用。 */
+/** 相对时间：列表里显示「多久之前」比绝对时间更有用。 */
 function relativeTime(at: number, now: number): string {
   const seconds = Math.max(0, Math.round((now - at) / 1000))
   if (seconds < 60) return '刚刚'
@@ -42,10 +34,7 @@ function SessionRow(props: {
   /** 正在打开的这一条（点下去到新内核就绪之间）。 */
   readonly opening?: boolean
   /**
-   * 这个会话有回合在跑（**包括在后台跑的那个**）。
-   *
-   * 后台继续跑是本项目的既定行为，所以必须看得见 —— 否则用户会以为切走
-   * 就是把任务杀了（或者反过来，以为早就停了）。
+   * 这个会话有回合在跑，包括在后台跑的那个：切走不会中断任务，运行标记要看得见。
    */
   readonly running?: boolean
   readonly onOpen: () => void
@@ -106,28 +95,21 @@ export function Sidebar(props: SidebarProps): ReactElement {
   /** 当前项目默认展开，用户可以手动折起来。 */
   const [currentOpen, setCurrentOpen] = useState(true)
   /**
-   * 正在打开的会话 id：点下去 → 内核重启 → 历史回填，中间约 300ms。
+   * 正在打开的会话 id：点下去、内核重启、历史回填，中间约 300ms。
    * 拿它给那一行一点回应（见 `.session--opening`），否则点完像是没反应。
    */
   const [opening, setOpening] = useState<string | null>(null)
   /**
-   * 本「内核代次」里已经发起过读取的项目路径。
-   *
-   * 用途见下面那个 effect：重启后要把已展开项目的会话补回来，但读**失败**时
-   * `projectSessions[path]` 会一直是 undefined，没有这个记账就会无限重试。
-   * 内核一重启（phase 回到 booting）就清空 —— 新内核下值得再试一次。
+   * 本内核代次里已发起过读取的项目路径：读失败时 `projectSessions[path]` 一直是
+   * undefined，没有这份记账会无限重试。内核重启（phase 回到 booting）时清空。
    */
   const requestedProjects = useRef<readonly string[]>([])
   const ime = useImeGuard()
   const info = state.info
 
   /**
-   * 内核重启后，把**已展开项目**的会话补回来。
-   *
-   * `restarting` 会清空 `projectSessions`（那些数据属于上一个内核），但
-   * `expandedProjects` 是本组件的 state，不跟着清。于是换会话 / 换项目之后，
-   * 之前展开的项目会变成**空列表**，用户必须手动折叠再展开才看得到会话 ——
-   * 看起来就像「切过去读不到东西」。
+   * 内核重启后把已展开项目的会话补回来：`projectSessions` 会被清空，而
+   * `expandedProjects` 是本组件的 state，不跟着清，之前展开的项目会变成空列表。
    */
   useEffect(() => {
     if (state.phase === 'booting') {
@@ -144,11 +126,8 @@ export function Sidebar(props: SidebarProps): ReactElement {
   }, [state.phase, state.projectSessions, state.loadingProject, expandedProjects, onLoadProjectSessions])
 
   /**
-   * 打开完成（`current` 落到目标会话上）就把标记收掉。
-   *
-   * 用 `current` 而不是「`switching` 变 false」：后者在点击后的那次渲染里还是 false，
-   * 会把标记立刻清掉（点了没有任何反馈）。`current` 由 `workspace` 帧给出，
-   * 是「内核真的切过去了」的权威信号；再挂一个 3s 超时兜底，避免卡在标记上。
+   * 打开完成（`current` 落到目标会话上）就收掉标记，判断用 `current` 而不是
+   * `switching` 变 false —— 后者在点击后那次渲染里还是 false，标记会被立刻清掉。
    */
   useEffect(() => {
     if (opening === null) return undefined
@@ -199,19 +178,16 @@ export function Sidebar(props: SidebarProps): ReactElement {
 
   return (
     <aside className="sidebar">
-      {/* 背景粒子层（方块切开、旋转散开、渐隐）。它是 canvas、`pointer-events: none`，
-          绝对定位在侧栏里不随内容滚动 —— 所以侧栏的滚动容器是下面那个
-          `.sidebar__scroll`，而不是 `<aside>` 自己（见 app.css 里的注释）。 */}
+      {/* 背景粒子层：canvas、`pointer-events: none`，绝对定位不随内容滚动 —— 所以
+          侧栏的滚动容器是下面那个 `.sidebar__scroll`，而不是 `<aside>` 自己。 */}
       <SidebarBackdrop />
 
       {/* 滚动容器：内容比侧栏高时滚的是这一层，粒子层留在原地。 */}
       <div className="sidebar__scroll">
-        {/* 拖拽区：系统标题栏隐藏后，用户靠这里拖动窗口。
-            macOS 上红绿灯浮在这里，所以留出高度。 */}
+        {/* 拖拽区：系统标题栏隐藏后靠这里拖动窗口；macOS 上红绿灯浮在这里，留出高度。 */}
         <div className="sidebar__brand drag-region">
-          {/* 品牌：图标 + 名字。图标做成 16px 小方片（与项目行的 Monogram 等宽、
-              和 macOS 侧栏头部同档），不是裸图 —— 深色玻璃底上给一圈发丝描边
-              才像是「嵌在界面里」。 */}
+          {/* 品牌：图标做成 16px 小方片，与项目行的 `Monogram` 等宽；深色玻璃底上
+              靠一圈发丝描边才不像一张裸图。 */}
           <img className="sidebar__logo no-drag" src={logoUrl} alt="" width={16} height={16} />
           <span className="sidebar__title">Memento</span>
           <button
@@ -282,7 +258,7 @@ export function Sidebar(props: SidebarProps): ReactElement {
                         onClick={() => { toggleProject(project) }}
                       >
                         <span className="project-node__caret" aria-hidden>{open ? '▾' : '▸'}</span>
-                        {/* 首字母圆牌：Beautiful UI 的 workspace 行就是「圆牌 + 名字 + 计数」 */}
+                        {/* 首字母圆牌 */}
                         <Monogram className="project-node__mono">{project.name.charAt(0).toUpperCase()}</Monogram>
                         <span className="project-node__text">
                           <span className="project__name">{project.name}</span>

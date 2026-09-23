@@ -1,26 +1,10 @@
 /**
- * 设置面板：看 / 改「技能、命令、MCP」这三样东西。
+ * 设置面板：看 / 改「技能、命令、MCP」，技能分「全局 / 命令专用」两档。
  *
- * ## 为什么做成「列表 + 编辑器」
- *
- * 这三样都是**磁盘上的文本文件**，而且改动方式就是改文本：
- *
- * | 标签 | 文件 | 能改什么 |
- * | --- | --- | --- |
- * | 技能 | `.agents/skills/<名字>/SKILL.md` | 正文与 frontmatter（含调用政策） |
- * | 命令 | `.agents/commands/<名字>.md` | 指令正文、`include` 内联哪些文件 |
- * | MCP | `<cwd>/.Memento/mcp.json` | 开关、启动参数（改完要重启内核） |
- *
- * 所以这里不做「表单化的字段编辑」，而是老老实实给一个文本框 —— 反正这些东西
- * 本来就该写 Markdown / JSON，表单反而会挡住 frontmatter 和注释。
- *
- * ## 两个刻意的设计
- *
- * 1. **技能分「全局 / 命令专用」**：这是内核 `SkillInvocationPolicy` 的可视化。
- *    全局 = 进模型目录（长期占上下文）；命令专用 = 只由 `/命令` 触发。
- *    界面上直接标出来，改政策就是改 frontmatter 里的那两行。
- * 2. **解析失败要显形**：`SKILL.md` 的 frontmatter 写坏时内核只 warn 一句就忽略，
- *    表现是「文件明明在、技能却不生效」。列表里那条 ⚠ 就是拦这个的。
+ * 技能 `.agents/skills/<名字>/SKILL.md`、命令 `.agents/commands/<名字>.md`、MCP
+ * `<cwd>/.Memento/mcp.json` 都是磁盘文本文件，所以用文本框而不是表单化字段编辑（表单会
+ * 挡住 frontmatter）；技能的档位对应内核 `SkillInvocationPolicy`，frontmatter 写坏时
+ * 内核只 warn 一句，列表里那条警告标记就是拦这个的。
  *
  * @module Memento/desktop/renderer/src/components/settings-panel
  */
@@ -86,7 +70,7 @@ function Row(props: {
   )
 }
 
-/** 编辑器：读文件 → 文本框 → 保存。 */
+/** 编辑器：读文件、改文本、保存。 */
 function Editor(props: {
   readonly path: string
   readonly onReadFile: (path: string) => Promise<FileResult>
@@ -96,7 +80,7 @@ function Editor(props: {
   const [status, setStatus] = useState<string>('')
   const [busy, setBusy] = useState(false)
 
-  // 换文件就重新读；`path` 是唯一依赖。
+  // 换文件就重新读。
   useEffect(() => {
     let alive = true
     setContent(null)
@@ -147,10 +131,8 @@ function Editor(props: {
 export function SettingsPanel(props: SettingsPanelProps): ReactElement {
   const [tab, setTab] = useState<Tab>('skills')
   /**
-   * 当前选中的文件路径。
-   *
-   * 用「路径」而不是「选中项对象」：写完文件后列表会重新拉，对象会换新引用，
-   * 用对象会让编辑器重挂、把光标位置丢掉。路径是稳定的。
+   * 当前选中的文件路径：写完文件后列表会重新拉，选中项对象会换新引用，
+   * 用对象会让编辑器重挂、丢掉光标位置。
    */
   const [picked, setPicked] = useState<string>('')
   /** 开关 MCP 之类操作的结果提示。 */
@@ -160,12 +142,9 @@ export function SettingsPanel(props: SettingsPanelProps): ReactElement {
   const skills = data?.skills ?? []
 
   /**
-   * 开关一个 MCP 服务器。
-   *
-   * 做法是「**改 mcp.json 里那一条的 enabled**」，而不是用界面上的字段重写整个文件：
-   * 界面上拿到的是**合并后**的启动参数（含从内置定义继承来的），原样写回会把
-   * `format.docx` 之类的继承值固化进配置、还会丢掉我们不认识的字段。
-   * 只动 enabled，文件就一直是「用户自己写的那几行」。
+   * 开关一个 MCP 服务器：只改 `mcp.json` 里那一条的 `enabled`，不用界面上的字段
+   * 重写整个文件 —— 界面上拿到的是合并后的启动参数（含从内置定义继承来的），
+   * 原样写回会把 `format.docx` 之类的继承值固化进配置，也会丢掉不认识的字段。
    */
   const toggleMcp = async (server: McpEntry): Promise<void> => {
     if (data === null) return

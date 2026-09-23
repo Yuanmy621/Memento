@@ -1,14 +1,8 @@
 /**
- * Memento 自己的工具插件 —— 演示 `defineTool` 的完整写法。
+ * Memento 自己的工具插件：补充内核里没有的 `tree` 与 `fetch_url`。
  *
- * 官方工具（`read`/`write`/`edit`/`bash`/`glob`/`grep`）由 `@deepseek-ai/dsh-tool-*`
- * 提供；这里补两个官方内核里没有、但对 coding agent 很实用的工具：
- *
- *   - `tree`      ：一次看清项目结构（对比逐层 `glob`，省 token）。参数可省、有默认值。
- *   - `fetch_url` ：抓取一个 URL 的文本，用来读在线文档 / 错误页。
- *
- * 插件形状遵循 DSH 约定：模块级 `name` + `inject` + `apply(ctx, config)`，
- * 因此可以直接 `await ctx.plugin(customTools)` 挂载。
+ * 插件形状为模块级 `name` + `inject` + `apply(ctx, config)`，可以直接
+ * `await ctx.plugin(customTools)` 挂载；官方工具由 `@deepseek-ai/dsh-tool-*` 提供。
  *
  * @module Memento/tools
  */
@@ -20,7 +14,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 
-/** 插件名（DSH 约定）。 */
+/** 插件名。 */
 export const name = 'Memento-tools'
 /** 依赖 `ctx.tools` 注册表。 */
 export const inject = ['tools']
@@ -31,7 +25,7 @@ export interface Config {
   readonly cwd: string
 }
 
-/** 配置 schema：`cwd` 必填，缺失时在挂载阶段就报错。 */
+/** 配置 schema：`cwd` 没有默认值，缺失时在挂载阶段报错。 */
 export const Config: z<Config> = z.object({
   cwd: z.string().required(),
 })
@@ -62,9 +56,6 @@ interface TreeLine {
 
 /**
  * 递归收集目录条目，深度优先、目录在前、名字升序。
- * @param root - 起始绝对路径。
- * @param options - 深度、忽略名单、条目上限与取消信号。
- * @returns 收集到的条目与是否被上限截断。
  */
 async function collectTree(
   root: string,
@@ -125,8 +116,6 @@ function renderTree(root: string, lines: readonly TreeLine[], truncated: boolean
 
 /**
  * 挂载 Memento 自定义工具。
- * @param ctx - 已就绪的上下文（`ctx.tools` 可用）。
- * @param config - 解析后的插件配置（`cwd` 为工作目录基准）。
  */
 export function apply(ctx: Context, config: Config): void {
   ctx.tools.register(defineTool({
@@ -158,7 +147,7 @@ export function apply(ctx: Context, config: Config): void {
         text: `<path>${value.root}</path>\n<type>tree</type>\n<content>\n${value.text}\n</content>`,
       }],
     },
-    // 只读目录，天然可以与其他只读调用并行。
+    // 只读目录，可以与其他只读调用并行。
     isConcurrencySafe: () => true,
     async execute(args, exec) {
       const base = resolve(config.cwd)

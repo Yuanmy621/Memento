@@ -52,9 +52,9 @@ user-invocable: true             # 仍然允许人工入口（默认就是 true�
 
 | 技能 | 来源 | 调用方式 | 说明 |
 | --- | --- | --- | --- |
-| `Memento-desktop-ui` | 自研 | **命令专用**（`/Memento-desktop-ui`） | 改桌面端界面的固定套路 |
-| `Memento-mcp` | 自研 | **命令专用**（`/Memento-mcp`） | 往 Memento 上接 MCP 服务器的固定套路 |
-| `Memento-package` | 自研 | **命令专用**（`/Memento-package`） | 桌面端打包、排障与产物验证 |
+| `memento-desktop-ui` | 自研 | **命令专用**（`/memento-desktop-ui`） | 改桌面端界面的固定套路 |
+| `memento-mcp` | 自研 | **命令专用**（`/memento-mcp`） | 往 Memento 上接 MCP 服务器的固定套路 |
+| `memento-package` | 自研 | **命令专用**（`/memento-package`） | 桌面端打包、排障与产物验证 |
 | `report` | **vendored**（[v-yun/vuln-report-skill](https://github.com/v-yun/vuln-report-skill)，MIT） | **命令专用**（`/report`） | 已确认漏洞 → 可提交的 DOCX 报告：分层验证门 + 固定版式 + Step 式 PoC + 截图铁律 |
 | `butian-src-hunter` | **vendored**（[MyuriKanao/src-hunter-skill](https://github.com/MyuriKanao/src-hunter-skill)，MIT） | **命令专用**（`/butian-src-hunter`） | SRC / 众测漏洞挖掘工作流：5 阶段 + 19 个 playbook + 指纹库 |
 | `ip-as-logo` | 自研 | **命令专用**（`/ip-as-logo`） | IP 形象 logo 生成方法论 |

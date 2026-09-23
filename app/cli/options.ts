@@ -1,5 +1,7 @@
 /**
- * 命令行参数解析（零依赖）。
+ * 命令行参数解析（零依赖）：把 `process.argv.slice(2)` 变成一份完整的 `Options`。
+ *
+ * 桌面端等非 CLI 调用方走 `resolveOptions()`，两边的默认值只在一处定义。
  *
  * @module Memento/options
  */
@@ -45,14 +47,8 @@ export interface Options {
 export class UsageError extends Error {}
 
 /**
- * Memento **对用户暴露**的模型清单（单一事实来源）。
- *
- * 内核适配器申报的目录比这更长（还包含 `deepseek-flash` 这个 V4.1 旧版，
- * 以及 `deepseek-v4-flash-vision-exp` 实验视觉模型）。这里只保留两款主力，
- * CLI 的默认值与桌面端下拉框都从这里取 —— 两边因此不会漂移。
- *
- * `name` 只作**兜底显示名**：读得到适配器目录时优先用适配器给的名称与描述，
- * 读不到（离线、适配器不申报）时用它，至少不是一个裸 id。
+ * Memento 对用户暴露的模型清单（单一事实来源）：CLI 默认值与桌面端下拉框都取自这里。
+ * `name` 只作兜底显示名，读得到适配器目录时优先用适配器给的名称与描述。
  */
 export const SUPPORTED_MODELS = [
   { id: 'deepseek-v4-flash', name: 'DeepSeek-V4-Flash' },
@@ -66,12 +62,8 @@ export const DEFAULT_MODEL: string = SUPPORTED_MODELS[0].id
 export interface OptionsInput extends Partial<Options> {}
 
 /**
- * 用 CLI 的同一套默认值把「部分配置」补全成完整的 {@link Options}。
- *
- * CLI 走 `parseOptions()`（argv → 本函数）；桌面端直接传 `{ cwd, model }` 等字段。
- * 两边的默认值因此只在一处定义，不会漂移。
- * @param input - 调用方显式给出的字段；其余取默认值。
- * @returns 归一化后的完整配置（`cwd` / `stateDir` 已解析成绝对路径）。
+ * 用 CLI 的同一套默认值把「部分配置」补全成完整的 `Options`；`cwd` 与 `stateDir`
+ * 会解析成绝对路径。
  */
 export function resolveOptions(input: OptionsInput = {}): Options {
   const root = resolve(input.cwd ?? process.cwd())
@@ -133,12 +125,7 @@ function takeValue(argv: readonly string[], index: number, flag: string): string
   return value
 }
 
-/**
- * 解析 `process.argv.slice(2)`。
- * @param argv - 去掉 `node script` 之后的参数数组。
- * @returns 解析后的配置。
- * @throws UsageError 参数非法时。
- */
+/** 解析 `process.argv.slice(2)`；参数非法时抛 `UsageError`。 */
 export function parseOptions(argv: readonly string[]): Options {
   let cwd: string | undefined
   let stateDir: string | undefined

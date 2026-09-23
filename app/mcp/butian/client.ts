@@ -1,48 +1,10 @@
 /**
- * 补天（butian.net）**私有接口**客户端。
+ * 补天（butian.net）私有接口客户端：站点根 `https://www.butian.net`，POST 走表单编码而非 JSON。
+ * 接口路径与参数取自补天前端 bundle，属私有接口，没有公开文档。
  *
- * ## 这些接口是从哪来的
- *
- * 补天没有公开 API 文档，也没有官方 MCP。这里的路径与参数全部来自它自己前端
- * bundle 里的真实定义（`/Public/static/js/main.js` 等），并且**逐条实测过**：
- *
- * ```js
- * // bundle 里的原始形态（axios 封装）
- * const i = axios.create({ baseURL: '/', headers: { 'Content-Type': 'application/x-www-form-urlencoded' } })
- * // 请求拦截器：POST/DELETE 一律 merge({ ajax: 1 }, data)
- * // 响应拦截器：1 !== s.status && 1 !== s.success 视为失败
- * const fetchSpaceData = e => api({ url: '/WhiteHat/Center/spaceData', method: 'post', data: e })
- * ```
- *
- * 由此得到三条**必须遵守**的约定，缺一个就会拿到 302 或空响应：
- *
- * | 约定 | 说明 |
- * | --- | --- |
- * | `POST` 必须带 `ajax=1` | 前端拦截器自动加的；少了它会当成普通页面请求 |
- * | `Content-Type: x-www-form-urlencoded` | 不是 JSON。用 URLSearchParams 编码 |
- * | 成功判定 `status === 1 \|\| success === 1` | 业务失败也返回 HTTP 200，必须看 envelope |
- * | **需登录的接口还要带 `token`** | 只带 Cookie 会拿到 `{status:0, info:"no token"}` |
- *
- * ## token 从哪来（实测确认）
- *
- * 只带 Cookie 打 `/WhiteHat/Center/spaceData` 会返回 `{"status":0,"info":"no token"}`。
- * 这个 `token` 既不是 Cookie、也不在 localStorage —— 它是服务端**内联渲染进
- * `/WhiteHat/Center` 页面 HTML** 里的一个 Vue data 字段：
- *
- * ```html
- * <script>
- *   var vm = new Vue({ el: "#whitehatIndex", data: function () {
- *     return { token: "4bcbb932cb35441b2a8f2c4d6201d7fe1de600ee", ... }
- *   }});
- * </script>
- * ```
- *
- * 所以 {@link authToken} 的做法是：带 Cookie 拉一次个人中心页，正则抠出这个 40 位
- * hex，并按 Cookie 缓存（{@link tokenCache}）。需登录的接口（个人中心 / 任务 /
- * 关注列表 / 签到天数）都必须把它塞进参数里。
- *
- * `token` 会随会话轮换：真过期时接口仍回 `no token`，此时 {@link callApi} 会清掉
- * 缓存并归类成 `auth` 错误，下一次调用就会自动重新抓一个。
+ * POST 一律带 `ajax=1`（前端拦截器自动加，缺了会被当成普通页面请求）；成功判定是 envelope 里
+ * `status === 1 || success === 1`，业务失败同样返回 HTTP 200。需登录的接口还要带表单字段 `token`，
+ * 它不在 Cookie 里，而是内联渲染在 `/WhiteHat/Center` 页面中（40 位 hex，见 {@link authToken}）。
  *
  * @module Memento/mcp/butian/client
  */
@@ -50,10 +12,10 @@
 /** 站点根。所有接口路径都相对它。 */
 const BASE = 'https://www.butian.net'
 
-/** 单次请求超时（毫秒）。补天偶发慢响应，给宽一点但别挂死。 */
+/** 单次请求超时（毫秒）；补天偶发慢响应，取值偏宽。 */
 const TIMEOUT_MS = 20_000
 
-/** 统一 UA。补天对空 UA / 明显脚本 UA 偶发拦截，带一个正常的。 */
+/** 固定 UA；补天对空 UA 偶发拦截。 */
 const USER_AGENT = 'Memento-Agent/0.1 (+https://github.com/) butian-mcp'
 
 /** 失败的种类，决定给模型/用户的提示怎么写。 */
@@ -109,18 +71,15 @@ function messageOf(envelope: Envelope): string {
 }
 
 /**
- * 判断一条业务错误是不是「没登录 / 登录过期」。
- *
- * 补天对未登录的 POST 有时返回 302（fetch 会跟到登录页得到一个 HTML），
- * 有时返回 `{status:0, info:'请先登录'}` —— 两种都要认出来，
- * 否则用户看到的会是「解析失败」这种没用的提示。
+ * 判断业务错误是不是「没登录 / 登录过期」：补天对未登录的 POST 有时 302 到登录页（拿到 HTML），
+ * 有时回 `{status:0, info:'请先登录'}`，两种都要认出来，否则只会暴露成「解析失败」。
  */
 function looksLikeAuthError(text: string): boolean {
   // `no token` 也要算：它是「token 过期/没带上」的形态，属于登录态问题而不是业务失败。
   return /登录|登陆|login|未授权|无权限|请先|no token/i.test(text)
 }
 
-/** 组装请求头。Referer 是必要的：部分接口校验来源页。 */
+/** 组装请求头；部分接口校验 `Referer`，缺失会失败。 */
 function headersFor(path: string, cookie: string | undefined, referer: string): Record<string, string> {
   const headers: Record<string, string> = {
     // 补天的前端带这个头；带上它才是「ajax 请求」的身份
@@ -130,20 +89,16 @@ function headersFor(path: string, cookie: string | undefined, referer: string): 
     Accept: 'application/json, text/javascript, */*; q=0.01',
   }
   if (cookie !== undefined && cookie !== '') headers['Cookie'] = cookie
-  // 让 path 参与签名计算没意义，但保留参数方便以后按路径加特例头。
+// `path` 不参与签名计算，形参留作按路径加特例头用
   void path
   return headers
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// token：需登录的接口都要带，来源是个人中心页面的内联 Vue data
-// ─────────────────────────────────────────────────────────────────────────────
+// token：需登录的接口都要带，取自个人中心页内联的 Vue data
 
 /**
- * 从个人中心页 HTML 里抠 token 的正则。
- *
- * 页面里长这样：`token: "4bcb…"`（Vue 的 data 字段）。只认「冒号 + 引号包着的长
- * hex」，这样 bundle 里的 `token: t.token,` 这类变量引用不会被误匹配。
+ * 从个人中心页 HTML 抠 token 的正则：页面里是 `token: "4bcb…"` 这种 Vue data 字段，
+ * 只认冒号加引号包着的长 hex，以免匹配到 bundle 里的 `token: t.token,`。
  */
 const TOKEN_RE = /\btoken\s*:\s*"([0-9a-fA-F]{16,})"/
 
@@ -151,10 +106,8 @@ const TOKEN_RE = /\btoken\s*:\s*"([0-9a-fA-F]{16,})"/
 const CENTER_MARKER = 'whitehatIndex'
 
 /**
- * token 缓存。
- *
- * token 与登录态一一对应，所以键直接用 Cookie 串：用户中途换 Cookie（重新登录）时，
- * 旧 token 不会串到新会话上。
+ * token 缓存：token 与登录态一一对应，键直接用 Cookie 串，
+ * 中途换 Cookie（重新登录）时旧 token 不会串到新会话上。
  */
 let tokenCache: { cookie: string; token: string } | undefined
 
@@ -164,15 +117,9 @@ function clearTokenCache(): void {
 }
 
 /**
- * 取当前登录态对应的 `token`。
+ * 取当前登录态对应的 `token`：带 Cookie 拉一次 `/WhiteHat/Center`，从 HTML 里抠出内联值并按 Cookie 缓存。
  *
- * 只带 Cookie 调需登录的接口，补天会回 `{status:0, info:"no token"}` —— 因为前端是
- * 把 token 渲染进个人中心页再由 JS 带上的。这里照做：带 Cookie 拉一次
- * `/WhiteHat/Center`，从 HTML 里抠出内联的 token，然后按 Cookie 缓存。
- *
- * @param cookie - 登录 Cookie（调用方需确保非空）。
- * @returns 40 位 hex 的 token。
- * @throws {ButianError} Cookie 失效（`auth`）/ 前端改版抠不到（`api`）/ 网络失败（`http`）。
+ * 抠不到时按页面区分原因：不是个人中心页即登录态失效（`auth`），是个人中心页则是前端改版（`api`）。
  */
 export async function authToken(cookie: string): Promise<string> {
   const cached = tokenCache
@@ -214,15 +161,8 @@ export async function authToken(cookie: string): Promise<string> {
 }
 
 /**
- * 发一次请求并解包 envelope。
- *
- * @param path - 接口路径（以 `/` 开头）。
- * @param method - `GET` 用 query，`POST` 用表单体（自动补 `ajax=1`）。
- * @param params - 参数；`undefined` 的键会被丢掉。
- * @param options - Cookie 等。
- * @param referer - 伪造的来源页；部分接口校验它。
- * @returns `envelope.data`（业务数据）。
- * @throws {ButianError} 网络 / HTTP / 业务 / 凭据问题，都带 `kind`。
+ * 发一次请求并解包 envelope，返回其中的 `data`：`GET` 用 query，`POST` 用表单体并自动补 `ajax=1`，
+ * `params` 里值为 `undefined` 的键会被丢掉；`referer` 是伪造的来源页，部分接口校验它。
  */
 async function callApi(
   path: string,
@@ -304,7 +244,7 @@ export function apiPost(
   return callApi(path, 'POST', params, options, referer)
 }
 
-/** 站点根地址（给工具的输出里附「原文链接」用）。 */
+/** 站点根地址。 */
 export function site(): string {
   return BASE
 }

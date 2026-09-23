@@ -1,17 +1,10 @@
 /**
  * 会话条目的渲染：用户气泡、系统提示、助手消息（推理 + 正文 + 工具/文件卡片 + 结论）。
  *
- * 助手消息的 blocks 是**有序**的，这里就按顺序渲染，
- * 于是「先说话 → 调工具 → 再说话」的结构被如实还原。
- *
- * 工具块分两种渲染：
- *   - 碰到文件的工具（read/write/edit）→ 文件卡片（图标 + 文件名 + 预览 + 打开）；
- *   - 其余 → 普通工具行。
- * 认不认得出来由 `fileActionOf()` 决定，认不出就退回普通行，不会硬编卡片。
- *
- * 每个条目的根元素上都有 `data-item-id`：右侧刻度滑杆（`message-rail.tsx`）靠它
- * 把「刻度」和真实 DOM 对上，点击才能滚到那一条。加在根元素上而不是包一层 div ——
- * `.messages__inner` 是 flex 列，多包一层会把 `align-self` 那套对齐弄乱。
+ * 助手消息的 blocks 有序，这里按顺序渲染，「先说话 → 调工具 → 再说话」的结构被如实还原，
+ * 连续的工具块合成一次 `ToolRun`。每个条目的根元素带 `data-item-id`，右侧刻度滑杆
+ * （`message-rail.tsx`）靠它把刻度与真实 DOM 对上；因为 `.messages__inner` 是 flex 列，
+ * 这个属性只能加在根元素上，多包一层会弄乱 `align-self` 对齐。
  *
  * @module Memento/desktop/renderer/components/message
  */
@@ -44,13 +37,8 @@ function metaText(meta: TurnMeta | null): string {
 }
 
 /**
- * 助手消息的渲染顺序：**严格按 blocks 的顺序**（推理 → 正文 → 工具 → 再推理…）。
- *
- * 两个刻意的设计：
- *   1. 工具块**连续出现时合成一次 run**（`ToolRun`）—— 上游的 ToolChips 就是「一次 run 的
- *      工具清单」，一个个单独渲染会把它的折叠页眉重复 N 遍；
- *   2. 推理**不再统一拎到消息最上方**（老实现如此）：它是 blocks 里的一种块，按真实位置
- *      渲染，于是「想一段 → 做一步 → 再想一段」的结构被如实还原，而不是顶部堆一大坨。
+ * 助手消息的渲染顺序严格按 blocks 走（推理 → 正文 → 工具 → 再推理…）。
+ * 工具块连续出现时合成一次 `ToolRun`；推理按真实位置渲染，不统一上提到消息顶部。
  */
 const AssistantMessage = memo(function AssistantMessage({ item, onPreview }: {
   readonly item: AssistantItem
@@ -82,8 +70,7 @@ const AssistantMessage = memo(function AssistantMessage({ item, onPreview }: {
       {segments.map((segment, index) => {
         if (segment.kind === 'reasoning') {
           /**
-           * 只有**最后一段**且回合还在跑时才算「正在思考」—— 否则一个回合里
-           * 历史上每一段思考都会显示成正在流式。
+           * 只有最后一段且回合还在跑时才算「正在思考」，否则前面每一段思考都会显示成流式。
            */
           const live = streaming && index === segments.length - 1
           return <Reasoning key={`reasoning-${String(index)}`} text={segment.text} live={live} />
@@ -104,7 +91,7 @@ const AssistantMessage = memo(function AssistantMessage({ item, onPreview }: {
       <div
         className={`msg__meta${item.meta?.outcome === 'error' ? ' msg__meta--error' : ''}`}
       >
-        {/* 还没跑完：用他们的 Shimmer 做「活的」文字，比一串静止的「正在生成…」更像在动 */}
+        {/* 还没跑完：`Shimmer` 做「活的」文字，比一串静止的「正在生成…」更像在动 */}
         {item.meta === null ? <Shimmer>正在生成…</Shimmer> : metaText(item.meta)}
         {streaming && item.blocks.length === 0 && ' …'}
       </div>
@@ -131,10 +118,8 @@ export const MessageItem = memo(function MessageItem({ item, onPreview }: Messag
     )
   }
   /**
-   * 中途的目标调整。
-   *
-   * 长得像用户消息但**更矮、更淡、靠右**，并带一个「目标调整」标：它是往正在跑的
-   * 那一轮里插的话，不是新一轮提问 —— 事后回看时这个区别很重要。
+   * 中途的目标调整：长得像用户消息但更矮、更淡、靠右，并带一个「目标调整」标。
+   * 它是往正在跑的那一轮里插的话，不是新一轮提问。
    */
   if (item.kind === 'steer') {
     return (

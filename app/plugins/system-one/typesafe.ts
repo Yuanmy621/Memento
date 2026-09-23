@@ -1,35 +1,9 @@
 /**
- * TypeSafe 后端：直接打官方的 System One 接口（`POST /v1/systemone`）。
+ * TypeSafe 后端：直接打官方的 System One 接口（`POST /v1/systemone`），字段名按
+ * https://docs.typesafe.ai/api 原样使用。
  *
- * 契约来自官方文档（https://docs.typesafe.ai/api 与三个 primitive 页），字段名一个不改：
- *
- * ```jsonc
- * // 请求
- * {
- *   "state": "…文本…" | { …对象… } | [ …数组… ],
- *   "model": "jev-latest",
- *   "questions": {
- *     "department": { "type": "choice", "instructions": "…", "criteria": { "returns": "…", "billing": "…" } },
- *     "severity":   { "type": "score",  "instructions": "…", "criteria": ["低", "中", "高"] },
- *     "is_refund":  { "type": "noul",   "instructions": "…" }
- *   }
- * }
- * // 响应
- * {
- *   "model": "jev-1.13.0",
- *   "answers": {
- *     "department": { "type":"choice", "choice":"returns", "confidence":0.42, "probabilities":{…} },
- *     "severity":   { "type":"score",  "score":1.43, "confidence":0.35, "legend":{"0":"低",…}, "probabilities":{"0":0.0,…} },
- *     "is_refund":  { "type":"noul",   "noul":0.95 }
- *   },
- *   "usage": { "input_tokens": 589, "output_tokens": 212 }
- * }
- * ```
- *
- * 三条与上游对齐的语义（写在这里免得以后改坏）：
- *   1. 一次请求里所有问题**并行独立**评估，互相看不到对方的答案；
- *   2. `confidence` 只描述这次回答的分布有多集中，**不是**「答案正确」的保证；
- *   3. 答案里的概率是**标定过**的（上游把 calibration 当训练目标）。
+ * 一次请求里的所有问题并行独立评估，互相看不到对方的答案；`confidence` 只描述这次
+ * 回答的分布有多集中，不是「答案正确」的保证；概率由后端标定过。
  *
  * @module Memento/plugins/system-one/typesafe
  */
@@ -63,15 +37,15 @@ export class TypeSafeError extends Error {
 /** 一次调用的结果。 */
 export interface TypeSafeResult {
   readonly answers: readonly Answer[]
-  /** 上游报的模型版本（如 `jev-1.13.0`）。 */
+  /** 后端报的模型版本（如 `jev-1.13.0`）。 */
   readonly model: string
-  /** token 计量（上游原样给）。 */
+  /** token 计量，后端原样给出。 */
   readonly usage: Readonly<Record<string, number>>
   /** 往返耗时（毫秒）。 */
   readonly elapsedMs: number
 }
 
-/** 把问题列表编成上游的 `questions` 映射。 */
+/** 把问题列表编成请求体里的 `questions` 映射。 */
 function toWireQuestions(questions: readonly Question[]): Record<string, unknown> {
   const out: Record<string, unknown> = {}
   for (const question of questions) {
@@ -89,8 +63,8 @@ function toWireQuestions(questions: readonly Question[]): Record<string, unknown
 }
 
 /**
- * state 的形态：能当 JSON 解析就用对象/数组（上游推荐「有多个部分时用命名的 JSON 字段」），
- * 否则原样当字符串。这样调用方不用关心上游接受什么类型。
+ * state 的形态：能当 JSON 解析就发对象/数组（后端推荐有多个部分时用命名的 JSON
+ * 字段），否则原样当字符串，调用方不必关心后端接受什么类型。
  */
 function toWireState(state: string): unknown {
   const trimmed = state.trim()
@@ -104,7 +78,7 @@ function toWireState(state: string): unknown {
   return state
 }
 
-/** 从上游答案里取一个数值字段，缺失就明确报错（不静默给 0）。 */
+/** 从答案里取一个数值字段，缺失就明确报错，不静默给 0。 */
 function numberField(source: Record<string, unknown>, key: string, where: string): number {
   const value = source[key]
   if (typeof value !== 'number' || !Number.isFinite(value)) {
@@ -113,7 +87,7 @@ function numberField(source: Record<string, unknown>, key: string, where: string
   return value
 }
 
-/** 把上游的 probabilities 规整成 `Record<string, number>`。 */
+/** 把 probabilities 规整成 `Record<string, number>`。 */
 function probabilitiesField(source: Record<string, unknown>, where: string): Record<string, number> {
   const raw = source['probabilities']
   if (typeof raw !== 'object' || raw === null) {
@@ -127,13 +101,7 @@ function probabilitiesField(source: Record<string, unknown>, where: string): Rec
 }
 
 /**
- * 调一次 TypeSafe。
- * @param questions - 已校验的问题列表。
- * @param state - 待评估内容（字符串；像 JSON 就转成对象发过去）。
- * @param config - key / 网关 / 模型。
- * @param signal - 取消信号。
- * @returns 结构化答案 + 计量。
- * @throws {TypeSafeError} 没 key、鉴权失败、限速、网络或上游结构异常。
+ * 调一次 TypeSafe，失败时抛带分类的 `TypeSafeError`。
  */
 export async function askTypeSafe(
   questions: readonly Question[],
@@ -224,7 +192,7 @@ export async function askTypeSafe(
       id: question.id,
       type: 'noul',
       noul: numberField(raw, 'noul', where),
-      // Noul 没有单独的 confidence（上游语义）：集中度就是两侧概率的较大者
+      // Noul 没有单独的 confidence：集中度取两侧概率的较大者
       probabilities: { yes: numberField(raw, 'noul', where), no: Number((1 - numberField(raw, 'noul', where)).toFixed(4)) },
       confidence: Math.max(numberField(raw, 'noul', where), 1 - numberField(raw, 'noul', where)),
     }

@@ -1,45 +1,10 @@
 #!/usr/bin/env node
 /**
- * 补天（butian.net）MCP server —— **只读**。
+ * 补天（butian.net）MCP server：把补天的私有接口包装成只读 MCP 工具，写操作不注册。
  *
- * 它把补天的私有接口包装成 MCP 工具，由 Memento 内核里的 `@deepseek-ai/dsh-mcp-client`
- * 挂载后，模型就能像调用原生工具一样调用它们（工具名形如
- * `mcp__butian__butian_project_hall`）。
- *
- * ## 运行方式
- *
- * 标准输入输出上的 JSON-RPC（stdio 传输），由 MCP 客户端拉起：
- *
- * ```bash
- * node --experimental-strip-types app/mcp/butian/server.ts
- * ```
- *
- * 也可以单独手工验证（自己发一行 `initialize` 进去）。Node ≥ 22.19 原生剥离类型，
- * 所以这个文件**不需要构建**，和仓库里其它 TS 一致。
- *
- * ## 凭据填在哪里
- *
- * 免登录工具（项目大厅 / 排行 / 平台数字）不需要任何配置。
- * 需要登录的工具（个人中心 / 任务 / 关注列表）按顺序从两处取 Cookie：
- *
- *   1. **文件 `~/.Memento/butian-cookie.txt`** ← 推荐，把浏览器里 butian.net 的
- *      Cookie 整串粘进去即可（`Cookie:` 前缀和多余换行都会被自动清掉）。
- *      想放别处就用环境变量 `BUTIAN_COOKIE_FILE` 指定路径。
- *   2. 环境变量 `BUTIAN_COOKIE`。
- *
- * 没配也能启动：那些工具会返回「需要凭据」的明确提示，而不是报错崩掉。
- * 填好后用 `butian_doctor` 工具一次性看清哪些接口通了。
- *
- * ⚠️ 光有 Cookie 还不够：补天需登录的接口还要一个表单字段 `token`，它**不在 Cookie 里**，
- * 而是内联渲染在 `/WhiteHat/Center` 页面 HTML 中。{@link authToken} 负责带 Cookie 拉
- * 一次这个页面并抠出来（按 Cookie 缓存），{@link loginCall} 负责把它补进参数。
- * 详见 `client.ts` 的模块注释。
- *
- * ## 只读承诺
- *
- * 这里**故意不注册**任何改变账号状态的接口（签到 `/WhiteHat/Sign/userCheckin`、
- * 领任务 `/WhiteHat/Mission/take`、提交漏洞 `/Loo/submit` 等都不在表里）。
- * 要加写操作请先想清楚：它们会真实改变你账号的数据。
+ * 走 stdio 上的 JSON-RPC，由内核的 `@deepseek-ai/dsh-mcp-client` 拉起，工具名形如 `mcp__butian__butian_project_hall`。
+ * 凭据依次取 `BUTIAN_COOKIE` 与 `~/.Memento/butian-cookie.txt`（`BUTIAN_COOKIE_FILE` 可改路径）；需登录的接口
+ * 还要求表单字段 `token`（不在 Cookie 里，内联渲染在 `/WhiteHat/Center` 页中，由 {@link authToken} 抠出并按 Cookie 缓存）。
  *
  * @module Memento/mcp/butian/server
  */
@@ -52,24 +17,17 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
 import { apiGet, apiPost, authToken, ButianError, site, type CallOptions } from './client.ts'
 
-/** 这个 server 的名字：工具名会变成 `mcp__butian__<工具>`。 */
+/** server 名；工具名会变成 `mcp__butian__<工具>`。 */
 const SERVER_NAME = 'butian'
 /** 版本号，`initialize` 时报给客户端。 */
 const VERSION = '0.1.0'
 
-/**
- * 自己填 Cookie 时的默认位置。
- *
- * 想放到别处（比如密码管理器挂载的目录）就用环境变量 `BUTIAN_COOKIE_FILE` 覆盖它。
- */
+/** 默认 Cookie 文件位置；`BUTIAN_COOKIE_FILE` 可覆盖。 */
 const COOKIE_FILE = process.env['BUTIAN_COOKIE_FILE'] ?? join(homedir(), '.Memento', 'butian-cookie.txt')
 
 /**
- * 读登录 Cookie。
- *
- * 环境变量优先（内核会显式传），其次看文件。文件按「整行即 Cookie」处理 ——
- * 用户从浏览器 DevTools 复制的那串直接粘进去就行，首尾空白与 `Cookie:` 前缀都容忍。
- * @returns Cookie 串；两处都没有时返回 `undefined`。
+ * 读登录 Cookie：环境变量优先（内核会显式传），其次读文件；文件按「整行即 Cookie」处理，
+ * 首尾空白与 `Cookie:` 前缀都容忍，两处都没有时返回 `undefined`。
  */
 async function readCookie(): Promise<string | undefined> {
   const fromEnv = process.env['BUTIAN_COOKIE']
@@ -99,11 +57,7 @@ async function options(): Promise<CallOptions> {
   return { cookie: await readCookie() }
 }
 
-/**
- * 取登录 Cookie；没有就抛可操作的 `no-credential`。
- *
- * 集中在这里是为了让类型收窄一次，调用方拿到的就是 `string`。
- */
+/** 取登录 Cookie，缺失时抛 `no-credential`；集中在这里让类型收窄一次，调用方拿到的是 `string`。 */
 function requireCookie(opts: CallOptions, tool: string): string {
   if (opts.cookie === undefined) {
     throw new ButianError('no-credential', `${tool} 需要登录后才能调用`)
@@ -112,16 +66,8 @@ function requireCookie(opts: CallOptions, tool: string): string {
 }
 
 /**
- * 调**需登录**的接口：自动补上补天要求的 `token`。
- *
- * 光有 Cookie 不够 —— 补天会回 `{status:0, info:"no token"}`。token 得从个人中心页
- * 的 HTML 里刮（见 `client.ts` 的 {@link authToken}，按 Cookie 缓存）。
- *
- * @param path - 接口路径。
- * @param method - `GET` / `POST`。
- * @param params - 业务参数；`token` 由这里补，别自己传。
- * @param cookie - 登录 Cookie（用 {@link requireCookie} 取）。
- * @param referer - 伪造的来源页。
+ * 调需登录的接口：把 {@link authToken} 取到的 `token` 补进业务参数，
+ * 并按 `referer` 伪造来源页；缺这个字段时补天会回 `{status:0, info:"no token"}`。
  */
 async function loginCall(
   path: string,
@@ -146,12 +92,7 @@ function reply(text: string): { content: { type: 'text'; text: string }[] } {
   return { content: [{ type: 'text', text }] }
 }
 
-/**
- * 统一的错误 → 文本转换。
- *
- * MCP 工具抛异常会让模型看到一段栈；这里改成**可操作**的说明：
- * 缺凭据就说去哪填，登录过期就说重新复制 Cookie。
- */
+/** 把异常转成可操作文本而不是栈：缺凭据说去哪填，登录过期说重新复制 Cookie。 */
 function describe(error: unknown): string {
   if (error instanceof ButianError) {
     if (error.kind === 'no-credential') {
@@ -170,7 +111,7 @@ function describe(error: unknown): string {
   return `补天工具内部错误：${error instanceof Error ? error.message : String(error)}`
 }
 
-/** 包一层：把错误变成可读文本，而不是让 MCP 层抛栈。 */
+/** 捕获异常并转成文本回复，避免 MCP 层抛栈。 */
 async function guard(run: () => Promise<string>): Promise<{ content: { type: 'text'; text: string }[] }> {
   try {
     return reply(await run())
@@ -179,18 +120,16 @@ async function guard(run: () => Promise<string>): Promise<{ content: { type: 'te
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// 工具
-// ─────────────────────────────────────────────────────────────────────────────
+// 只注册读工具：签到（`/WhiteHat/Sign/userCheckin`）、领任务（`/WhiteHat/Mission/take`）、
+// 提交漏洞（`/Loo/submit`）这类写操作都不在表里。
 
 const server = new McpServer({ name: SERVER_NAME, version: VERSION })
 
-// ── 免登录：项目大厅 ────────────────────────────────────────────────────────
+// 免登录：项目大厅
 
 /**
- * 项目大厅的两种榜单。
- * 注意 `/Reward/corps` 的 `count` 字段补天自己返回 0（列表却有数据），
- * 所以这里以 `list.length` 为准，并把「本页条数」和「总数」分开报。
+ * 项目大厅的两种榜单：`/Reward/corps` 的 `count` 字段恒为 0（列表却有数据），
+ * 因此以 `list.length` 为准，本页条数与总数分开报。
  */
 server.registerTool('butian_project_hall', {
   title: '补天项目大厅',
@@ -235,7 +174,7 @@ server.registerTool('butian_project_hall', {
   ].join('\n')
 }))
 
-// ── 免登录：排行 ────────────────────────────────────────────────────────────
+// 免登录：排行
 
 server.registerTool('butian_rank', {
   title: '补天白帽排行',
@@ -277,7 +216,7 @@ server.registerTool('butian_rank', {
   return out.join('\n')
 }))
 
-// ── 免登录：平台总览 ────────────────────────────────────────────────────────
+// 免登录：平台总览
 
 server.registerTool('butian_platform_stats', {
   title: '补天平台数字',
@@ -300,7 +239,7 @@ server.registerTool('butian_platform_stats', {
     .join('\n')
 }))
 
-// ── 需要登录：个人空间 ──────────────────────────────────────────────────────
+// 需要登录：个人空间
 
 server.registerTool('butian_me', {
   title: '我的补天空间',
@@ -342,14 +281,9 @@ server.registerTool('butian_my_follow', {
   return `我关注的厂商（原始返回）：\n${toText(data)}`
 }))
 
-// ── 自检 ────────────────────────────────────────────────────────────────────
+// 自检
 
-/**
- * 一次性把每个接口都打一遍，报告「通了 / 需要登录 / 失败」。
- *
- * 填好 Cookie 之后先跑这个：一次就能看清哪些接口可用、各自的返回结构长什么样，
- * 不用逐个工具试。
- */
+/** 把每个接口都打一遍，报告通了 / 需要登录 / 失败，并附各自的返回结构；填好 Cookie 后先跑它。 */
 server.registerTool('butian_doctor', {
   title: '补天连接自检',
   description: '检查补天 MCP 的连接状态：是否配置了凭据，以及每个接口是否可用、返回什么结构。'
@@ -405,20 +339,16 @@ server.registerTool('butian_doctor', {
   return lines.join('\n')
 }))
 
-// ─────────────────────────────────────────────────────────────────────────────
 // 启动
-// ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * 连上 stdio 传输。
- *
- * ⚠️ stdio 传输下 **stdout 是协议通道**：任何 `console.log` 都会破坏 JSON-RPC 帧。
- * 需要打日志一律走 `console.error`（stderr 由客户端收走，不进协议）。
+ * 连上 stdio 传输。stdio 下 stdout 是协议通道，日志只能走 `console.error`
+ * （stderr 由客户端收走，不进协议），`console.log` 会破坏 JSON-RPC 帧。
  */
 async function main(): Promise<void> {
   const transport = new StdioServerTransport()
   await server.connect(transport)
-  // 启动就把「凭据配了没」说清楚：否则「需要登录的工具没反应」会让人以为是 bug。
+// 启动时说明凭据是否已配置，否则「需要登录的工具没反应」会被当成 bug
   const configured = await readCookie() === undefined ? '未配置凭据（仅免登录工具可用）' : '已配置凭据'
   console.error(`[butian-mcp] 就绪 · 只读工具 7 个 · ${configured}`)
 }

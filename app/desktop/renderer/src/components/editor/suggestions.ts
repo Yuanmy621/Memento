@@ -1,26 +1,10 @@
 /**
- * `/` `@` `#` 三个触发符的 Tiptap suggestion 插件 + 菜单状态机。
+ * `/` `@` `#` 三个触发符的 suggestion 插件 + 菜单状态机。
  *
- * ## 为什么用官方 `Suggestion`（而不是自己写 ProseMirror 插件）
- *
- * 匹配触发词、划 decoration、维护「插件是否活跃」、在光标处打字时增量重算 ——
- * 这些每一条都是坑（尤其 decoration 的映射），官方工具已经处理好了。
- * 我们只提供三件事：**候选从哪来**（`items`）、**什么位置允许**（`allow`）、
- * **选中后干什么**（`command` + chip 插入）。
- *
- * ## 键盘为什么在 composer 里处理，而不在 `render().onKeyDown`
- *
- * ProseMirror 取 `handleKeyDown` 的顺序是「**view 自己的 props 优先，然后才是各插件**」
- * （`EditorView.someProp` 先查 `_props`，再遍历 plugins）。Tiptap 把 `editorProps`
- * 直接摊进 view 的 props，所以 composer 的 `handleKeyDown` 一定先跑。既然顺序确定，
- * 键盘就只留**一条**路径：composer 里按「输入法 → 菜单 → 提交/中断」的顺序问一遍。
- * 于是 `render()` 里不再给 `onKeyDown`，免得两处各处理半截键。
- *
- * ## Esc 的语义
- *
- * Esc 走 suggestion 的 `exitSuggestion`（发一个只带 meta 的事务），插件进入
- * 「已忽略」状态：**同一个触发词内不再弹**（继续打字也不弹），打出空白后自动复位。
- * 这样 Esc 是「这次我不要菜单」，而不是「关了立刻又弹出来」。
+ * 匹配触发词、划 decoration、增量重算都交给官方 `Suggestion`，这里只提供候选从哪来、
+ * 什么位置允许、选中后干什么。键盘只在 composer 里走一条路径：composer 的 `handleKeyDown`
+ * 摊在 view 的 props 上，而 ProseMirror 取 `handleKeyDown` 时 view 的 props 优先于插件
+ * （`EditorView.someProp`）。Esc 走 `exitSuggestion`：同一个触发词内不弹，打出空白后复位。
  *
  * @module Memento/desktop/renderer/src/components/editor/suggestions
  */
@@ -41,7 +25,7 @@ export interface SuggestView {
   readonly index: number
 }
 
-/** 候选的数据来源：用**函数**取，好让插件长期存活也能读到最新值。 */
+/** 候选的数据来源：用函数取，插件长期存活也能读到最新值。 */
 export interface SuggestSource {
   /** 当前的四类数据源。 */
   readonly data: () => MentionsData
@@ -49,7 +33,7 @@ export interface SuggestSource {
   readonly onFilesNeeded: (query: string) => void
 }
 
-/** 三个触发符各自的状态机名字（也是插件名，必须唯一）。 */
+/** 三个触发符各自的状态机名字，也是插件名，要唯一。 */
 const EXTENSION_NAMES: Readonly<Record<Trigger, string>> = {
   '/': 'chipSuggestCommand',
   '@': 'chipSuggestTool',
@@ -57,13 +41,8 @@ const EXTENSION_NAMES: Readonly<Record<Trigger, string>> = {
 }
 
 /**
- * 菜单状态机：Tiptap 的插件回调 ↔ React 渲染。
- *
- * 插件回调是命令式的（onStart/onUpdate/onExit/键盘），React 需要的是「当前要不要
- * 显示、显示什么、高亮第几条」。这个类就是两者之间的桥：插件调它，它改完状态再
- * `notify()` 让 React 重画。**不 import React**，所以它能在真值表脚本里直接构造。
- *
- * 三个触发符**共用一个实例**：同一时刻只可能有一个菜单在显示（最近的 onStart 赢）。
+ * 菜单状态机：插件回调 ↔ React 渲染；改完状态再 `notify()` 重画，三个触发符共用一个实例。
+ * 不 import React，所以能在真值表脚本里直接构造（最近的 onStart 赢）。
  */
 export class SuggestController {
   private current: SuggestView | null = null
@@ -72,17 +51,12 @@ export class SuggestController {
   private activeKey: PluginKey | null = null
   /**
    * 已经为哪个查询词要过文件，避免每敲一个字都发一次同样的 IPC。
-   *
-   * 初值必须是 `null` 而不是 `''`：空查询（刚打出 `#`）是**合法**的一次请求，
-   * 用空串当初值会让它跟「已经问过」撞车，于是光打一个 `#` 永远没有候选。
+   * 初值是 `null` 而不是 `''`：空查询是合法请求，用空串当初值会让它跟「已经问过」撞车。
    */
   private askedQuery: string | null = null
   /** 状态变化时通知 React（传 `null` 表示关掉菜单）。 */
   private readonly notify: (view: SuggestView | null) => void
 
-  /**
-   * @param notify - 状态变化时通知 React。
-   */
   constructor(notify: (view: SuggestView | null) => void) {
     // 参数属性（`constructor(private x)`）在 `erasableSyntaxOnly` 下不允许，所以显式赋值。
     this.notify = notify
@@ -94,12 +68,7 @@ export class SuggestController {
   }
 
   /**
-   * 生成某个插件的 render 回调。
-   *
-   * @param trigger - 这个插件认的触发符。
-   * @param pluginKey - 这个插件的 key（退出事务要用）。
-   * @param source - 数据来源。
-   * @returns Tiptap `render()` 需要的回调集合。
+   * 生成某个插件的 render 回调；`pluginKey` 用于退出事务。
    */
   handlers(trigger: Trigger, pluginKey: PluginKey, source: SuggestSource): {
     onStart: (props: SuggestionProps<Mention, ChipAttrs>) => void
@@ -115,8 +84,6 @@ export class SuggestController {
 
   /**
    * 选中一条候选：交给插件的 `command`（它会替换掉触发词并插入 chip）。
-   *
-   * @param mention - 选中的候选。
    */
   pick(mention: Mention): void {
     const props = this.props
@@ -124,11 +91,7 @@ export class SuggestController {
     props?.command(mention.chip)
   }
 
-  /**
-   * 鼠标悬停换高亮。
-   *
-   * @param index - 候选下标。
-   */
+  /** 鼠标悬停换高亮。 */
   hover(index: number): void {
     const view = this.current
     if (view === null || view.index === index) return
@@ -136,10 +99,7 @@ export class SuggestController {
   }
 
   /**
-   * 键盘导航。
-   *
-   * @param event - 原生键盘事件。
-   * @returns `true` 表示这次按键已被菜单消费（调用方不要当提交/换行处理）。
+   * 键盘导航；返回 `true` 表示这次按键已被菜单消费（调用方不要当提交 / 换行处理）。
    */
   key(event: KeyboardEvent): boolean {
     const view = this.current
@@ -167,7 +127,7 @@ export class SuggestController {
     return false
   }
 
-  /** 关掉菜单：清状态 + 让插件进入「已忽略」（同一个触发词内不再弹）。 */
+  /** 关掉菜单：清状态 + 让插件进入「已忽略」（同一个触发词内不弹）。 */
   close(): void {
     const props = this.props
     const key = this.activeKey
@@ -177,11 +137,8 @@ export class SuggestController {
   }
 
   /**
-   * 只把菜单收起来，**不**告诉插件「我忽略了」。
-   *
-   * 失焦（点到侧栏/标签栏）时用这个：编辑器的选区没变，插件仍然认为自己是活跃的，
-   * 所以下次 onUpdate 还会把菜单弹回来 —— 这正是「点回来接着打字，菜单还在」。
-   * 与 {@link close} 的区别：Esc 是「我不要这个菜单了」，失焦只是「先收起来」。
+   * 只把菜单收起来，不告诉插件「我忽略了」。
+   * 失焦时用它：编辑器的选区没变，插件仍活跃，下次 onUpdate 会把菜单弹回来；Esc 则走 {@link close}。
    */
   hide(): void {
     if (this.current === null) return
@@ -190,9 +147,6 @@ export class SuggestController {
 
   /**
    * `#` 的候选是异步来的：文件列表到货后，把当前菜单的候选重算一遍。
-   *
-   * @param source - 数据来源（会读到最新的文件列表）。
-   * @param filesQuery - 这批文件对应哪个查询词（响应里带回来的）。
    */
   refresh(source: SuggestSource, filesQuery: string): void {
     const view = this.current
@@ -237,11 +191,7 @@ export class SuggestController {
 }
 
 /**
- * 造出三个 suggestion 扩展。
- *
- * @param options.controller - 菜单状态机。
- * @param options.source - 读最新数据源与回调（每次用的时候现取，避免闭包过期）。
- * @returns Tiptap 扩展数组。
+ * 造出三个 suggestion 扩展；`source` 每次用的时候现取，避免闭包过期。
  */
 export function createSuggestExtensions(options: {
   readonly controller: SuggestController
@@ -265,11 +215,8 @@ export function createSuggestExtensions(options: {
           allow: ({ range, state }) =>
             triggerAllowed(trigger, range.from, charBefore(state.doc, range.from)),
           /**
-           * Esc 的「我不要这个菜单」只该管**这一个触发词**。
-           *
-           * 插件默认只在「打出空白」或「触发位移动」时解除忽略，于是有个死角：
-           * Esc 关掉菜单 → 全选删掉 → 在同一位置重新打 `#foo`，菜单仍然不弹
-           * （用户会以为坏了）。所以补一条：原触发词已经不在文档里了，就解除忽略。
+           * Esc 的「我不要这个菜单」只该管这一个触发词：插件默认只在打出空白或触发位移动时
+           * 解除忽略，Esc 关掉、全选删掉、原地重打 `#foo` 就不弹了，所以原触发词不在文档里时也解除。
            */
           shouldResetDismissed: ({ state, range }) =>
             state.doc.textBetween(range.from, range.to, '\n', '\n').trim() === '',
@@ -282,14 +229,8 @@ export function createSuggestExtensions(options: {
 }
 
 /**
- * 触发符前一个字符。
- *
- * 取不到字符时返回空串 —— 两种情形（段落第一个位置、紧挨着 chip）都在
- * {@link triggerAllowed} 里算作词边界。
- *
- * @param doc - 当前文档。
- * @param from - 触发符位置。
- * @returns 前一个字符，或空串。
+ * 触发符前一个字符，取不到时返回空串 —— 两种情形（段落第一个位置、紧挨着 chip）
+ * 都在 {@link triggerAllowed} 里算作词边界。
  */
 function charBefore(doc: PMNode, from: number): string {
   if (from <= 1) return ''
@@ -298,10 +239,7 @@ function charBefore(doc: PMNode, from: number): string {
 
 /**
  * 把候选插成 chip，并在后面留一个空格（光标落在空格后，接着就能打字）。
- *
- * @param editor - 编辑器。
- * @param range - 触发词的范围（`/rep`、`@mcp` 这一整段都会被替换掉）。
- * @param chip - 选中的候选（候选本身就是「还没插进去的 chip」）。
+ * `range` 是触发词的范围，`/rep`、`@mcp` 这一整段都会被替换掉。
  */
 function insertChip(editor: Editor, range: { from: number; to: number }, chip: ChipAttrs): void {
   editor

@@ -2,19 +2,10 @@
 /**
  * Memento 桌面端 —— **agent host** 子进程入口。
  *
- * 这个进程由 Electron 主进程用**系统 node** 拉起（不是 Electron 自带的 Node，
- * 原因见 `./protocol.ts` 的模块注释：原生模块 ABI 不同），通过 child_process 的
- * IPC 通道收发消息：
- *
- *   Electron 主进程 ──(HostRequest)──▶ 本进程 ──▶ DSH 内核
- *   Electron 主进程 ◀──(HostEvent)──── 本进程 ◀── agent 事件
- *
- * 它做的事情和 CLI 的 `app/cli/main.ts` 本质相同（装凭据 → 起内核 → 驱动回合），
- * 只是把「终端渲染」换成了「结构化事件」。参数解析**直接复用 CLI 的 `parseOptions`**，
- * 所以 `--cwd` / `--model` / `--resume` 这些开关在桌面端也完全一样。
- *
- * 注意 import 顺序：`./credentials` 必须在 `@deepseek-ai/dsh-llm-deepseek` 之前
- * 把 key 写进 `process.env`，所以内核与事件桥都用动态 `import()` 延迟载入。
+ * 由 Electron 主进程用**系统 node** 拉起（原生模块 ABI 的原因见 `./protocol.ts`），通过 child_process 的 IPC
+ * 通道收发 `HostRequest` / `HostEvent`；职责与 CLI 的 `app/cli/main.ts` 相同（装凭据 → 起内核 → 驱动回合），参数
+ * 解析复用 CLI 的 `parseOptions`；import 顺序有约束：`./credentials` 要先于
+ * `@deepseek-ai/dsh-llm-deepseek` 写 key 进 `process.env`，内核与事件桥因此用动态 `import()` 延迟载入。
  *
  * @module Memento/desktop/host
  */
@@ -44,7 +35,7 @@ import {
   type SessionUsage,
   type SkillEntry,
 } from './protocol.ts'
-// 类型专用导入：只在编译期存在，不会在内核就位前求值任何 DSH 运行时模块。
+// 类型专用导入：只在编译期存在，不会在内核就位前求值运行时模块。
 import type { DesktopBridge } from './bridge.ts'
 import type { Kernel } from '../../cli/kernel.ts'
 import type { LlmCallConfig } from '@deepseek-ai/dsh-llm'
@@ -85,21 +76,13 @@ function fatal(error: unknown): never {
   process.exit(EXIT_FATAL)
 }
 
+
 /**
- * 启动流程。
- */
-/**
- * 读 provider 申报的模型目录，并**按 {@link SUPPORTED_MODELS} 过滤**。
+ * 读 provider 申报的模型目录，并按 {@link SUPPORTED_MODELS} 过滤。
  *
- * 适配器申报的目录更长（含 `deepseek-flash` V4.1 旧版、`…-vision-exp` 实验模型），
- * 但对用户只暴露两款主力。过滤时以本地清单的**顺序**为准（顺序即产品意图：
- * Flash 在前、Pro 在后），名称与描述优先取适配器给的（它才是权威），缺失才用兜底名。
- *
- * 拿不到目录（适配器不申报、网络异常）就退化成整份本地清单 ——
- * 下拉框依然可用，而不是只剩一个当前值。
- * @param ctx - 已装配的内核上下文。
- * @param provider - provider id。
- * @returns 可选模型列表。
+ * 适配器申报的目录更长（含旧版与实验模型），这里只暴露本地清单里的两款主力；顺序以本地
+ * 清单为准（Flash 在前、Pro 在后），名称与描述优先取适配器给的（它才是权威），缺失才用兜底名。
+ * 拿不到目录（适配器不申报、网络异常）就退回整份本地清单，下拉框仍然可用。
  */
 async function listModels(ctx: Kernel['ctx'], provider: string): Promise<ModelInfo[]> {
   const fallback: ModelInfo[] = SUPPORTED_MODELS.map(model => ({ id: model.id, name: model.name }))
@@ -111,7 +94,7 @@ async function listModels(ctx: Kernel['ctx'], provider: string): Promise<ModelIn
     return fallback
   }
   if (catalog.length === 0) return fallback
-  // 以本地清单为准排序 / 过滤；描述里 provider 的说明比我们写的更准，原样带上。
+  // 以本地清单为准排序 / 过滤；描述优先用 provider 给的，它比本地兜底名准确。
   const offered: ModelInfo[] = []
   for (const wanted of SUPPORTED_MODELS) {
     const found = catalog.find(model => model.id === wanted.id)
@@ -128,16 +111,11 @@ async function listModels(ctx: Kernel['ctx'], provider: string): Promise<ModelIn
 }
 
 /**
- * 问适配器要一个模型的**可选推理强度**。
+ * 问适配器要一个模型的可选推理强度。
  *
- * 强度是模型能力（`resolveModelInfo` 才会给出 `reasoning.efforts`），
- * 而 `listModels` 的目录里没有这一项 —— 所以要逐个 exact-route 解析一次。
- * 解析失败（模型刚下线、适配器不申报）就**不带这一项**：界面会退回内置兜底，
- * 而不是给一个空的下拉框。
- * @param ctx - 已装配的内核上下文。
- * @param provider - provider id。
- * @param model - 模型 id。
- * @returns 可直接展开进 {@link ModelInfo} 的字段（拿不到时是空对象）。
+ * 强度是模型能力（`resolveModelInfo` 才会给出 `reasoning.efforts`），`listModels` 的目录里
+ * 没有这一项，所以逐个 exact-route 解析一次；解析失败就不带这一项（返回空对象），界面会退回
+ * 内置兜底，而不是显示一个空的下拉框。
  */
 async function modelEfforts(
   ctx: Kernel['ctx'],
@@ -162,7 +140,7 @@ async function modelEfforts(
 }
 
 async function main(): Promise<void> {
-  // ── 1. 参数：完全复用 CLI 的解析器与默认值 ──────────────────────────────
+  // 参数：复用 CLI 的解析器与默认值。
   let options: Options
   try {
     options = parseOptions(process.argv.slice(2))
@@ -171,16 +149,16 @@ async function main(): Promise<void> {
     throw error
   }
 
-  // ── 2. 先装凭据：DeepSeek adapter 从启动环境快照里按变量名取 key ────────
+  // 先装凭据：DeepSeek adapter 从启动环境快照里按变量名取 key。
   const credential = installApiKey()
 
-  // ── 2b. 插件要的额外 key（system-one 的 TYPESAFE_API_KEY）──────────────
-  // 桌面端**从 Finder/Dock 启动时拿不到 shell 的 export**，所以这一步尤其重要：
-  // 它让 `~/.dsh/.credentials.yaml` 成为打包形态下唯一还能生效的配置来源。
+  // 插件要的额外 key（system-one 的 TYPESAFE_API_KEY）。
+  // 桌面端从 Finder/Dock 启动时拿不到 shell 的 export，这一步让
+  // `~/.dsh/.credentials.yaml` 成为打包形态下唯一还能生效的配置来源。
   // 缺了不算错误：插件挂载时会自己打警告，工具被调用时才报错。
   installCredentials(PLUGIN_CREDENTIAL_REFS)
 
-  // ── 3. 再延迟载入内核（此时环境已就绪）─────────────────────────────────
+  // 环境就绪后再延迟载入内核。
   const [kernelModule, { DesktopBridge }, { createUserMessage, ReasoningEffortId }] = await Promise.all([
     import('../../cli/kernel.ts'),
     import('./bridge.ts'),
@@ -205,8 +183,8 @@ async function main(): Promise<void> {
    */
   const route: { model: string; effort: Effort } = { model: options.model, effort: options.effort }
 
-  // DSH 的 `agent/request` 是一次 waterfall：每个监听者都能改写即将发出的请求配置。
-  // 这里用它实现「运行中切换模型 / 推理强度」——不必重建 agent 或会话。
+  // `agent/request` 是一次 waterfall：每个监听者都能改写即将发出的请求配置。
+  // 用它实现运行中切换模型 / 推理强度，不需要重建 agent 或会话。
   const offRoute = kernel.ctx.on('agent/request', async ({ agent: subject }, next) => {
     const config: LlmCallConfig = await next()
     if (subject !== kernel.agent) return config
@@ -252,12 +230,10 @@ async function main(): Promise<void> {
   /**
    * 「最近打开过的其他项目」——由 Electron 主进程通过环境变量传来（冒号分隔）。
    *
-   * 为什么需要它：内核的 `stateDir` 默认是 `<cwd>/.Memento`，**每个项目一份会话库**，
-   * 而这里只扫当前项目那一个根。不带上这份清单，侧栏的「项目 → 会话」树里
-   * 就永远只有一个项目（换项目后上一个直接消失）。
-   *
-   * 只当线索用：目录存不存在、里面有什么，都由 `sessions.ts` 自己去读，
-   * 读不到就跳过 —— 传进来的路径可能早就被删了。
+   * 内核的 `stateDir` 默认是 `<cwd>/.Memento`，每个项目一份会话库，而这里只扫当前项目
+   * 那一个根；不带上这份清单，侧栏的「项目 → 会话」树里就永远只有一个项目。
+   * 只当线索用：目录存不存在、里面有什么由 `sessions.ts` 自己去读，读不到就跳过 ——
+   * 传进来的路径可能已经被删了。
    */
   const recentProjects = (process.env.Memento_PROJECT_ROOTS ?? '')
     .split(':')
@@ -293,10 +269,9 @@ async function main(): Promise<void> {
   }
 
   /**
-   * 读某个项目的会话明细并发一个 `project-sessions` 帧。
+   * 读某个项目的会话明细并发一个 `project-sessions` 帧（`path` 是 `ProjectSummary.path`）。
    *
    * 侧栏里折叠的项目被点开时才走这条路，所以即使项目很多也不会拖慢首屏。
-   * @param path - 目标项目根目录（`ProjectSummary.path`）。
    */
   async function sendProjectSessions(path: string): Promise<void> {
     try {
@@ -306,7 +281,7 @@ async function main(): Promise<void> {
         currentSessionId: kernel.sessionId,
         // 传当前 cwd：只有点开的正是当前项目时，才补「还没落盘」的当前会话。
         currentCwd: options.cwd,
-        // 项目清单可能来自别的库，这里必须扫同样的根，否则点开会是「读不到」。
+        // 项目清单可能来自别的库，这里要扫同样的根，否则点开会是「读不到」。
         extraProjectPaths: recentProjects,
       })
       send({
@@ -329,13 +304,11 @@ async function main(): Promise<void> {
   /**
    * 回放当前会话的历史并发一个 `history` 帧。
    *
-   * 只在 `--resume <id>` 启动时走这条路：此时内核已经从日志里恢复了上下文，
-   * 但界面还是空的（实时帧只会描述**之后**发生的事）。所以这里把日志读成同一套
-   * `Item[]` 补上，界面整段替换 `items` 即可 —— 与官方客户端「host 提供已完成回合」
-   * 的分工一致。
+   * 只在 `--resume <id>` 启动时走这条路：此时内核已经从日志里恢复了上下文，但界面还是空的
+   * （实时帧只描述之后发生的事），所以这里把日志读成同一套 `Item[]` 补上。
    *
-   * 读不到日志（新建会话、日志被清理）时**照发一帧空历史** —— 见下面那段注释。
-   * @param sessionId - 要回放的会话 id；新会话（没有 resume）传 `undefined`。
+   * 读不到日志（新建会话、日志被清理）时照发一帧空历史，见下面那段注释；没有 resume 的新会话
+   * 传 `undefined`。
    */
   async function sendHistory(sessionId: string | undefined): Promise<void> {
     try {
@@ -343,15 +316,10 @@ async function main(): Promise<void> {
         ? undefined
         : await readSessionHistory({ root: sessionsRoot, sessionId })
       /**
-       * ⚠️ **不管有没有日志都要发这一帧。**
-       *
-       * 界面把 `history` 当作「内容现在是这些」的**唯一**信号：它到了才整段替换
-       * `items`。早先这里是「读不到就什么都不发」，于是**新建会话**（没有日志）永远
-       * 没有这一帧，界面只能靠 `restarting` 那一下把内容清空 ——
-       * 而 `restarting` 是在**发出请求时**就到的，于是切换会话会先白一下、
-       * 占位文案闪一下、统计和模型下拉归零，再等内容回填。
-       *
-       * 发空历史之后，切换就是「旧内容留在屏幕上 → 新内容一次性替换」。
+       * 不管有没有日志都要发这一帧：界面把 `history` 当作「内容现在是这些」的唯一信号，
+       * 收到才整段替换 `items`。新建会话没有日志，缺了这一帧，界面只能靠 `restarting`
+       * 清空内容，而 `restarting` 在发出请求时就到 —— 切换会话会先白一下、占位文案闪一下、
+       * 统计与模型下拉归零，再等内容回填。
        */
       send({
         type: 'history',
@@ -388,11 +356,10 @@ async function main(): Promise<void> {
   }
 
   /**
-   * 要扫的**技能目录**（设置界面用来看「盘上有什么」）。
+   * 要扫的技能目录（设置界面用来看「盘上有什么」）。
    *
-   * 直接复用 CLI 的技能目录规则（项目 `.agents/skills` + `.dsh/skills` +
-   * `$Memento_SKILL_DIRS`），别在界面侧另写一份 —— 否则两边会漂。
-   * @returns 绝对路径列表。
+   * 复用 CLI 的技能目录规则（项目 `.agents/skills` + `.dsh/skills` + `$Memento_SKILL_DIRS`），
+   * 界面侧另写一份会与它漂移；返回绝对路径列表。
    */
   function skillScanDirs(cwd: string): string[] {
     return [...skillRoots(cwd), ...(process.env.Memento_SKILL_DIRS ?? '')
@@ -402,8 +369,8 @@ async function main(): Promise<void> {
   /**
    * 输入框菜单要的技能与命令（就绪时随 `ready` 一次性发过去）。
    *
-   * 刻意做得轻：技能只取 `ctx.skills.list()` 的现成字段（不读正文），
-   * 命令复用已经读好的命令表。菜单随时可能被敲出来，不能让首屏为它读一堆文件。
+   * 保持轻量：技能只取 `ctx.skills.list()` 的现成字段（不读正文），命令复用已经读好的
+   * 命令表。菜单随时可能被敲出来，首屏不该为它读一堆文件。
    */
   async function inputBriefs(): Promise<{ skills: SkillBrief[]; commands: CommandBrief[] }> {
     let skills: SkillBrief[] = []
@@ -431,10 +398,8 @@ async function main(): Promise<void> {
   /**
    * 工作目录下的**可引用文件**索引（`#` 菜单）。
    *
-   * 三条约束，都是为了「按一次键不能卡住」：
-   *   - **有界**：最多 {@link FILE_INDEX_MAX} 个，超过就停；
-   *   - **跳过噪声**：`node_modules` / `.git` / 构建产物 / 点目录；
-   *   - **缓存**：{@link FILE_INDEX_TTL_MS} 内复用，避免每敲一个字就重走一遍目录树。
+   * 三条约束都为了保证按一次键不卡住：最多 {@link FILE_INDEX_MAX} 个；跳过噪声目录
+   * （`node_modules` / `.git` / 构建产物 / 点目录）；{@link FILE_INDEX_TTL_MS} 内复用缓存。
    */
   let fileIndexCache: { at: number; files: string[] } | undefined
 
@@ -473,13 +438,9 @@ async function main(): Promise<void> {
   /**
    * 按关键字挑文件。
    *
-   * 排序规则：**匹配位置越靠前越优先**，同位置按路径短的优先 ——
-   * 敲 `#comp` 时 `app/desktop/.../composer.tsx` 应该排在
-   * `docs/old/components-composer.md` 前面。点文件（`.DS_Store`、`.gitignore`）
-   * 在同位置里再往后压一档：它们路径最短，不压的话「刚打出一个 `#`、还没说要找什么」
-   * 时前几条全是点文件，看着像坏了。
-   *
-   * 分数就是「(匹配位置, 是否点文件, 路径长度) 三元组」压成一个整数（依次比较）。
+   * 排序按「匹配位置 → 是否点文件 → 路径长度」依次比较：位置越靠前越优先，同位置路径短的
+   * 优先；点文件再往后压一档，否则刚打出一个 `#`、还没说要找什么时，前几条全是点文件。
+   * 三者压进一个整数比较。
    */
   async function filesMatching(query: string, limit: number): Promise<FileBrief[]> {
     const needle = query.toLowerCase()
@@ -499,14 +460,10 @@ async function main(): Promise<void> {
   /**
    * 收集设置界面的数据并发一帧 `settings`。
    *
-   * 三样东西来源不同，但界面要一起看：
-   *   - **skill**：问内核的注册表（`ctx.skills`）。注意 `list()` 返回的是
-   *     「调用方式中立」的全集 —— 命令专用（`disable-model-invocation`）的 skill
-   *     也在里面，靠 `invocation` 政策区分，这正是界面要显示的东西；
-   *   - **命令**：复用 CLI 的命令层（`.agents/commands/*.md`），顺便刷新缓存；
-   *   - **MCP**：内置定义 + 项目目录定义 + `<cwd>/.Memento/mcp.json` 的开关。
-   *
-   * 单个 skill 读失败（文件被删等）只跳过它，不让整张表消失。
+   * 三样东西来源不同：skill 问内核注册表（`ctx.skills`，`list()` 返回调用方式中立的全集，
+   * 命令专用的也在里面，靠 `invocation` 区分）；命令复用 CLI 的命令层
+   * （`.agents/commands/*.md`）并顺便刷新缓存；MCP 是内置定义 + 项目目录定义 +
+   * `<cwd>/.Memento/mcp.json` 的开关。单个 skill 读失败只跳过它，不让整张表消失。
    */
   async function sendSettings(): Promise<void> {
     const skills: SkillEntry[] = []
@@ -518,8 +475,8 @@ async function main(): Promise<void> {
         try {
           const full = await kernel.ctx.skills.get(summary.name)
           path = full?.path ?? ''
-          // 统一按「文件字节数」展示：兜底那条（下面扫盘加的）也是这么量的，
-          // 两条路径的数字要能互相比较，否则界面上一个 3928 一个 4196 看着像两个人写的。
+          // 统一按文件字节数展示：下面扫盘兜底的那条也是这么量的，
+          // 两条路径给出的数字要能互相比较。
           bytes = path === '' ? (full?.content.length ?? 0) : await fileSize(path)
         } catch {
           // 读不到正文不影响列表：名字与政策已经够界面用了
@@ -546,8 +503,8 @@ async function main(): Promise<void> {
       })
     }
 
-    // 盘上有、内核却没加载的 skill：多半是 frontmatter 坏了（provider 只 warn 一句就忽略）。
-    // 从界面上看这是「文件在、技能不生效」，最需要被指出来。
+    // 盘上有、内核却没加载的 skill：多半是 frontmatter 坏了（provider 只 warn 一句就忽略），
+    // 界面上表现为「文件在、技能不生效」，最需要被指出来。
     const loaded = new Set(skills.map(skill => skill.name))
     for (const dir of skillScanDirs(options.cwd)) {
       let entries
@@ -636,7 +593,7 @@ async function main(): Promise<void> {
     const startedAt = Date.now()
     bridge.startTurn(turnId)
     // `/命令`：把命令正文（以及它内联的文件）作为**这一回合**的用户消息发出去。
-    // 命令表为空时（没写过命令）这里完全不介入，行为与以前一致。
+    // 命令表为空时（没写过命令）这里不介入，直接发原文。
     let outgoing = text
     const hit = matchCommand(text, commands)
     if (hit !== undefined) {
@@ -648,7 +605,7 @@ async function main(): Promise<void> {
     }
     kernel.agent.followup(createUserMessage({
       content: [{ type: 'text', text: outgoing }],
-      // `source` 是 DSH 的必填来源标记：`kind: 'user'` 表示真人输入。
+      // `source` 的 `kind: 'user'` 表示真人输入。
       source: { kind: 'user' },
     }))
     await kernel.agent.whenIdle()
@@ -666,7 +623,7 @@ async function main(): Promise<void> {
     await sendWorkspace()
   }
 
-  // ── 4. 串行队列：界面禁用了并发输入，但协议层仍然保证回合不交叉 ────────
+  // 串行队列：界面已禁用并发输入，协议层仍保证回合不交叉。
   let queue: Promise<void> = Promise.resolve()
 
   function handleRequest(raw: unknown): void {
@@ -690,7 +647,7 @@ async function main(): Promise<void> {
         break
       case 'steer': {
         // 中途调整目标：交给内核的 steer —— 运行中的回合会在下一个 step 边界消费它。
-        // 这里**不排队**（不走 queue）：排队就变成「等这轮跑完再说」，正是要改掉的行为。
+        // 这里不走 queue：排队会变成「等这轮跑完再说」，与 steer 的语义相反。
         const message = createUserMessage({
           content: [{ type: 'text', text: request.text }],
           source: { kind: 'user' },
@@ -757,7 +714,7 @@ async function main(): Promise<void> {
   process.on('SIGTERM', () => { void shutdown() })
   process.on('SIGINT', () => { void shutdown() })
 
-  // ── 5. 就绪：把渲染侧栏所需的一切一次性发过去 ──────────────────────────
+  // 就绪：把渲染侧栏所需的信息一次性发过去。
   const info: HostReadyInfo = {
     protocolVersion: PROTOCOL_VERSION,
     sessionId: kernel.sessionId,
@@ -786,7 +743,7 @@ async function main(): Promise<void> {
   // 就绪后立刻把项目 / 会话清单推给侧栏。
   await sendWorkspace()
   // 历史记录最后补上（顺序在 workspace 之后：侧栏先出来，历史随后填充）。
-  // 新会话（没有 resume）也会得到一帧**空历史** —— 界面靠它把内容清空，
+  // 新会话（没有 resume）也会得到一帧空历史，界面靠它把内容清空，
   // 所以这一步不能省（见 `sendHistory` 的注释）。
   await sendHistory(options.resume)
 }

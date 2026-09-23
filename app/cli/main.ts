@@ -2,9 +2,8 @@
 /**
  * Memento 入口：解析参数 → 安装凭据 → 启动内核 → 进入 REPL 或一次性执行。
  *
- * 注意这里的 import 顺序是有意的：`./credentials.ts` 必须在
- * `@deepseek-ai/dsh-llm-deepseek`（进而 `dsh-launch-environment`）被加载**之前**
- * 把 key 写进 `process.env`，所以内核用动态 `import()` 延迟载入。
+ * import 顺序是关键：`./credentials.ts` 要在 `@deepseek-ai/dsh-llm-deepseek`
+ * 被加载之前把 key 写进 `process.env`，所以内核用动态 `import()` 延迟载入。
  *
  * @module Memento/main
  */
@@ -35,15 +34,14 @@ async function main(): Promise<number> {
     return EXIT_OK
   }
 
-  // 1) 先安装凭据：内核里的 DeepSeek adapter 会在请求时从启动环境快照读取它。
+  // 先安装凭据：内核里的 DeepSeek adapter 会在请求时从启动环境快照读取它。
   const credential = installApiKey()
 
-  // 1b) 插件要的额外 key（system-one 的 TYPESAFE_API_KEY）：消费方同样是
-  //     `process.env[名字]`，所以在载入内核之前一起装好。缺了不算错误 ——
-  //     对应工具被调用时才报错，插件挂载时会自己打一行警告。
+  // 插件要的额外 key（system-one 的 TYPESAFE_API_KEY）同样从 `process.env[名字]` 读，
+  // 所以在载入内核之前一起装好；缺了不算错误，对应工具被调用时才报错。
   installCredentials(PLUGIN_CREDENTIAL_REFS)
 
-  // 2) 再延迟加载内核（此时环境已经就绪），所有工具的相对路径都以 --cwd 为基准。
+  // 此时环境已就绪，再延迟加载内核；工具的相对路径都以 --cwd 为基准。
   const [{ bootKernel, listTools }, { runOneShot, runRepl, printMissingCredential }, { printBanner }] = await Promise.all([
     import('./kernel.ts'),
     import('./repl.ts'),

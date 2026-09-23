@@ -1,21 +1,9 @@
 /**
  * 通用浮层菜单：一个触发器 + 一个键盘可操作的菜单。
  *
- * 从输入框那三个下拉（`+` 新建 / 权限 / 模型）里抽出来的 —— 它们原本各写各的、
- * 只有一个「点空白关掉」的遮罩。抽成公共组件之后顺手补齐了缺的那些**真菜单该有的东西**：
- *
- * | 能力 | 为什么要 |
- * | --- | --- |
- * | ↑ / ↓ / Home / End 移动高亮 | 用键盘选是菜单的基本预期，鼠标只是其中一条路 |
- * | Enter / Space 选中、Esc 关闭 | Esc 关掉后**焦点回到触发器**，接着按方向键还能再打开 |
- * | `role="menu"` / `menuitem` + `aria-haspopup` / `aria-expanded` | 读屏软件靠它知道「这是一个菜单、现在开着」 |
- * | 点外面关掉（`pointerdown` 监听，不用整屏遮罩） | 遮罩会挡住底下的一切交互，而且它本身只是个「点了就关」的 hack |
- * | 向上 / 向下弹、贴哪一边、限高滚动 | 输入区那三个下拉在底部，必须往上弹；条目多了一屏放不下要能滚 |
- *
- * 为什么不用 Radix / headless 那类库：**输入框那一侧不能用**（`@` 候选菜单必须由编辑器
- * 持有焦点与按键，库会和 ProseMirror 抢）；为输入区三个下拉单独引一套依赖也不划算。
- * 这份实现只有两百来行，行为边界清楚。真要继续加菜单（右键菜单、子菜单）时，
- * 再按 README「自研 vs 成熟组件」里那条建议整体换 Radix 更划算。
+ * ↑ / ↓ / Home / End 移动高亮，Enter / Space 选中，Esc 关闭并把焦点交回触发器；
+ * 点外面用 `pointerdown` 监听关闭（比 `click` 早，拖选文字时不会误关），不用整屏遮罩。
+ * 侧栏与输入区都在窗口底部，所以菜单默认向上弹，并带 `role="menu"` 一族的无障碍属性。
  *
  * @module Memento/desktop/renderer/src/components/menu
  */
@@ -32,11 +20,7 @@ import { cn } from '../ui/beautifului/lib/utils.ts'
 export interface MenuEntry {
   /** 稳定 key。 */
   readonly key: string
-  /**
-   * 行的类型：
-   *   - `item`：可点的一项（默认）；
-   *   - `block`：整段说明文字（不可点，例如权限菜单那段「无沙箱」的解释）。
-   */
+  /** 行的类型：`item` 可点（默认），`block` 是整段说明文字、不落焦点。 */
   readonly kind?: 'item' | 'block'
   /** 主文案（中文功能名 / 选项名）。 */
   readonly label?: string
@@ -63,12 +47,7 @@ export interface MenuProps {
   readonly label?: string
   /** 触发器和图标后面要不要那个小三角（侧栏的「N 工具」不要）。 */
   readonly caret?: boolean
-  /**
-   * 菜单**打开**时通知调用方（关闭时不通知）。
-   *
-   * 给「菜单里的数据会过期」的用法：面包屑的分支列表可能刚被 agent 或用户在终端里
-   * 改掉，打开时重新探测一次比展示一份过期列表强。
-   */
+  /** 菜单打开时通知调用方（关闭时不通知）；数据会过期的用法靠它重新探测。 */
   readonly onOpen?: () => void
   readonly disabled?: boolean
   /** 菜单从触发器的哪一侧弹出。 */
@@ -79,7 +58,7 @@ export interface MenuProps {
   readonly width?: number
 }
 
-/** 菜单里可以落焦点的行（跳过整段说明那种不可点的行）。 */
+/** 可落焦点的行（逐项跳过整段说明与禁用项）。 */
 function isFocusable(entry: MenuEntry): boolean {
   return (entry.kind ?? 'item') === 'item' && entry.disabled !== true
 }
@@ -98,11 +77,10 @@ export function Menu(props: MenuProps): ReactElement {
   }, [])
 
   /**
-   * **刚打开**那一刻：把焦点交给菜单本身（键盘事件才接得住），高亮落在「当前项」或第一项。
+   * 刚打开：焦点交给菜单本身（键盘事件才接得住），高亮落在当前项或第一项。
    *
-   * ⚠️ 依赖里刻意**只有 `open`**：`entries` 是调用方每次渲染现拼的数组，
-   * 把它放进依赖会让「鼠标划过某项 → 重渲染 → 这个 effect 又把高亮弹回第一项」，
-   * 键盘与鼠标就打架了。打开后的高亮只归 `move()` / `onMouseEnter` 管。
+   * 依赖只能有 `open`：`entries` 是调用方每次渲染现拼的数组，放进来会让鼠标划过
+   * 某项后的重渲染把高亮弹回第一项，与键盘操作打架。
    */
   useEffect(() => {
     if (!open) return
@@ -186,7 +164,7 @@ export function Menu(props: MenuProps): ReactElement {
         disabled={props.disabled ?? false}
         title={props.title}
         onClick={() => {
-          // 只在**打开**时通知：关闭时再拉一次数据没有意义。
+          // 只在打开时通知：关闭时再拉一次数据没有意义。
           if (!open) props.onOpen?.()
           setOpen(!open)
         }}
@@ -216,7 +194,7 @@ export function Menu(props: MenuProps): ReactElement {
                 role="menuitem"
                 className={`menu__item${entry.active === true ? ' menu__item--active' : ''}${index === cursor && hasSelectable ? ' menu__item--cursor' : ''}`}
                 disabled={entry.disabled ?? false}
-                // title 给「完整解释」：说明之外还能塞原名之类的排查信息
+                // title 用完整解释：说明之外还能塞原名之类的排查信息
                 title={entry.hint ?? entry.note ?? entry.label ?? ''}
                 onMouseEnter={() => { setCursor(index) }}
                 onClick={() => { entry.onSelect?.(); close(true) }}

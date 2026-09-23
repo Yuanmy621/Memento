@@ -1,5 +1,5 @@
 ---
-name: Memento-desktop-ui
+name: memento-desktop-ui
 description: 改 Memento 桌面端界面时的固定套路 —— 渲染进程为什么要重新构建、加一个界面动作/UI 帧要动哪几个文件、Streamdown 的 Tailwind token 为什么必须补、布局失控与输入法组字这两个已修 bug 的复现条件。当你要改 app/desktop/renderer 下的界面、加按钮/面板/消息类型、调主题配色、或者排查界面样式错乱与卡顿时使用。
 # 默认保持 Agent 纯净：命令专用，不进模型的会话技能目录；用 /名字 显式加载。
 disable-model-invocation: true

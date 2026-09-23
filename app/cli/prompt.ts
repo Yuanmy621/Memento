@@ -1,13 +1,9 @@
 /**
- * Memento 的系统提示词组成。
+ * Memento 的系统提示词组成：一段 persona 加两段自定义 section（工作区约定、
+ * 自定义工具的使用时机），由内核按 order 排序插进 system prompt。
  *
- * DSH 的 system prompt 是「按 order 排序的可插拔 section 集合」，每个插件都能贡献。
- * 这里做两件事：
- *   1. 给出 coding agent 的 persona（由内核以 `personaPrefix` 挂载，order = 0）；
- *   2. 追加两段 section：工作区约定、自定义工具的使用时机。
- *
- * `{{cwd}}` / `{{model}}` 这类变量由 `dsh-agent-loop` 注册，`interpolate: true`
- * 的 section 会在每次组装时替换它们。
+ * `personaPrefix` 挂载的 persona order 为 0；`{{cwd}}` / `{{model}}` 这类变量由
+ * `dsh-agent-loop` 注册，`interpolate: true` 的 section 在每次组装时替换它们。
  *
  * @module Memento/prompt
  */
@@ -31,10 +27,7 @@ export function personaText(): string {
   ].join('\n')
 }
 
-/**
- * 注册 Memento 自己的 prompt section。
- * @param ctx - 已经挂载了 `ctx.systemPrompt` 的上下文。
- */
+/** 注册 Memento 自己的 prompt section。 */
 export function installPromptSections(ctx: Context): void {
   ctx.systemPrompt.section({
     name: 'Memento:workspace',

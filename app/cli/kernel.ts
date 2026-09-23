@@ -1,15 +1,9 @@
 /**
- * Memento 内核：用 cordis 手工装配 DeepSeek Harness 的 agent 内核。
+ * Memento 内核：用 cordis 手工装配 agent 内核。
  *
- * 这里**不**使用 DSH 的 `cordis.yml` 加载器，而是显式 `await ctx.plugin(...)`
- * 每一个插件 —— 装配顺序、依赖关系、配置全部在这一个文件里可见。
- *
- * 关键事实（来自 DSH 源码）：
- *   - 根上下文就是 `new Context()`；没有 `App`、没有 `ctx.start()`。
- *   - `await ctx.plugin(X)` 在 X 的 `inject` 依赖尚未就绪时**不会报错**，而是
- *     停在 PENDING；所以必须按依赖顺序逐个 await（本文件即按此顺序书写）。
- *   - `AgentLoop.inject = ['agents','sessions','llm','tools','systemPrompt','sessionProjections']`。
- *   - 真正的抽象 seam 只有一个：LLM adapter（这里用官方 `dsh-llm-deepseek`）。
+ * 根上下文就是 `new Context()`，没有 `App`、没有 `ctx.start()`；`await ctx.plugin(X)`
+ * 在 X 的 `inject` 依赖未就绪时不报错而是停在 PENDING，所以插件要按依赖顺序逐个
+ * await 挂载。真正的抽象 seam 只有一个：LLM adapter（`dsh-llm-deepseek`）。
  *
  * @module Memento/kernel
  */
@@ -82,29 +76,20 @@ export interface Kernel {
 const REQUIRED_SERVICES = ['llm', 'sessions', 'sessionProjections', 'systemPrompt', 'tools', 'agents', 'agentLoop', 'skills'] as const
 
 /**
- * 项目的技能目录。
- *
- * 约定与 DSH 一致：`<项目根>/.agents/skills/<名字>/SKILL.md`。
- * 这里**不**让 provider 自己去猜项目根（它取最近的 `.git` 祖先），
- * 而是显式给 `cwd` 下的目录，保证「agent 的工作目录 = 技能目录」，
- * 换 `--cwd` 就换技能集。
- * @param cwd - agent 的工作目录。
- * @returns 要扫描的技能根目录列表。
+ * 项目的技能目录：显式取 `cwd` 下的 `<项目根>/.agents/skills/<名字>/SKILL.md`，不交给
+ * provider 自己推断项目根（它取最近的 `.git` 祖先），于是换 `--cwd` 即换技能集。
  */
 export function skillRoots(cwd: string): string[] {
-  // `.dsh/skills` 是 DSH 里优先级更高的项目级目录（rank 100），一并认。
+  // `.dsh/skills` 是优先级更高的项目级技能目录（rank 100），一并扫描。
   return [join(cwd, '.agents', 'skills'), join(cwd, '.dsh', 'skills')]
 }
 
-/** 兼容旧名字（内核内部用）。 */
+/** `skillRoots()` 的别名。 */
 function skillDirs(cwd: string): string[] {
   return skillRoots(cwd)
 }
 
-/**
- * 允许用环境变量追加技能目录（冒号分隔），方便放个人/团队共享技能。
- * @returns 匹配 `dsh-skill-filesystem` Config 的片段。
- */
+/** 把追加的技能目录包成 `dsh-skill-filesystem` Config 片段。 */
 function skillDirsFromEnv(): { customSkillDirs?: string[] } {
   const dirs = extraSkillDirs()
   return dirs.length === 0 ? {} : { customSkillDirs: dirs }
@@ -136,14 +121,8 @@ async function mount(ctx: Context, label: string, plugin: unknown, config?: unkn
 }
 
 /**
- * 内置的 MCP 服务器登记表。
- *
- * 只登记「这个仓库自己带的」服务器 —— 补天的只读接口包装（`app/mcp/butian/`）。
- * 用当前 node 拉起、并带上 `--experimental-strip-types`：与 CLI/host 一样
- * 直接跑 TS，不需要构建。**不能用 Electron 的二进制**（那样跑不了 Node API）。
- *
- * @param cwd - agent 的工作目录（工作目录内的 MCP server 相对它解析）。
- * @returns 名字 → 启动方式。
+ * 内置的 MCP 服务器登记表：只登记本仓库自带的服务器（`app/mcp/butian/`），用当前 node
+ * 配合 `--experimental-strip-types` 直接跑 TS；Electron 的二进制跑不了 Node API。
  */
 export function availableMcpSpecs(cwd: string): Record<string, McpSpec> {
   // app/cli/kernel.ts → ../mcp/butian/server.ts
@@ -158,10 +137,8 @@ export function availableMcpSpecs(cwd: string): Record<string, McpSpec> {
         '--disable-warning=ExperimentalWarning',
         join(here, '..', 'mcp', 'butian', 'server.ts'),
       ],
-      // MCP 客户端会用「清洗过的父环境」起子进程（KEY/PASSWORD/SECRET/TOKEN 之类的
-      // 名字会被丢掉），所以凭据必须**显式**列在这里转发，不能指望它自己继承。
-      // 注意：`BUTIAN_COOKIE` 恰好不在清洗规则里，但依赖这个巧合太脆 ——
-      // 哪天规则加个 COOKIE，登录就会悄无声息地失效。
+      // MCP 客户端用清洗过的父环境起子进程（KEY/PASSWORD/SECRET/TOKEN 之类的名字会被
+      // 丢掉），凭据因此要在这里显式转发。`BUTIAN_COOKIE` 恰好不在清洗规则里，但依赖这个巧合太脆。
       forwardEnv: ['BUTIAN_COOKIE'],
       title: '补天 butian.net（只读）',
       origin: 'builtin',
@@ -175,8 +152,8 @@ export function availableMcpSpecs(cwd: string): Record<string, McpSpec> {
         '--disable-warning=ExperimentalWarning',
         join(here, '..', 'mcp', 'vulbox', 'server.ts'),
       ],
-      // 同 butian：MCP 客户端用清洗过的环境起子进程，凭据必须显式转发。
-      // `VULBOX_COOKIE_FILE` 是给「凭据不放在默认路径」的人用的（冒烟测试也用它）。
+      // 同 butian：MCP 客户端用清洗过的环境起子进程，凭据要显式转发。
+      // `VULBOX_COOKIE_FILE` 给「凭据不放在默认路径」的场景用，冒烟测试也用它。
       forwardEnv: ['VULBOX_COOKIE', 'VULBOX_COOKIE_FILE', 'VULBOX_PORTAL'],
       title: '漏洞盒子 vulbox.com（只读）',
       origin: 'builtin',
@@ -211,10 +188,7 @@ export interface McpSpec {
 /**
  * 工作目录里的自定义 MCP server：`<cwd>/.Memento/mcp/<名字>.ts`。
  *
- * 放这儿而不是写死在代码里，是为了「不重新构建就能加一个 MCP」：
- * 丢一个 TS 文件进目录、在 `$Memento_MCP` 里写上名字即可。
- * @param cwd - agent 的工作目录。
- * @returns 名字 → 启动方式（目录不存在时是空对象）。
+ * 丢一个 TS 文件进目录、在 `$Memento_MCP` 里写上名字即可，不需要重新构建。
  */
 function customMcpSpecs(cwd: string): Record<string, McpSpec> {
   const dir = join(cwd, '.Memento', 'mcp')
@@ -236,31 +210,8 @@ function customMcpSpecs(cwd: string): Record<string, McpSpec> {
 }
 
 /**
- * 按 `$Memento_MCP` 挂载外部 MCP 服务器（**默认不挂**）。
- *
- * 为什么默认关：每挂一个都会起一个子进程，而且它的工具会进**每一次**请求的
- * 工具表（占上下文）。所以做成显式开启，值是用冒号分隔的名字：
- *
- * ```bash
- * Memento_MCP=butian node app/cli/main.ts            # 只挂补天
- * Memento_MCP=butian:my-thing node app/cli/main.ts   # 补天 + 工作目录里的自定义 server
- * ```
- *
- * 未知名字只警告不报错：写错一个名字不该让整个内核起不来。
- * @param ctx - 内核上下文。
- * @param options - CLI 配置（用到 cwd）。
- */
-/**
- * 算出这一次要挂哪些 MCP 服务器。
- *
- * 三个来源合并（见 `mcp-config.ts` 的说明）：
- *   1. `$Memento_MCP`（冒号分隔）—— 临时开一个；
- *   2. `<cwd>/.Memento/mcp.json` 里显式 `enabled: true` 的条目 —— 持久开关，可内联覆盖启动参数；
- *   3. 配置文件里 `enabled: false` 的条目 —— **强制关掉**（盖过前两者）。
- *
- * @param ctx - 内核上下文（未使用，保留签名一致性）。
- * @param options - CLI 配置（用到 cwd）。
- * @returns 已挂载的服务器名字。
+ * 按 `$Memento_MCP` 与 `<cwd>/.Memento/mcp.json` 挂载外部 MCP 服务器；每挂一个都会起
+ * 子进程并占用每次请求的上下文，故默认关闭。`enabled: false` 的条目强制关掉，盖过前两者。
  */
 async function mountMcpServers(ctx: Context, options: Options): Promise<string[]> {
   const config = readMcpConfig(options.cwd)
@@ -299,13 +250,8 @@ async function mountMcpServers(ctx: Context, options: Options): Promise<string[]
       const value = process.env[key]
       if (value !== undefined && value !== '') env[key] = value
     }
-    // 桌面端打包后，host 自己是「Electron 当 Node 用」跑起来的（`ELECTRON_RUN_AS_NODE=1`），
-    // 而 MCP 子进程用的也是 `process.execPath`（= App 里的 Electron 二进制）。
-    // 没有这个变量，子进程会以 **GUI 应用**身份启动：不报错、也不干活，只会在 Dock 里
-    // 多一个图标，MCP 工具则永远连不上。
-    //
-    // 它通常能靠 scrubbed parent env 自动继承过去（名字不匹配敏感词规则），
-    // 但那是**巧合**（和 BUTIAN_COOKIE 那条注释同一个道理），所以这里显式兜底。
+    // 桌面端打包后 host 以 `ELECTRON_RUN_AS_NODE=1` 运行，MCP 子进程用的也是同一个
+    // Electron 二进制；缺这个变量时子进程会以 GUI 应用身份启动，不报错也不干活，工具连不上。
     if (process.versions.electron !== undefined && process.env.ELECTRON_RUN_AS_NODE !== undefined) {
       env.ELECTRON_RUN_AS_NODE = '1'
     }
@@ -337,14 +283,8 @@ async function mountMcpServers(ctx: Context, options: Options): Promise<string[]
 }
 
 /**
- * 合并「配置文件条目」与「内置/项目目录定义」。
- *
- * 配置里写了什么就用什么，没写的从 base 继承 —— 这样配置文件里只写
- * `{ "name": "butian", "enabled": true }` 也能用。
- * @param name - 服务器名。
- * @param entry - 配置条目（可能没有）。
- * @param base - 内置/项目目录的定义（可能没有）。
- * @returns 启动方式；两边都缺关键字段时返回 `undefined`。
+ * 合并「配置文件条目」与「内置/项目目录定义」，配置里写了的字段覆盖 base ——
+ * 于是只写 `{ "name": "butian", "enabled": true }` 也能用。
  */
 function mergeSpec(name: string, entry: McpConfigEntry | undefined, base: McpSpec | undefined): McpSpec | undefined {
   if (entry === undefined) return base
@@ -372,11 +312,7 @@ function mergeSpec(name: string, entry: McpConfigEntry | undefined, base: McpSpe
   }
 }
 
-/**
- * 启动内核：装配插件树 → 创建（或恢复）agent。
- * @param options - CLI 配置。
- * @returns 可用于驱动对话的内核句柄。
- */
+/** 启动内核：装配插件树，然后创建或恢复 agent。 */
 export async function bootKernel(options: Options): Promise<Kernel> {
   const ctx = new Context()
 
@@ -389,8 +325,8 @@ export async function bootKernel(options: Options): Promise<Kernel> {
     includeRuntimeContext: true,
     personaPrefix: personaText(),
   })
-  // ToolRuntime.inject = ['systemPrompt']：工具 schema 由 system prompt 组装时汇总，
-  // 因此注册表必须晚于 systemPrompt 挂载。
+  // ToolRuntime.inject = ['systemPrompt']：工具 schema 在组装 system prompt 时汇总，
+  // 注册表要晚于 systemPrompt 挂载。
   await mount(ctx, 'dsh-tools', ToolRuntime)
   await mount(ctx, 'dsh-agent', AgentRegistry)
 
@@ -399,9 +335,8 @@ export async function bootKernel(options: Options): Promise<Kernel> {
   // `dsh-skill-filesystem` 才是从磁盘发现 SKILL.md 的那个 provider（inject: skills）。
   await mount(ctx, 'dsh-skill', SkillRegistry)
   await mount(ctx, 'dsh-skill-filesystem', SkillFilesystem, {
-    // 只认项目自己的技能目录，不扫描 ~/.dsh 与 ~/.agents —— 那是 DSH CLI 的全局技能库
-    // （50+ 个飞书/记忆类技能），对编码 agent 是噪声，还会把会话目录撑得很大。
-    // 想恢复 DSH 的默认行为：把 includeDefaultRoots 设成 true、去掉 customSkillDirs。
+    // 只扫描项目自己的技能目录，不含 ~/.dsh 与 ~/.agents 的全局技能库（技能多、
+    // 与项目无关，会把会话目录撑大）。要改用默认根：includeDefaultRoots 设 true。
     includeDefaultRoots: false,
     customSkillDirs: skillDirs(options.cwd),
     ...skillDirsFromEnv(),
@@ -423,7 +358,7 @@ export async function bootKernel(options: Options): Promise<Kernel> {
   await mount(ctx, 'dsh-shell-env', ShellEnv)
   await mount(ctx, 'dsh-bash-local', BashLocal, { cwd: options.cwd, timeoutMs: 120_000 })
   await mount(ctx, 'dsh-fs-local', FsLocal, { cwd: options.cwd })
-  // 「先读后写」观察策略：未读过就写/改会被拦截，让 agent 的行为更可预测。
+  // 「先读后写」观察策略：未读过的文件直接写/改会被拦截。
   await mount(ctx, 'dsh-fs-observation-policy', FsObservationPolicy)
   await mount(ctx, 'dsh-jobs-local', JobsLocal)
   await mount(ctx, 'dsh-spill-local', SpillLocal, { root: join(options.stateDir, 'spill') })

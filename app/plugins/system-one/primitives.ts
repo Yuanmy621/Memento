@@ -1,24 +1,9 @@
 /**
- * System One 的**纯逻辑层**：问题类型、校验、按代码组合。
+ * System One 的纯逻辑层：问题类型、校验、按代码组合。
  *
- * 这一层刻意不碰网络、不碰 LLM、不碰 cordis —— 全部是纯函数，所以能在 Node 里直接
- * 跑真值表（`node --experimental-strip-types` 即可），也方便以后换后端。
- *
- * ## 三个 primitives（对齐 TypeSafe/Jev 的定义）
- *
- * | 类型 | 问什么 | 答什么 |
- * | --- | --- | --- |
- * | `choice` | 从一组固定选项里选一个 | `choice` + `probabilities` + `confidence` |
- * | `score` | 落在一条有序标尺的哪一格 | `score`（可为小数）+ `probabilities` + `confidence` |
- * | `noul` | 这个陈述成立吗 | `noul`（0~1 的概率） |
- *
- * ## 置信度（confidence）说的到底是什么
- *
- * 上游的 confidence 是「概率分布有多集中」：全压在一个选项上就是 1.0，摊平就低。
- * 它是**关于这次回答**的指标，**不是**「这个回答正确」的保证，也**不是**行动的许可 ——
- * 许可要由调用方的阈值决定（见 {@link routeByConfidence}）。
- * 本插件只接官方 Jev，概率是标定过的；但 confidence 仍只是**这次回答**的分布集中度，
- * 不代表答案正确，也不是行动的许可。
+ * 全部是纯函数，不碰网络、LLM 与 cordis，可用 `node --experimental-strip-types`
+ * 直接跑真值表。`confidence` 只描述这次回答的概率分布有多集中，不代表答案正确，
+ * 也不是行动的许可 —— 许可由调用方阈值决定（见 `routeByConfidence()`）。
  *
  * @module Memento/plugins/system-one/primitives
  */
@@ -96,10 +81,10 @@ export type Answer = ChoiceAnswer | ScoreAnswer | NoulAnswer
 
 /** 一个工具最多接受多少个问题（一次请求是并行的，但 token 与延迟仍要有人管）。 */
 export const MAX_QUESTIONS = 12
-/** Score 的档位上下限（与上游一致：至少 2 档、至多 10 档）。 */
+/** Score 的档位上下限：至少 2 档、至多 10 档。 */
 export const MIN_SCORE_LEVELS = 2
 export const MAX_SCORE_LEVELS = 10
-/** Choice 最多多少个选项（上游是 255，这里更保守）。 */
+/** Choice 的选项上限：后端允许 255 个，这里取更保守的值。 */
 export const MAX_CHOICE_OPTIONS = 40
 
 /** 校验失败时抛这个，工具层会把消息原样给模型看。 */
@@ -111,14 +96,8 @@ export class QuestionError extends Error {
 }
 
 /**
- * 把工具参数里的问题数组校验成 {@link Question}[]。
- *
- * 为什么不直接信任：参数是模型写的，`criteria` 在 schema 里是自由 JSON
- * （choice 要「选项→描述」的映射，score 要字符串数组），必须由这里判定，
- * 并且**报错要具体**（第几个问题、哪个字段、期望什么），否则模型只能瞎改。
- * @param raw - 工具参数里的 `questions`。
- * @returns 校验通过的问题列表。
- * @throws {QuestionError} 结构不合法。
+ * 把工具参数里的问题数组校验成 `Question[]`。`criteria` 在 schema 里是自由 JSON，
+ * 由这里判定；报错要具体到第几个问题、哪个字段、期望什么，否则模型只能瞎改。
  */
 export function parseQuestions(raw: unknown): Question[] {
   if (!Array.isArray(raw) || raw.length === 0) {
@@ -213,13 +192,8 @@ export interface ComposeResult {
 }
 
 /**
- * 概率加权求和（Composite scoring 模式）。
- *
- * 上游的叮嘱照抄在这里：**一个复杂判断要拆成多个单独的问题**，各自打分，再用
- * 代码里的权重合起来；权重是你的，改了权重不用重跑推理。
- * @param items - 各维度（权重 + 归一化取值 + 置信度）。
- * @param minConfidence - 低于它就记进 `lowConfidence`。
- * @returns 总分与逐项贡献。
+ * 概率加权求和（Composite scoring 模式）：复杂判断拆成多个单独问题各自打分，再用
+ * 代码里的权重合并；权重改了不用重跑推理。
  */
 export function composeWeighted(items: readonly ComposeItem[], minConfidence: number): ComposeResult {
   const totalWeight = items.reduce((sum, item) => sum + Math.max(0, item.weight), 0)
@@ -251,20 +225,13 @@ export interface RouteResult {
   readonly reason: string
   /** 决策锁定到的选项（confidence 够高、且是 choice 时）。 */
   readonly branch: string | null
-  /** 概率也不小、值得一并通知的其它选项（上游示例里的「第二个团队抄送」）。 */
+  /** 概率也不小、值得一并通知的其它选项。 */
   readonly alsoNotify: readonly string[]
 }
 
 /**
- * 置信度门控路由（Confidence-gated routing 模式）。
- *
- * 三个出口，语义分明：
- *   - `escalate`：置信度低于 `minConfidence` —— 交给人或更强的推理模型，不要硬选；
- *   - `review`：够高但没到 `actAt` —— 可以动，但让人过一眼；
- *   - `act`：≥ `actAt` —— 直接用。
- * @param answer - 一个 choice 答案。
- * @param options - 阈值；`notifyAt` 以上的其它选项会被列进 `alsoNotify`。
- * @returns 路由结果。
+ * 置信度门控路由（Confidence-gated routing 模式）：低于 `minConfidence` 走
+ * `escalate`，低于 `actAt` 走 `review`，达到 `actAt` 走 `act`。
  */
 export function routeByConfidence(
   answer: ChoiceAnswer,

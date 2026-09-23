@@ -1,7 +1,7 @@
 ---
 # ⚠️ `name` 是必填：内核的 skill provider 只认 frontmatter 里的 name（不做目录名兜底），
 # 少了它整条技能会被静默忽略 —— 设置界面会把它标成「盘上有、内核没加载」。
-name: Memento-package
+name: memento-package
 description: 把 Memento Agent 桌面端打成可分发的 macOS 应用（Electron Forge）—— 打包链路、四个静默失效的坑、以及怎么验证产物真的能跑。当你要 npm run package / make、排查打出来的 .app 打不开或子进程起不来、或改 forge.config.ts / build-app.ts 时使用。
 # 默认保持 Agent 纯净：命令专用，不进模型的会话技能目录；用 /名字 显式加载。
 disable-model-invocation: true
