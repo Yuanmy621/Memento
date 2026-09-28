@@ -7,8 +7,8 @@
  * @module Memento/plugins/draft-workflow/stages
  */
 
-/** 工作流的五个阶段，顺序即推进方向。 */
-export const STAGES = ['survey', 'plan', 'build', 'review', 'export'] as const
+/** 工作流的六个阶段，顺序即推进方向。 */
+export const STAGES = ['survey', 'analyze', 'plan', 'build', 'review', 'export'] as const
 
 /** 阶段 id。 */
 export type Stage = (typeof STAGES)[number]
@@ -35,6 +35,12 @@ export const STAGE_SPECS: readonly StageSpec[] = [
     label: '素材盘点',
     gate: 'survey.json',
     gateHint: '{ "assets": [ { "path": "...", "kind": "video|audio|image", "durationUs": 0 } ] }，assets 至少一项',
+  },
+  {
+    id: 'analyze',
+    label: '风格分析',
+    gate: 'style.json',
+    gateHint: '测量 + Jev 判断 + 模板路由的结果；不想做就显式跑一次 draft_analyze.py skip 留下记录',
   },
   {
     id: 'plan',
@@ -91,7 +97,7 @@ export function stageSpec(stage: string): StageSpec | undefined {
  * @returns 要求的最低阶段；不属于本工作流的脚本返回 `undefined`。
  */
 export function scriptRequirement(scriptName: string): Stage | undefined {
-  const match = /^draft_(survey|plan|build|review|export)\b/.exec(scriptName)
+  const match = /^draft_(survey|analyze|plan|build|review|export)\b/.exec(scriptName)
   if (match === null) return undefined
   return match[1] as Stage
 }
