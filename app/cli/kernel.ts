@@ -56,6 +56,8 @@ import * as McpClient from '@deepseek-ai/dsh-mcp-client'
 import * as customTools from './tools.ts'
 // System One 决策原语
 import * as SystemOne from '../plugins/system-one/index.ts'
+// 剪映草稿工作流：阶段表 + `draft_stage` 工具 + 阶段闸门 hook
+import * as DraftWorkflow from '../plugins/draft-workflow/index.ts'
 import { installPromptSections, personaText } from './prompt.ts'
 import { readMcpConfig, type McpConfigEntry } from './mcp-config.ts'
 import type { Options } from './options.ts'
@@ -390,6 +392,12 @@ export async function bootKernel(options: Options): Promise<Kernel> {
   await mount(ctx, 'Memento-tools', customTools, { cwd: options.cwd })
   // System One：默认挂载决策模型
   await mount(ctx, 'Memento-system-one', SystemOne, {})
+  // 剪映草稿工作流：`jianying-draft` 技能在场时才注册 `draft_stage` 与两个 hook。
+  await mount(ctx, 'Memento-draft-workflow', DraftWorkflow, {
+    cwd: options.cwd,
+    stateDir: options.stateDir,
+    skillRoots: skillRoots(options.cwd),
+  })
   // 模型侧的入口：在首个请求前投递一份「可用技能目录」，并注册 `skill` 工具按需加载正文。
   await mount(ctx, 'dsh-tool-skill', ToolSkill)
 

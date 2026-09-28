@@ -23,8 +23,17 @@ out/
 # 可复现工具链 —— 它不进构建，但少了它那条命令就跑不起来，所以留在仓库里。
 !/.tmp/ip-as-logo/
 
-# 本地安装的第三方技能：软链到仓库外的稳定路径（如 ~/Developer/video-use）。
-# 提交出去会变成一个指向**本机绝对路径**的坏软链，所以只留本地；
-# 换机器重装就是重建这个软链（`ln -sfn <路径> .agents/skills/<名字>`）。
-# 与之相对，仓库自带的技能（report / yuanmy-* 等）是 vendored 进来的，照常入库。
+# 本地安装的第三方技能：不进仓库。两种形态都在这儿：
+#   video-use    —— 软链到仓库外的稳定路径（~/Developer/video-use）。提交出去会变成一个
+#                   指向**本机绝对路径**的坏软链。
+#   browser-use  —— 由 `browser-use skill install` 生成的单文件技能，随 CLI 升级被覆盖。
+# 共同点：它们都依赖**本机装好的 CLI**（browser-use 的 frontmatter 里写着 requires bins），
+# 别人 clone 下来没有那条命令，技能是半残的。换机器重装即可：
+#   ln -sfn ~/Developer/video-use .agents/skills/video-use
+#   browser-use skill install --path .agents/skills/browser-use
+# 仓库自带的技能（report / memento-* 等）是 vendored 进来的，照常入库。
 /.agents/skills/video-use
+/.agents/skills/browser-use
+
+# 技能里的 Python 脚本一跑就会留这个（`jianying-draft/scripts/` 等）。
+__pycache__/
